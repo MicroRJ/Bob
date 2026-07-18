@@ -3,7 +3,7 @@
 
 #include "base.h"
 
-typedef struct Elf_Task_Description {
+typedef struct Task_Desc {
     char *name;
     char *command_line;
     char **inputs;
@@ -14,18 +14,18 @@ typedef struct Elf_Task_Description {
     uint32_t include_directory_count;
     uint32_t *dependencies;
     uint32_t dependency_count;
-} Elf_Task_Description;
+} Task_Desc;
 
-typedef struct Elf_Task_List {
-    Elf_Task_Description *tasks;
+typedef struct Task_Array_Desc {
+    Task_Desc *tasks;
     uint32_t count;
     uint32_t worker_count;
     int32_t verbosity;
     int has_worker_count;
     int has_verbosity;
     char error[256];
-} Elf_Task_List;
+} Task_Array_Desc;
 
-int elf_load_task_list(const char *path, Arena *arena, Elf_Task_List *result);
+int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result);
 
 #endif

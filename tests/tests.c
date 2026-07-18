@@ -655,7 +655,7 @@ static b32 test_recursive_include_rebuilds(void)
 static b32 test_elf_descriptor(void)
 {
     Arena arena = arena_create(0);
-    Elf_Task_List list;
+    Task_Array_Desc list;
 
     if (!elf_load_task_list("example/tasks.elf", &arena, &list)) {
         printf("  Elf error: %s\n", list.error);
@@ -680,7 +680,7 @@ static b32 test_elf_descriptor(void)
 static b32 test_elf_generated_descriptor(void)
 {
     Arena arena = arena_create(0);
-    Elf_Task_List list;
+    Task_Array_Desc list;
 
     if (!elf_load_task_list("example/tasks1.elf", &arena, &list)) {
         printf("  Elf error: %s\n", list.error);
@@ -759,7 +759,7 @@ static int build_example(void)
 static int build_tasks_from_elf(const char *path)
 {
     Arena arena = arena_create(0);
-    Elf_Task_List loaded = {0};
+    Task_Array_Desc loaded = {0};
     Graph *graph = NULL;
     Task *tasks = NULL;
     Node_Id *nodes = NULL;

@@ -341,7 +341,7 @@ b32 vcvars_cache_refresh(char *path, u32 path_size)
     Env_Table after = {0};
     String capture;
     String cache;
-    char directory[32768];
+    char directory[KILOBYTES(32)];
     u32 exit_code;
     b32 success = false;
 
@@ -369,8 +369,8 @@ cleanup:
 
 b32 vcvars_cache_load(void)
 {
-    char directory[32768];
-    char path[32768];
+    char directory[KILOBYTES(32)];
+    char path[KILOBYTES(32)];
     Arena arena = arena_create(0);
     String data = {0};
     b32 success;

@@ -19,8 +19,8 @@ b32 platform_create_directory(const char *path);
 b32 platform_local_app_data(Arena *arena, String *result);
 b32 platform_get_environment(const char *name, Arena *arena, String *value);
 b32 platform_set_environment(const char *name, const char *value);
-b32 platform_capture_stdout(const char *command_line, Arena *arena,
-                            String *output, u32 *exit_code);
+b32 platform_executable_resolves(String string);
+b32 platform_capture_stdout(const char *command_line, Arena *arena, String *output, u32 *exit_code);
 u64 platform_performance_counter(void);
 u64 platform_performance_frequency(void);
 void *platform_virtual_reserve(u64 size);

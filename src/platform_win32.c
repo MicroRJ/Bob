@@ -7,6 +7,14 @@
 
 static SRWLOCK output_lock = SRWLOCK_INIT;
 
+b32 platform_executable_resolves(String name)
+{
+	Scratch scratch = get_scratch();
+	char *resolved = arena_reserve(scratch.arena, KILOBYTES(32));
+	DWORD length = SearchPathA(NULL, name.data, ".exe", sizeof(resolved), resolved, NULL);
+	return length > 0 && length < sizeof(resolved);
+}
+
 b32 platform_file_info(const char *path, Platform_File_Info *info)
 {
     WIN32_FILE_ATTRIBUTE_DATA attributes;

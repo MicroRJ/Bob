@@ -67,7 +67,7 @@ static int copy_string_array(elf_State *state, Arena *arena, elf_ValueView value
     return 1;
 }
 
-int elf_load_task_list(const char *path, Arena *arena, Elf_Task_List *result)
+int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
 {
     u64 arena_start;
     Scratch scratch;
@@ -160,7 +160,7 @@ int elf_load_task_list(const char *path, Arena *arena, Elf_Task_List *result)
     result->count = elf_table_length(tasks);
     result->tasks = arena_push_zero_aligned(
         arena, result->count * sizeof(*result->tasks),
-        _Alignof(Elf_Task_Description));
+        _Alignof(Task_Desc));
     task_tables = arena_push_zero_aligned(
         scratch.arena, result->count * sizeof(*task_tables),
         _Alignof(elf_Table *));
@@ -170,7 +170,7 @@ int elf_load_task_list(const char *path, Arena *arena, Elf_Task_List *result)
     }
 
     for (i = 0; i < result->count; ++i) {
-        Elf_Task_Description *output = &result->tasks[i];
+        Task_Desc *output = &result->tasks[i];
         elf_ValueView description_value = elf_get_index(state, tasks, i);
         elf_Table *description;
         if (description_value.type != ELF_VALUE_TYPE_TABLE) {
@@ -208,7 +208,7 @@ int elf_load_task_list(const char *path, Arena *arena, Elf_Task_List *result)
     }
 
     for (i = 0; i < result->count; ++i) {
-        Elf_Task_Description *output = &result->tasks[i];
+        Task_Desc *output = &result->tasks[i];
         elf_ValueView dependencies_value = field(
             state, task_tables[i], "dependencies");
         uint32_t dependency;

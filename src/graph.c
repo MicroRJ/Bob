@@ -18,6 +18,7 @@ typedef struct Node {
     Task_State state;
 } Node;
 
+// NOTE(RJ) we just want another arena for the nodes!
 struct Graph {
     Arena arena;
     Node *nodes;

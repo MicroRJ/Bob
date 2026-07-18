@@ -58,7 +58,7 @@ static String_Array parse_command_include_directories(Arena *arena,
 {
     String_Array result = {0};
     const char *cursor = command_line;
-    char argument[32768];
+    char argument[KILOBYTES(32)];
     size_t maximum_count;
 
     if (!command_line) return result;
@@ -335,11 +335,11 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
                            const char *name, b32 quoted, Arena *arena,
                            String *resolved)
 {
-    char candidate[32768];
+    char candidate[KILOBYTES(32)];
     u32 i;
 
     if (quoted) {
-        char directory[32768];
+        char directory[KILOBYTES(32)];
         char *slash;
         size_t including_size = strlen(including_file) + 1;
         if (including_size <= sizeof(directory)) {

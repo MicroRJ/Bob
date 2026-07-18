@@ -32,8 +32,7 @@ static String command_executable(Arena *arena, String command_line)
     u64 start = 0;
     u64 end;
 
-    while (start < command_line.size &&
-           (command_line.data[start] == ' ' || command_line.data[start] == '\t')) {
+    while (start < command_line.size && (command_line.data[start] == ' ' || command_line.data[start] == '\t')) {
         ++start;
     }
     if (start == command_line.size) return (String){0};
@@ -52,16 +51,7 @@ static String command_executable(Arena *arena, String command_line)
         }
     }
     if (end == start) return (String){0};
-    return arena_push_string_copy(arena,
-                                  string_slice(command_line, start, end - start));
-}
-
-static b32 executable_resolves(String executable)
-{
-    char resolved[32768];
-    DWORD length = SearchPathA(NULL, executable.data, ".exe", sizeof(resolved),
-                               resolved, NULL);
-    return length > 0 && length < sizeof(resolved);
+    return arena_push_string_copy(arena, string_slice(command_line, start, end - start));
 }
 
 static b32 task_needs_rebuild(const Graph *graph, Node_Id node,
@@ -410,35 +400,38 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
                     printf("  command: %s\n  exit code: 0\n", worker->command_line);
                 }
             }
-            if (worker->launch_error != ERROR_SUCCESS) {
-                Scratch scratch = get_scratch();
-                String working_directory;
-                String executable = command_executable(
-                    scratch.arena, string_from_cstring(worker->command_line));
-                b32 has_working_directory = platform_current_directory(
-                    scratch.arena, &working_directory);
-                fprintf(stderr, "[%s] %s\n  command: %s\n  ",
-                        graph_node_name(graph, worker->node),
-                        worker->launched ? "process error" : "failed to start process",
-                        worker->command_line);
-                print_windows_error(worker->launch_error);
-                if (executable.data) {
-                    fprintf(stderr, "  executable: %s (%s)\n", executable.data,
-                            executable_resolves(executable)
-                                ? "found"
-                                : "not found in current directory or PATH");
+            if (worker->launch_error != ERROR_SUCCESS)
+            {
+					Scratch scratch = get_scratch();
+
+					fprintf(stderr, "[%s] %s\n  command: %s\n  "
+					, graph_node_name(graph, worker->node), worker->launched ? "process error" : "failed to start process", worker->command_line);
+
+					print_windows_error(worker->launch_error);
+
+					String executable = command_executable(scratch.arena, string_from_cstring(worker->command_line));
+                if (executable.data)
+                {
+                		b32 executable_resolves = platform_executable_resolves(executable);
+                    fprintf(stderr, "  executable: %s (%s)\n", executable.data
+                    , executable_resolves ? "found" : "not found in current directory or PATH");
                 } else {
                     fprintf(stderr, "  executable: unable to parse from command\n");
                 }
+
+                String working_directory;
+                b32 has_working_directory = platform_current_directory(scratch.arena, &working_directory);
+
                 if (has_working_directory) {
                     fprintf(stderr, "  working directory: %s\n",
                             working_directory.data);
                 }
                 end_scratch(scratch);
-            } else if (worker->exit_code != 0) {
-                fprintf(stderr, "[%s] process exited with code %lu\n  command: %s\n",
-                        graph_node_name(graph, worker->node), worker->exit_code,
-                        worker->command_line);
+            }
+            else if (worker->exit_code != 0)
+            {
+                fprintf(stderr, "[%s] process exited with code %lu\n  command: %s\n"
+                , graph_node_name(graph, worker->node), worker->exit_code, worker->command_line);
             }
 
             if (graph_complete(graph, worker->node, succeeded) != GRAPH_OK) {

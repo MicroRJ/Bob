@@ -10,7 +10,7 @@
 #include <string.h>
 #include <limits.h>
 
-static Task *push_task(Arena *arena, const Elf_Task_Description *source)
+static Task *push_task(Arena *arena, const Task_Desc *source)
 {
     Task *task = arena_push_zero_aligned(arena, sizeof(*task), _Alignof(Task));
     if (!task) return NULL;
@@ -29,7 +29,7 @@ static Task *push_task(Arena *arena, const Elf_Task_Description *source)
 static int run_build(const char *path, u32 worker_count, b32 worker_override,
                      i32 verbosity, b32 verbosity_override)
 {
-    Elf_Task_List loaded = {0};
+    Task_Array_Desc loaded = {0};
     Arena task_arena = {0};
     Graph *graph = NULL;
     u32 task_count;
@@ -195,7 +195,7 @@ int main(int argument_count, char **arguments)
         }
     }
     if (cache_vcvars) {
-        char cache_path[32768];
+        char cache_path[KILOBYTES(32)];
         if (has_build_path || worker_override || verbosity_override || profile) {
             log_error("--cache-vcvars cannot be combined with build options");
             return 2;
