@@ -1,0 +1,248 @@
+#include "base.h"
+#include "platform.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+Arena global_scratch_arena;
+
+Arena arena_create(u64 capacity)
+{
+	Arena arena = {0};
+	if (capacity == 0) capacity = MEGABYTES(64);
+	arena.data = platform_virtual_reserve(capacity);
+	if (arena.data) arena.capacity = capacity;
+	return arena;
+}
+
+void arena_destroy(Arena *arena)
+{
+	if (!arena) return;
+	platform_virtual_free(arena->data);
+	memset(arena, 0, sizeof(*arena));
+}
+
+void arena_reset(Arena *arena)
+{
+	if (arena) arena->used = 0;
+}
+
+u64 arena_mark(const Arena *arena)
+{
+	return arena ? arena->used : 0;
+}
+
+void arena_restore(Arena *arena, u64 mark)
+{
+	assert(arena && mark <= arena->used);
+	if (arena && mark <= arena->used) arena->used = mark;
+}
+
+void *arena_top(Arena *arena)
+{
+	return arena && arena->data ? arena->data + arena->used : NULL;
+}
+
+void *arena_reserve_aligned(Arena *arena, u64 size, u64 alignment)
+{
+    uintptr_t top;
+    u64 padding;
+	u64 needed;
+
+    if (!arena || !arena->data || alignment == 0) {
+		assert(!"invalid arena or alignment");
+		return NULL;
+	}
+    top = (uintptr_t)(arena->data + arena->used);
+    padding = (alignment - top % alignment) % alignment;
+	if (padding > arena->capacity - arena->used ||
+        size > arena->capacity - arena->used - padding) {
+		assert(!"arena capacity exceeded");
+		return NULL;
+	}
+	needed = arena->used + padding + size;
+	if (needed > arena->committed) {
+		u64 commit_granularity = KILOBYTES(64);
+		u64 committed = (needed + commit_granularity - 1) &
+		~(commit_granularity - 1);
+		if (committed > arena->capacity) committed = arena->capacity;
+		if (!platform_virtual_commit(arena->data + arena->committed,
+		committed - arena->committed)) {
+			assert(!"unable to commit arena memory");
+		return NULL;
+	}
+	arena->committed = committed;
+}
+	return arena->data + arena->used + padding;
+}
+
+void *arena_reserve(Arena *arena, u64 size)
+{
+	return arena_reserve_aligned(arena, size, 1);
+}
+
+void *arena_push_aligned(Arena *arena, u64 size, u64 alignment)
+{
+	char *result = arena_reserve_aligned(arena, size, alignment);
+	if (!result) return NULL;
+	arena->used = (u64)((u8 *)result - arena->data) + size;
+	return result;
+}
+
+void *arena_push(Arena *arena, u64 size)
+{
+	return arena_push_aligned(arena, size, 1);
+}
+
+void *arena_push_zero_aligned(Arena *arena, u64 size, u64 alignment)
+{
+	void *result = arena_push_aligned(arena, size, alignment);
+	if (result) memset(result, 0, (size_t)size);
+	return result;
+}
+
+void *arena_push_zero(Arena *arena, u64 size)
+{
+	return arena_push_zero_aligned(arena, size, 1);
+}
+
+void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment,
+	                          const void *data)
+{
+	void *result = arena_push_aligned(arena, size, alignment);
+	if (result && size) memcpy(result, data, (size_t)size);
+	return result;
+}
+
+void *arena_push_copy(Arena *arena, u64 size, const void *data)
+{
+	return arena_push_copy_aligned(arena, size, 1, data);
+}
+
+char *arena_push_data(Arena *arena, const void *data, u64 size)
+{
+	return arena_push_copy(arena, size, data);
+}
+
+char *arena_push_text(Arena *arena, const char *text)
+{
+	return arena_push_data(arena, text, text ? (u64)strlen(text) : 0);
+}
+
+char *arena_append_str(Arena *arena, String string)
+{
+	return arena_push_data(arena, string.data, string.size);
+}
+
+char *arena_push_char(Arena *arena, char character)
+{
+	char *result = arena_push(arena, 1);
+	if (result) *result = character;
+	return result;
+}
+
+void arena_push_repeat(Arena *arena, char character, u64 count)
+{
+	void *result = arena_push(arena, count);
+	if (result && count) memset(result, character, (size_t)count);
+}
+
+char *arena_pushfv(Arena *arena, const char *format, va_list arguments)
+{
+	va_list copy;
+	int length;
+	char *data;
+
+	va_copy(copy, arguments);
+	length = vsnprintf(NULL, 0, format, copy);
+	va_end(copy);
+	if (length < 0) return NULL;
+	data = arena_reserve(arena, (u64)length + 1);
+	if (!data) return NULL;
+	if (vsnprintf(data, (size_t)length + 1, format, arguments) != length) {
+		return NULL;
+	}
+	arena->used += (u64)length;
+	return data;
+}
+
+char *arena_pushf(Arena *arena, const char *format, ...)
+{
+	va_list arguments;
+	char *result;
+	va_start(arguments, format);
+	result = arena_pushfv(arena, format, arguments);
+	va_end(arguments);
+	return result;
+}
+
+Scratch get_scratch(void)
+{
+	Scratch scratch;
+	if (!global_scratch_arena.data) {
+		global_scratch_arena = arena_create(0);
+	}
+	scratch.arena = &global_scratch_arena;
+	scratch.restore_used = global_scratch_arena.used;
+	return scratch;
+}
+
+void end_scratch(Scratch scratch)
+{
+	arena_restore(scratch.arena, scratch.restore_used);
+}
+
+void destroy_global_scratch(void)
+{
+	arena_destroy(&global_scratch_arena);
+}
+
+String string_from_data(void *data, u64 size)
+{
+	String string;
+	string.data = data;
+	string.size = size;
+	return string;
+}
+
+String string_from_range(void *start, void *end)
+{
+	assert((u8 *)end >= (u8 *)start);
+	if ((u8 *)end < (u8 *)start) return (String){0};
+	return string_from_data(start, (u64)((u8 *)end - (u8 *)start));
+}
+
+String string_from_cstring(const char *text)
+{
+	return string_from_data((char *)text, text ? (u64)strlen(text) : 0);
+}
+
+b32 string_equal(String a, String b)
+{
+	return a.size == b.size &&
+	(a.size == 0 || memcmp(a.data, b.data, (size_t)a.size) == 0);
+}
+
+String string_slice(String string, u64 offset, u64 size)
+{
+	assert(offset <= string.size && size <= string.size - offset);
+	if (offset > string.size || size > string.size - offset) {
+		return (String){0};
+	}
+	return string_from_data(string.data + offset, size);
+}
+
+String arena_push_string_copy(Arena *arena, String string)
+{
+	char *data = arena_push(arena, string.size + 1);
+	if (!data) return (String){0};
+	if (string.size) memcpy(data, string.data, (size_t)string.size);
+	data[string.size] = 0;
+	return string_from_data(data, string.size);
+}
+
+String arena_push_cstring(Arena *arena, const char *text)
+{
+	return arena_push_string_copy(arena, string_from_cstring(text));
+}

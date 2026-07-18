@@ -1,0 +1,139 @@
+
+compile_options := {
+    "/nologo",
+    "/MD",
+    "/D_DEBUG",
+    "-Od",
+    "-Zi",
+    "-Wfloat-conversion",
+    "-Wint-conversion",
+    "-Wuninitialized",
+    "-Wshift-overflow",
+    "-Wshift-count-overflow",
+    "-Wshift-negative-value",
+}
+
+include_directories := {
+    "src",
+    "src/os",
+    "src/renderer",
+    "src/vendor",
+    "src/ttf",
+    "src/nes65",
+    "src/nes65_core",
+    "src/df",
+    "src/base",
+    "src/draw",
+    "src/lz4",
+    "src/ui",
+    "src/metadesc",
+    "src/fonts",
+    "src/ttf/freetype/include",
+}
+
+shaders := {
+    { name = "VS_Rect",           entry = "VS_Rect",            output = "vs_rect_sdf.h",          model = "vs_5_0" },
+    { name = "PS_RectSDF",        entry = "PS_RectSDF",         output = "ps_rect_sdf.h",          model = "ps_5_0" },
+    { name = "simple_vs",         entry = "Simple_VS",          output = "simple_vs.h",             model = "vs_5_0" },
+    { name = "simple_ps",         entry = "Simple_PS",          output = "simple_ps.h",             model = "ps_5_0" },
+    { name = "text_sdf_ps",       entry = "TextSDF_PS",         output = "text_sdf_ps.h",           model = "ps_5_0" },
+    { name = "PSFrameBufferBlit", entry = "PS_FrameBufferBlit", output = "ps_frame_buffer_blit.h", model = "ps_5_0" },
+}
+
+objects := {
+    { name = "fonts",           source = "src/fonts/fonts.c" },
+    { name = "ttf",             source = "src/ttf/ttf.c" },
+    { name = "renderer",        source = "src/renderer/renderer.c" },
+    { name = "base",            source = "src/base/base.c" },
+    { name = "draw",            source = "src/draw/draw.c" },
+    { name = "ui",              source = "src/ui/ui.c" },
+    { name = "metadesc",        source = "src/metadesc/metadesc.c" },
+    { name = "os",              source = "src/os/os.c" },
+    { name = "nes65_core",      source = "src/nes65_core/nes65_core.c" },
+    { name = "nes65_bus",       source = "src/nes65_core/internal/bus/bus.c" },
+    { name = "nes65_cpu",       source = "src/nes65_core/internal/cpu/cpu.c" },
+    { name = "nes65_ppu",       source = "src/nes65_core/internal/ppu/ppu.c" },
+    { name = "nes65_apu",       source = "src/nes65_core/internal/apu/apu.c" },
+    { name = "nes65_nrom",      source = "src/nes65_core/internal/mappers/mapper_nrom.c" },
+    { name = "nes65_mmc1",      source = "src/nes65_core/internal/mappers/mapper_mmc1.c" },
+    { name = "nes65_mmc2",      source = "src/nes65_core/internal/mappers/mapper_mmc2.c" },
+    { name = "nes65_uxrom",     source = "src/nes65_core/internal/mappers/mapper_uxrom.c" },
+    { name = "nes65_cartridge", source = "src/nes65_core/internal/cartridge/ines.c" },
+    { name = "nes65_runtime",   source = "src/nes65_core/internal/runtime/core.c" },
+    { name = "nes65_serial",    source = "src/nes65_core/internal/serialization/nes_serial.c" },
+    { name = "nes",             source = "src/nes65/nes.c" },
+}
+
+executables := {
+    { name = "font_test",       source = "src/tests/font_test.c" },
+    { name = "parse_test",      source = "src/tests/parse_test.c" },
+    { name = "draw_test",       source = "src/tests/draw_test.c" },
+    { name = "ui_test",         source = "src/tests/ui_test.c" },
+    { name = "nes65_core_test", source = "src/tests/nes65_core_test.c" },
+    { name = "main",            source = "src/main.c" },
+}
+
+
+
+tasks := {}
+shader_tasks := {}
+object_tasks := {}
+object_files := ""
+
+add_task := fun(name, command_line, dependencies) {
+    task := {
+        name = name,
+        command_line = command_line,
+        dependencies = dependencies,
+    }
+    tasks:add(task)
+    ret task
+}
+
+join_prefixed := fun(values, prefix) {
+    result := ""
+    for value := values[0 ... values:length()] ? {
+        result += " " + prefix + value
+    }
+    ret result
+}
+
+options := join_prefixed(compile_options, "")
+includes := join_prefixed(include_directories, "/I")
+
+for shader := shaders[0 ... shaders:length()] ? {
+    task := add_task(
+        shader.name,
+        "fxc /nologo /Od /Zi /Fc" +
+        " /T" + shader.model +
+        " src/renderer/shaders.hlsl" +
+        " /Fhsrc/renderer/generated/" + shader.output +
+        " /E" + shader.entry,
+        {}
+    )
+    shader_tasks:add(task)
+}
+
+for object := objects[0 ... objects:length()] ? {
+    output := "build/" + object.name + ".obj"
+    task := add_task(
+        object.name,
+        "clang-cl -c " + object.source + " /Fo" + output + options + includes,
+        shader_tasks
+    )
+    object_tasks:add(task)
+    object_files += " " + output
+}
+
+for executable := executables[0 ... executables:length()] ? {
+    add_task(
+        executable.name,
+        "clang-cl " + executable.source +
+        " /Febuild/" + executable.name + ".exe" +
+        options + includes + object_files +
+        " src/ttf/freetype/freetype.lib",
+        object_tasks
+    )
+}
+
+ret { tasks = tasks }

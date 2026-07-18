@@ -1,0 +1,64 @@
+tasks := {}
+
+add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
+    task := {
+        name = name
+        command_line = command_line
+        inputs = inputs
+        outputs = outputs
+        include_dirs = include_dirs
+        dependencies = dependencies
+    }
+    tasks:add(task)
+    ret task
+}
+
+prepare := add_task(
+    "prepare output directory",
+    "cmd /c if not exist build\\example mkdir build\\example",
+    {}, { "build\\example" },
+    {},
+    {}
+)
+
+compile_main := add_task(
+    "compile main",
+    "clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj",
+    { "example\\main.c" }, { "build\\example\\main.obj" },
+    { "example" },
+    { prepare }
+)
+
+compile_message := add_task(
+    "compile message",
+    "clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj",
+    { "example\\message.c" },
+    { "build\\example\\message.obj" },
+    { "example" },
+    { prepare }
+)
+
+link := add_task(
+    "link hello.exe",
+    "clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe",
+    { "build\\example\\main.obj", "build\\example\\message.obj" },
+    { "build\\example\\hello.exe" },
+    {},
+    { compile_main, compile_message }
+)
+
+add_task(
+    "run hello.exe",
+    "build\\example\\hello.exe",
+    { "build\\example\\hello.exe" }, {},
+    {},
+    { link }
+)
+
+ret {
+    tasks = tasks
+    options = {
+        workers = 4
+        verbosity = 0
+    }
+}

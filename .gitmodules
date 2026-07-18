@@ -1,0 +1,3 @@
+[submodule "elf"]
+	path = elf
+	url = https://github.com/MicroRJ/elf
