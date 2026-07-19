@@ -9,7 +9,7 @@ static SRWLOCK output_lock = SRWLOCK_INIT;
 
 b32 platform_executable_resolves(String name)
 {
-	if (!string_ensure_terminated(name)) return false;
+	if (!string_is_terminated(name)) return false;
    Scratch scratch = get_scratch();
 	DWORD capacity = KILOBYTES(32);
    char *resolved = arena_reserve(scratch.arena, capacity);
@@ -24,7 +24,7 @@ b32 platform_file_info(String path, Platform_File_Info *info)
    WIN32_FILE_ATTRIBUTE_DATA attributes;
    ULARGE_INTEGER write_time;
 
-	if (!string_ensure_terminated(path) || !info ||
+	if (!string_is_terminated(path) || !info ||
 		!GetFileAttributesExA(path.data, GetFileExInfoStandard, &attributes)) {
       return false;
    }
@@ -73,7 +73,7 @@ b32 platform_absolute_path(Arena *arena, String path, String *result)
    DWORD required;
    DWORD length;
    char *data;
-	if (!arena || !string_ensure_terminated(path) || !result) return false;
+	if (!arena || !string_is_terminated(path) || !result) return false;
    mark = arena_mark(arena);
    result->data = NULL;
    result->size = 0;
@@ -106,7 +106,7 @@ b32 platform_read_entire_file(Arena *arena, String path, String *result)
    size_t total = 0;
    u64 mark;
 
-	if (!arena || !string_ensure_terminated(path) || !result) return false;
+	if (!arena || !string_is_terminated(path) || !result) return false;
    mark = arena_mark(arena);
    result->data = NULL;
    result->size = 0;
@@ -156,7 +156,7 @@ b32 platform_write_entire_file(String path, const void *data, size_t size)
    HANDLE file;
    size_t total = 0;
 
-	if (!string_ensure_terminated(path) || (!data && size)) return false;
+	if (!string_is_terminated(path) || (!data && size)) return false;
    file = CreateFileA(path.data, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
    if (file == INVALID_HANDLE_VALUE) return false;
    while (total < size)
@@ -176,7 +176,7 @@ b32 platform_write_entire_file(String path, const void *data, size_t size)
 
 b32 platform_create_directory(String path)
 {
-	if (!string_ensure_terminated(path)) return false;
+	if (!string_is_terminated(path)) return false;
 	if (CreateDirectoryA(path.data, NULL)) return true;
    return GetLastError() == ERROR_ALREADY_EXISTS;
 }
@@ -190,7 +190,7 @@ b32 platform_get_environment(String name, Arena *arena, String *value)
    DWORD required;
    DWORD length;
    char *data;
-	if (!string_ensure_terminated(name) || !arena || !value) return false;
+	if (!string_is_terminated(name) || !arena || !value) return false;
    value->data = NULL;
    value->size = 0;
    SetLastError(ERROR_SUCCESS);
@@ -232,8 +232,8 @@ b32 platform_get_environment_block(Arena *arena, String *block)
 }
 
 b32 platform_set_environment(String name, String value) {
-	if (!string_ensure_terminated(name)) return false;
-	if (value.data && !string_ensure_terminated(value)) return false;
+	if (!string_is_terminated(name)) return false;
+	if (value.data && !string_is_terminated(value)) return false;
 	return SetEnvironmentVariableA(name.data, value.data) != 0;
 }
 

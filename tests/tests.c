@@ -107,20 +107,25 @@ static b32 test_arena_and_strings(void)
 
     CHECK(arena.data != NULL);
     start = arena_top(&arena);
-    CHECK(arena_push_text(&arena, "hello") == start);
+    CHECK(arena_append_text(&arena, "hello") == start);
+	CHECK(*(char *)arena_top(&arena) == 0);
     CHECK(arena_append_str(&arena, STRING_LITERAL(" arena")) != NULL);
+	CHECK(*(char *)arena_top(&arena) == 0);
     CHECK(arena_appendf(&arena, " %d", 42) != NULL);
-    built = string_from_range(start, arena_top(&arena));
-    CHECK(arena_push_zero(&arena, 1) != NULL);
-    CHECK(string_equal(built, STRING_LITERAL("hello arena 42")));
+	CHECK(*(char *)arena_top(&arena) == 0);
+	CHECK(arena_append_char(&arena, '!') != NULL);
+	CHECK(*(char *)arena_top(&arena) == 0);
+	built = arena_string_from(&arena, start);
+	arena_finalize_string(&arena, built);
+	CHECK(string_equal(built, STRING_LITERAL("hello arena 42!")));
     CHECK(built.data[built.size] == 0);
 
     copy = arena_push_string_copy(&arena, built);
     CHECK(string_equal(copy, built));
     CHECK(copy.data[copy.size] == 0);
     CHECK(string_equal(string_slice(copy, 6, 5), STRING_LITERAL("arena")));
-	CHECK(string_ensure_terminated(STRING_LITERAL("hello")));
-	CHECK(!string_ensure_terminated(string_slice(STRING_LITERAL("hello"), 0, 4)));
+	CHECK(string_is_terminated(STRING_LITERAL("hello")));
+	CHECK(!string_is_terminated(string_slice(STRING_LITERAL("hello"), 0, 4)));
 	{
 		String_Array parts = string_split(&arena, STRING_LITERAL("a;;b;"), ';');
 		CHECK(parts.count == 4);
@@ -157,9 +162,9 @@ static b32 test_arena_and_strings(void)
     arena_destroy(&arena);
 
     outer = get_scratch();
-    CHECK(arena_push_text(outer.arena, "outer") != NULL);
+    CHECK(arena_append_text(outer.arena, "outer") != NULL);
     inner = get_scratch();
-    CHECK(arena_push_text(inner.arena, "inner") != NULL);
+    CHECK(arena_append_text(inner.arena, "inner") != NULL);
     end_scratch(inner);
     CHECK(arena_mark(outer.arena) == inner.restore_used);
     end_scratch(outer);
@@ -178,7 +183,7 @@ static DWORD WINAPI scratch_thread_test_main(void *parameter)
 {
     Scratch_Thread_Test *test = parameter;
     Scratch scratch = get_scratch();
-    arena_push_text(scratch.arena, "thread scratch");
+    arena_append_text(scratch.arena, "thread scratch");
     test->arena = scratch.arena;
     SetEvent(test->ready);
     WaitForSingleObject(test->release, INFINITE);

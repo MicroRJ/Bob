@@ -65,13 +65,14 @@ void logger_logv(Log_Level level, const char *tag, const char *format, va_list a
    start = arena_top(scratch.arena);
    colors = logger.colors &&
    platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
-   if (colors) { arena_push_text(scratch.arena, level_color(level)); }
+   if (colors) { arena_append_text(scratch.arena, level_color(level)); }
    arena_appendf(scratch.arena, "[%s]", tag);
-   if (colors) { arena_push_text(scratch.arena, "\x1b[0m"); }
+   if (colors) { arena_append_text(scratch.arena, "\x1b[0m"); }
    arena_append_char(scratch.arena, ' ');
-   arena_pushfv(scratch.arena, format, arguments);
+   arena_appendfv(scratch.arena, format, arguments);
    arena_append_char(scratch.arena, '\n');
-   message = string_from_range(start, arena_top(scratch.arena));
+	message = arena_string_from(scratch.arena, start);
+	arena_finalize_string(scratch.arena, message);
    fwrite(message.data, 1, (size_t)message.size, stream);
    fflush(stream);
    end_scratch(scratch);

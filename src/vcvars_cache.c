@@ -117,7 +117,9 @@ static String build_path_list_delta(Arena *arena, String before, String after)
 			arena_append_char(arena, ';');
 		}
 	}
-	return string_from_range((char *)arena->data + result_start, arena_top(arena));
+	String result = arena_string_from(arena, (char *)arena->data + result_start);
+	arena_finalize_string(arena, result);
+	return result;
 }
 
 static b32 push_environment_diff(Env_Diff_Table *table, Env_Diff_Type type,
@@ -178,42 +180,48 @@ static b32 build_environment_diff(Arena *arena, Env_Table *before, Env_Table *af
 static b32 serialize_environment_diff(Arena *arena, Env_Diff_Table *diff, String *result)
 {
 	u64 start = arena_mark(arena);
-	arena_push_text(arena, VCVARS_CACHE_HEADER);
+	arena_append_text(arena, VCVARS_CACHE_HEADER);
 	arena_append_char(arena, '\n');
 	for (u32 i = 0; i < diff->count; ++i)
 	{
 		Env_Diff entry = diff->items[i];
 		const char *type = entry.type == ENV_DIFF_PREPEND ? "prepend" : entry.type == ENV_DIFF_APPEND ? "append" : "set";
-		arena_push_text(arena, type);
+		arena_append_text(arena, type);
 		arena_append_char(arena, ' ');
 		arena_append_str(arena, entry.name);
 		arena_append_char(arena, '=');
 		arena_append_str(arena, entry.value);
 		arena_append_char(arena, '\n');
 	}
-	*result = string_from_range((char *)arena->data + start, arena_top(arena));
+	*result = arena_string_from(arena, (char *)arena->data + start);
+	arena_finalize_string(arena, *result);
 	return true;
 }
 
-static b32 cache_paths(Arena *arena, String *parent, String *path)
+static b32 ensure_cache_path(Arena *arena, String *path)
 {
+	if (!arena || !path) return false;
+
+	u64 mark = arena_mark(arena);
+	*path = (String){0};
+
 	String local_app_data;
-	char *start;
-	if (!arena || !parent || !path ||
-		!platform_local_app_data(arena, &local_app_data)) return false;
-
-	start = arena_top(arena);
-	if (!arena_append_str(arena, local_app_data) ||
-		!arena_push_text(arena, "\\bob") ||
-		!arena_append_char(arena, 0)) return false;
-	*parent = string_from_range(start, (char *)arena_top(arena) - 1);
-
-	start = arena_top(arena);
-	if (!arena_append_str(arena, *parent) ||
-		!arena_push_text(arena, "\\vcvars64.env") ||
-		!arena_append_char(arena, 0)) return false;
-	*path = string_from_range(start, (char *)arena_top(arena) - 1);
+	if (!platform_local_app_data(arena, &local_app_data)) goto failure;
+	if (!string_is_terminated(local_app_data)) goto failure;
+	char *start = local_app_data.data;
+	// Reuse the returned terminator as the next append position.
+	arena->used -= 1;
+	arena_append_text(arena, "\\bob");
+	b32 directory_ready = platform_create_directory(string_from_range(start, (char *)arena_top(arena)));
+	if (!directory_ready) goto failure;
+	arena_append_text(arena, "\\vcvars64.env");
+	*path = arena_string_from(arena, start);
+	arena_finalize_string(arena, *path);
 	return true;
+
+	failure:
+	arena_restore(arena, mark);
+	return false;
 }
 
 static b32 apply_rule(String action, String name, String value)
@@ -307,14 +315,13 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 	u32 exit_code;
 	b32 success = false;
 
-	String directory;
 	String path;
 	u64 mark;
 	if (!arena || !result_path) return false;
 	mark = arena_mark(arena);
 	*result_path = (String){0};
 
-	if (!cache_paths(arena, &directory, &path))
+	if (!ensure_cache_path(arena, &path))
 	{
 		log_error("unable to get cache paths");
 		goto cleanup;
@@ -349,14 +356,9 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to serialize environment diff");
 		goto cleanup;
 	}
-	if (!platform_create_directory(directory))
-	{
-		log_error("unable to write vcvars cache: %s", path);
-		goto cleanup;
-	}
 	if (!platform_write_entire_file(path, cache.data, cache.size))
 	{
-		log_error("unable to write vcvars cache: %s", path);
+		log_error("unable to write vcvars cache: %s", path.data);
 		goto cleanup;
 	}
 	success = true;
@@ -370,11 +372,10 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 b32 vcvars_cache_load(void)
 {
 	Scratch scratch = get_scratch();
-	String directory;
 	String path;
 	String data = {0};
 	b32 success;
-	if (!cache_paths(scratch.arena, &directory, &path)) {
+	if (!ensure_cache_path(scratch.arena, &path)) {
 		end_scratch(scratch);
 		return false;
 	}

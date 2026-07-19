@@ -107,8 +107,7 @@ void *arena_push_zero(Arena *arena, u64 size)
 	return arena_push_zero_aligned(arena, size, 1);
 }
 
-void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment,
-const void *data)
+void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment, const void *data)
 {
 	void *result = arena_push_aligned(arena, size, alignment);
 	if (result && size) memcpy(result, data, (size_t)size);
@@ -125,20 +124,33 @@ char *arena_push_data(Arena *arena, const void *data, u64 size)
 	return arena_push_copy(arena, size, data);
 }
 
-char *arena_push_text(Arena *arena, const char *text)
+static char *arena_append_data(Arena *arena, const void *data, u64 size)
 {
-	return arena_push_data(arena, text, text ? (u64)strlen(text) : 0);
+	char *result = arena_reserve(arena, size + 1);
+	assert(result);
+	if (size) memmove(result, data, (size_t)size);
+	result[size] = 0;
+	arena->used += size;
+	return result;
+}
+
+char *arena_append_text(Arena *arena, const char *text)
+{
+	return arena_append_data(arena, text, text ? (u64)strlen(text) : 0);
 }
 
 char *arena_append_str(Arena *arena, String string)
 {
-	return arena_push_data(arena, string.data, string.size);
+	return arena_append_data(arena, string.data, string.size);
 }
 
 char *arena_append_char(Arena *arena, char character)
 {
-	char *result = arena_push(arena, 1);
-	if (result) *result = character;
+	char *result = arena_reserve(arena, 2);
+	assert(result);
+	arena->used += 1;
+	*result = character;
+	*(result + 1) = 0;
 	return result;
 }
 
@@ -148,7 +160,7 @@ void arena_push_repeat(Arena *arena, char character, u64 count)
 	if (result && count) memset(result, character, (size_t)count);
 }
 
-char *arena_pushfv(Arena *arena, const char *format, va_list arguments)
+char *arena_appendfv(Arena *arena, const char *format, va_list arguments)
 {
 	va_list copy;
 	int length;
@@ -157,10 +169,14 @@ char *arena_pushfv(Arena *arena, const char *format, va_list arguments)
 	va_copy(copy, arguments);
 	length = vsnprintf(NULL, 0, format, copy);
 	va_end(copy);
+	assert(length >= 0);
 	if (length < 0) return NULL;
 	data = arena_reserve(arena, (u64)length + 1);
+	assert(data);
 	if (!data) return NULL;
-	if (vsnprintf(data, (size_t)length + 1, format, arguments) != length) {
+	int written = vsnprintf(data, (size_t)length + 1, format, arguments);
+	assert(written == length);
+	if (written != length) {
 		return NULL;
 	}
 	arena->used += (u64)length;
@@ -172,9 +188,26 @@ char *arena_appendf(Arena *arena, const char *format, ...)
 	va_list arguments;
 	char *result;
 	va_start(arguments, format);
-	result = arena_pushfv(arena, format, arguments);
+	result = arena_appendfv(arena, format, arguments);
 	va_end(arguments);
 	return result;
+}
+
+String arena_string_from(Arena *arena, void *start)
+{
+	assert(arena && start && (u8 *)start >= arena->data &&
+		(u8 *)start <= arena->data + arena->used);
+	if (!arena || !start || (u8 *)start < arena->data ||
+		(u8 *)start > arena->data + arena->used) return (String){0};
+	return string_from_range(start, arena_top(arena));
+}
+
+void arena_finalize_string(Arena *arena, String string)
+{
+	assert(arena && string.data && string.data + string.size == (char *)arena_top(arena));
+	assert(*(char *)arena_top(arena) == 0);
+	if (!arena || !string.data || string.data + string.size != (char *)arena_top(arena)) return;
+	arena_push_zero(arena, 1);
 }
 
 Scratch get_scratch(void)
@@ -218,7 +251,7 @@ String string_from_cstring(const char *text)
 	return string_from_data((char *)text, text ? (u64)strlen(text) : 0);
 }
 
-b32 string_ensure_terminated(String string)
+b32 string_is_terminated(String string)
 {
 	return string.data && string.data[string.size] == 0;
 }
