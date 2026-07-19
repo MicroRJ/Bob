@@ -11,7 +11,6 @@ typedef struct Worker
 	Builder                 *builder;
 	Platform_Thread         *thread;
 	Bob_Node                *node;
-	String                   command_line;
 	Arena                    output;
 	Platform_Process_Result  process;
 	b32                      rebuilt;
@@ -101,7 +100,7 @@ static void request_stop_locked(Builder *builder)
 static void run_command(Worker *worker)
 {
 	arena_reset(&worker->output);
-	platform_run_command(worker->command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &worker->process);
+	platform_run_command(worker->node->task.command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &worker->process);
 }
 
 static u32 worker_main(void *data)
@@ -131,10 +130,9 @@ static u32 worker_main(void *data)
 
 		Profile_Scope incremental_check_scope = profile_scope_begin("incremental checks");
 		b32 needs_rebuild = task_needs_rebuild(node, task);
-		profile_scope_end(&incremental_check_scope);
-		worker->rebuilt = needs_rebuild;
-		worker->node = node;
-		worker->command_line = task->command_line;
+	profile_scope_end(&incremental_check_scope);
+	worker->rebuilt = needs_rebuild;
+	worker->node = node;
 
 		if (needs_rebuild)
 		{
@@ -180,17 +178,18 @@ static b32 report_completion(Worker *worker)
 	ASSERT(worker);
 	ASSERT(worker->node);
 
+	String command_line = worker->node->task.command_line;
 	worker->node->rebuilt = worker->rebuilt;
 	if (!worker->rebuilt) {
 		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(worker->node));
-		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", bob_get_task(worker->node)->command_line.data);
+		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
 		return true;
 	}
 	b32 succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
 	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(worker->node), worker->process.output);
 	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(worker->node));
 	if (succeeded) {
-		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line.data);
+		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
 		logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
 	}
 	if (worker->process.error_code != 0) {
@@ -198,20 +197,20 @@ static b32 report_completion(Worker *worker)
 		String executable;
 		String working_directory;
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "%s", worker->process.launched ? "process error" : "failed to start process");
-		logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
+		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 		{
 			String message;
 			if (platform_error_message(worker->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", worker->process.error_code, message.data);
 			else logger_log(LOG_LEVEL_ERROR, "os", "error %u", worker->process.error_code);
 		}
-		executable = command_executable(scratch.arena, worker->command_line);
+		executable = command_executable(scratch.arena, command_line);
 		if (executable.data) logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data, platform_executable_resolves(executable) ? "found" : "not found in current directory or PATH");
 		else logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
 		if (platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
 		end_scratch(scratch);
 	} else if (worker->process.exit_code != 0) {
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "process exited with code %u", worker->process.exit_code);
-		logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
+		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 	}
 	return succeeded;
 }
