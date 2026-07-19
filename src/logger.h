@@ -16,6 +16,9 @@ typedef enum Log_Level
 void logger_init(void);
 void logger_set_minimum_level(Log_Level level);
 void logger_set_colors(b32 enabled);
+void logger_set_verbosity(i32 verbosity);
+i32 logger_get_verbosity(void);
+b32 logger_has_verbosity(i32 verbosity);
 void logger_logv(Log_Level level, const char *tag, const char *format, va_list arguments);
 void logger_log(Log_Level level, const char *tag, const char *format, ...);
 

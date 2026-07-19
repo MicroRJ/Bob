@@ -116,6 +116,7 @@ static DWORD WINAPI worker_main(void *parameter)
    {
       WaitForSingleObject(worker->start_event, INFINITE);
       if (worker->stopping) {
+		 destroy_global_scratch();
          return 0;
       }
 
@@ -146,7 +147,7 @@ static void stop_workers(Worker *workers, u32 count)
    }
 }
 
-b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
+b32 executor_run(Graph *graph, u32 worker_count)
 {
    Worker *workers;
    HANDLE *done_events;
@@ -257,10 +258,10 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
             profile_scope_end(&scope);
             if (!needs_rebuild)
             {
-               if (verbosity >= 0)
+               if (logger_has_verbosity(0))
                {
                   logger_log(LOG_LEVEL_INFO, "up-to-date", "%s", graph_node_name(graph, node));
-                  if (verbosity >= 1) {
+                  if (logger_has_verbosity(1)) {
                      printf("  command: %s\n", task->command_line);
                   }
                }
@@ -302,7 +303,7 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
          worker_index = wait_result - WAIT_OBJECT_0;
          worker = &workers[worker_index];
 
-         if (verbosity >= 2 && worker->process.output.size > 0)
+         if (logger_has_verbosity(2) && worker->process.output.size > 0)
          {
             printf("[%s]\n", graph_node_name(graph, worker->node));
             fwrite(worker->process.output.data, 1, (size_t)worker->process.output.size, stdout);
@@ -311,7 +312,7 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
             }
          }
          succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
-         if (verbosity >= 0)
+         if (logger_has_verbosity(0))
          {
             logger_log(
                succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR,
@@ -319,7 +320,7 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
                "%s",
                graph_node_name(graph, worker->node)
             );
-            if (verbosity >= 1 && succeeded) {
+            if (logger_has_verbosity(1) && succeeded) {
                printf("  command: %s\n  exit code: 0\n", worker->command_line);
             }
          }
@@ -397,8 +398,4 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
    free(workers);
    free(rebuilt);
    return !internal_error && !graph_has_failed(graph);
-}
-
-b32 executor_run(Graph *graph, u32 worker_count) {
-   return executor_run_with_options(graph, worker_count, -1);
 }

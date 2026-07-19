@@ -19,6 +19,12 @@ typedef double f64;
 
 typedef i32 b32;
 
+#if defined(_MSC_VER)
+#define THREAD_LOCAL __declspec(thread)
+#else
+#define THREAD_LOCAL _Thread_local
+#endif
+
 #ifndef true
 #define true 1
 #endif
@@ -93,7 +99,7 @@ typedef struct String_Array {
 #define arena_push_string_copy bob_arena_push_string_copy
 #define arena_push_cstring bob_arena_push_cstring
 
-extern Arena global_scratch_arena;
+extern THREAD_LOCAL Arena global_scratch_arena;
 
 Arena arena_create(u64 capacity);
 void arena_destroy(Arena *arena);

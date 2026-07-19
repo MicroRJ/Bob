@@ -79,6 +79,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
    {
       verbosity = loaded.verbosity;
    }
+	logger_set_verbosity(verbosity);
 
    task_count = loaded.count;
    graph = graph_create();
@@ -138,7 +139,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
 
    {
       Profile_Scope scope = profile_scope_begin("executor");
-      exit_code = executor_run_with_options(graph, worker_count, verbosity) ? 0 : 1;
+      exit_code = executor_run(graph, worker_count) ? 0 : 1;
       profile_scope_end(&scope);
    }
 

@@ -5,10 +5,11 @@
 
 typedef struct Logger_State {
    Log_Level minimum_level;
+   i32 verbosity;
    b32 colors;
 } Logger_State;
 
-static Logger_State logger = { LOG_LEVEL_TRACE, true };
+static Logger_State logger = { LOG_LEVEL_TRACE, -1, true };
 
 static const char *level_color(Log_Level level)
 {
@@ -34,6 +35,18 @@ void logger_set_minimum_level(Log_Level level) {
 
 void logger_set_colors(b32 enabled) {
    logger.colors = enabled;
+}
+
+void logger_set_verbosity(i32 verbosity) {
+	logger.verbosity = verbosity;
+}
+
+i32 logger_get_verbosity(void) {
+	return logger.verbosity;
+}
+
+b32 logger_has_verbosity(i32 verbosity) {
+	return logger.verbosity >= verbosity;
 }
 
 void logger_logv(Log_Level level, const char *tag, const char *format, va_list arguments)

@@ -144,6 +144,65 @@ static b32 test_arena_and_strings(void)
     return true;
 }
 
+typedef struct Scratch_Thread_Test {
+    Arena *arena;
+    HANDLE ready;
+    HANDLE release;
+} Scratch_Thread_Test;
+
+static DWORD WINAPI scratch_thread_test_main(void *parameter)
+{
+    Scratch_Thread_Test *test = parameter;
+    Scratch scratch = get_scratch();
+    arena_push_text(scratch.arena, "thread scratch");
+    test->arena = scratch.arena;
+    SetEvent(test->ready);
+    WaitForSingleObject(test->release, INFINITE);
+    end_scratch(scratch);
+    destroy_global_scratch();
+    return 0;
+}
+
+static b32 test_thread_local_scratch(void)
+{
+    Scratch main_scratch = get_scratch();
+    Scratch_Thread_Test tests[2] = {0};
+    HANDLE threads[2] = {0};
+    HANDLE ready[2] = {0};
+    HANDLE release = CreateEventA(NULL, TRUE, FALSE, NULL);
+    b32 passed = false;
+
+    if (!release) goto cleanup;
+    for (u32 i = 0; i < ARRAY_COUNT(tests); ++i)
+    {
+        tests[i].ready = CreateEventA(NULL, TRUE, FALSE, NULL);
+        tests[i].release = release;
+        ready[i] = tests[i].ready;
+        if (!ready[i]) goto cleanup;
+        threads[i] = CreateThread(NULL, 0, scratch_thread_test_main, tests + i, 0, NULL);
+        if (!threads[i]) goto cleanup;
+    }
+    if (WaitForMultipleObjects(ARRAY_COUNT(ready), ready, TRUE, 5000) != WAIT_OBJECT_0) goto cleanup;
+    passed = tests[0].arena && tests[1].arena &&
+        tests[0].arena != tests[1].arena &&
+        tests[0].arena != main_scratch.arena &&
+        tests[1].arena != main_scratch.arena;
+
+cleanup:
+    if (release) SetEvent(release);
+    for (u32 i = 0; i < ARRAY_COUNT(threads); ++i) {
+        if (threads[i]) {
+            WaitForSingleObject(threads[i], INFINITE);
+            CloseHandle(threads[i]);
+        }
+        if (ready[i]) CloseHandle(ready[i]);
+    }
+    if (release) CloseHandle(release);
+    end_scratch(main_scratch);
+    destroy_global_scratch();
+    return passed;
+}
+
 static b32 test_empty_graph(void)
 {
     Graph *graph = graph_create();
@@ -302,10 +361,8 @@ static b32 test_executor_runs_in_parallel(void)
     event_b = CreateEventA(NULL, TRUE, FALSE, event_b_name);
     CHECK(event_a != NULL && event_b != NULL);
 
-    CHECK(snprintf(command_a, sizeof(command_a), "\"%s\" --barrier %s %s a",
-                   executable, event_a_name, event_b_name) > 0);
-    CHECK(snprintf(command_b, sizeof(command_b), "\"%s\" --barrier %s %s b",
-                   executable, event_b_name, event_a_name) > 0);
+    CHECK(snprintf(command_a, sizeof(command_a), "\"%s\" --barrier %s %s a", executable, event_a_name, event_b_name) > 0);
+    CHECK(snprintf(command_b, sizeof(command_b), "\"%s\" --barrier %s %s b", executable, event_b_name, event_a_name) > 0);
     CHECK(snprintf(command_link, sizeof(command_link), "\"%s\" --child 0 0 link", executable) > 0);
 
     tasks[a].command_line = command_a;
@@ -823,6 +880,7 @@ cleanup:
 static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
+    run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
     run_test("high resolution timer", test_high_resolution_timer);
     run_test("empty graph", test_empty_graph);

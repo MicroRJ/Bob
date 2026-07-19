@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-Arena global_scratch_arena;
+THREAD_LOCAL Arena global_scratch_arena;
 
 Arena arena_create(u64 capacity)
 {

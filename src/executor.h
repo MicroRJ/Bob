@@ -16,6 +16,5 @@ typedef struct Task
 
 /* Prepares and executes the graph with at most worker_count concurrent processes. */
 b32 executor_run(Graph *graph, u32 worker_count);
-b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity);
 
 #endif

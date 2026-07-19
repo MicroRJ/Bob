@@ -111,19 +111,16 @@ b32 platform_read_entire_file(Arena *arena, const char *path, String *result)
    file = CreateFileA(
       path,
       GENERIC_READ,
-      FILE_SHARE_READ | FILE_SHARE_WRITE |
-      FILE_SHARE_DELETE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
       NULL,
       OPEN_EXISTING,
       FILE_ATTRIBUTE_NORMAL,
       NULL
    );
    if (file == INVALID_HANDLE_VALUE) return false;
-   if (
-      !GetFileSizeEx(file, &file_size)
-      ||  file_size.QuadPart < 0
-      ||  (u64)file_size.QuadPart > SIZE_MAX - 1
-   ) {
+
+   u64 size = !GetFileSizeEx(file, &file_size);
+   if (size ||file_size.QuadPart < 0 || (u64) file_size.QuadPart > SIZE_MAX - 1) {
       CloseHandle(file);
       return false;
    }
@@ -301,7 +298,6 @@ b32 platform_run_command(const char *command_line, Arena *arena, Platform_Proces
 	PROCESS_INFORMATION process = {0};
 	HANDLE read_pipe = NULL;
 	HANDLE write_pipe = NULL;
-	Scratch scratch = {0};
 	String mutable_command = {0};
 	u64 mark;
 	b32 output_ok = true;
@@ -329,21 +325,18 @@ b32 platform_run_command(const char *command_line, Arena *arena, Platform_Proces
 	startup.hStdOutput = write_pipe;
 	startup.hStdError = write_pipe;
 
-	scratch = get_scratch();
-	mutable_command = arena_push_cstring(scratch.arena, command_line);
+	mutable_command = arena_push_cstring(arena, command_line);
 	if (!mutable_command.data) {
 		result->error_code = ERROR_NOT_ENOUGH_MEMORY;
-		end_scratch(scratch);
 		goto escape;
 	}
 	if (!CreateProcessA(NULL, mutable_command.data, NULL, NULL, TRUE, 0,
 		NULL, NULL, &startup, &process))
 	{
 		result->error_code = GetLastError();
-		end_scratch(scratch);
 		goto escape;
 	}
-	end_scratch(scratch);
+	arena_restore(arena, mark);
 	result->launched = true;
 
 	CloseHandle(write_pipe);
