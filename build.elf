@@ -11,22 +11,12 @@ core_sources := {
 	{ name = "platform",     path = "src/platform/platform_win32.c" },
 }
 
+cc := "clang-cl"
+
 include_dirs := {
 	"src",
 	"src/lib",
 	"elf/include",
-	"elf/src/base",
-	"elf/src/api",
-	"elf/src/core",
-	"elf/src/core/table",
-	"elf/src/core/atom",
-	"elf/src/platform",
-	"elf/src/vm",
-	"elf/src/libs",
-	"elf/src/compiler",
-	"elf/src/compiler/frontend",
-	"elf/src/compiler/middle",
-	"elf/src/compiler/backend",
 }
 
 
@@ -57,7 +47,7 @@ compile_source := fun(options) {
 	pdb := "build/obj/" + options.name + ".pdb"
 	task := {
 		name = "compile " + options.name,
-		command_line = "clang-cl" + compile_options + include_options + " /c " + options.source + " /Fo" + object + " /Fd" + pdb,
+		command_line = cc + compile_options + include_options + " /c " + options.source + " /Fo" + object + " /Fd" + pdb,
 		inputs = { options.source },
 		outputs = { object },
 		include_dirs = include_dirs,
@@ -81,16 +71,17 @@ bob_compiled := compile_source({
 	name = "bob",
 	source = "src/bob_main.c",
 })
-bob_dependencies := common_tasks:clone()
-bob_dependencies:add(bob_compiled.task)
-bob_inputs := common_objects:merge({
+bob_dependencies := common_tasks:clone():extend({
+	bob_compiled.task,
+})
+bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
 	"elf/build/elf.lib",
 })
 
 build_bob := {
 	name = "link Bob",
-	command_line = "clang-cl /nologo" + join(common_objects) + " " + bob_compiled.object +
+	command_line = cc + " /nologo" + join(common_objects) + " " + bob_compiled.object +
 		" elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
 	inputs = bob_inputs,
 	outputs = { "build/bob.exe" },
@@ -99,20 +90,18 @@ build_bob := {
 }
 
 tests_compiled := compile_source({
-	name = "tests",
-	source = "tests/tests.c",
+	name = "tests", source = "tests/tests.c",
 })
-test_dependencies := common_tasks:merge({
+test_dependencies := common_tasks:clone():extend({
 	tests_compiled.task,
 })
-test_inputs := common_objects:merge({
-	tests_compiled.object,
-	"elf/build/elf.lib",
+test_inputs := common_objects:clone():extend({
+	tests_compiled.object, "elf/build/elf.lib",
 })
 
 build_tests := {
 	name = "link tests",
-	command_line = "clang-cl /nologo" + join(common_objects) + " " + tests_compiled.object +
+	command_line = cc + " /nologo" + join(common_objects) + " " + tests_compiled.object +
 		" elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
 	inputs = test_inputs,
 	outputs = { "build/tests.exe" },
@@ -136,6 +125,9 @@ options := {
 
 entries := {}
 
+entries.ls = fun() {
+}
+
 entries.build = fun() {
 	ret bob.build({
 		targets = { build_bob },
@@ -150,4 +142,9 @@ entries.test = fun() {
 	})
 }
 
+
+
+entries.pet = fun() {
+	elf.printl("*purr*")
+}
 ret entries

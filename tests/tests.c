@@ -803,6 +803,19 @@ static b32 test_bob_script(void)
     return true;
 }
 
+// NOTE(RJ) we must be able to pet bob
+static b32 test_pet_bob(void)
+{
+	Arena arena = arena_create(MEGABYTES(16));
+	Script *script = script_load(&arena, STRING_LITERAL("build.elf"));
+	CHECK(script_is_loaded(script));
+	CHECK(script_has_function(script, STRING_LITERAL("pet")));
+	CHECK(script_invoke(script, STRING_LITERAL("pet")));
+	script_destroy(script);
+	arena_destroy(&arena);
+	return true;
+}
+
 static b32 test_option_resolution(void)
 {
 	Script_Options script = {
@@ -845,6 +858,7 @@ static void run_test(const char *name, b32 (*test)(void))
     b32 passed;
     ++tests_run;
     printf("%-32s", name);
+    fflush(stdout);
     passed = test();
     if (passed) {
         printf("PASS\n");
@@ -935,6 +949,7 @@ static int run_all_tests(void)
     run_test("elf build descriptor", test_elf_descriptor);
     run_test("elf generated descriptor", test_elf_generated_descriptor);
     run_test("Bob build script", test_bob_script);
+    run_test("pet Bob", test_pet_bob);
     run_test("script functions", test_script_functions);
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
