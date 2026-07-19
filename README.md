@@ -49,9 +49,6 @@ Then Bob builds it.
 build.bat
 ```
 
-Bob is self-hosting. `build.bat` uses the known-good `selfhost\bob.exe` to evaluate `build.elf`, build the current Bob and its tests, and run the test suite.
-
-
 ## Rant
 
 I despise build systems, especially the "good" ones.
