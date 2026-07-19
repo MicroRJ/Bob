@@ -247,7 +247,6 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 	while (!bob_is_finished(bob))
 	{
-		// Push the work
 		platform_mutex_lock(bob->mutex);
 		Bob_Node *node;
 		while (running < worker_count && bob_take_ready(bob, &node))
@@ -265,8 +264,6 @@ b32 bob_build(Bob *bob, u32 worker_count)
 			break;
 		}
 
-		// TODO(RJ) we should use another mutex for waiting for work ... no ?
-		// Await completions
 		platform_mutex_lock(bob->mutex);
 		while (!bob->stopping && bob->completion_count == 0) {
 			if (!platform_condition_wait(bob->completion_available, bob->mutex)) {
@@ -286,13 +283,13 @@ b32 bob_build(Bob *bob, u32 worker_count)
 			break;
 		}
 
-		// Report completion status
+		Profile_Scope report_completion_scope = profile_scope_begin("report_completion_scope");
 		b32 succeeded = report_completion(worker);
 		if (bob_complete(bob, worker->node, succeeded) != BOB_OK) {
 			internal_error = true;
 		}
+		profile_scope_end(&report_completion_scope);
 
-		// Resume worker
 		platform_mutex_lock(bob->mutex);
 		worker->node = NULL;
 		worker->awaiting_acknowledgement = false;
