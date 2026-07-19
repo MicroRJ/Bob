@@ -22,7 +22,7 @@ typedef struct Env_Table
    u32 capacity;
 } Env_Table;
 
-static b32 parse_environment_line(String line, Env_Entry *entry)
+static b32 parse_var(String line, Env_Entry *entry)
 {
    u64 separator;
    if (line.size && line.data[line.size - 1] == '\r') { --line.size; }
@@ -62,7 +62,7 @@ static b32 parse_capture(Arena *arena, String capture, Env_Table *before, Env_Ta
       }
 
       Env_Entry entry;
-      if (!parse_environment_line(line, &entry)) { continue; }
+      if (!parse_var(line, &entry)) { continue; }
 
       Env_Table *destination = found_marker ? after : before;
       if (destination->count >= destination->capacity) return false;

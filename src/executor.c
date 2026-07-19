@@ -20,9 +20,7 @@ typedef struct Worker
    Node_Id node;
    const char *command_line;
    Arena output;
-   DWORD exit_code;
-   DWORD launch_error;
-   b32 launched;
+   Platform_Process_Result process;
 
    b32 stopping;
    b32 busy;
@@ -104,117 +102,10 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
    return newest_input > oldest_output;
 }
 
-static b32 output_append(Arena *output, const void *data, size_t size) {
-   if ((u64)size > output->capacity - output->used) return false;
-   return arena_push_copy(output, (u64)size, data) != NULL;
-}
-
 static void run_command(Worker *worker)
 {
-   SECURITY_ATTRIBUTES security = { sizeof(security), NULL, TRUE };
-   STARTUPINFOA startup = {0};
-   PROCESS_INFORMATION process = {0};
-   HANDLE output_read = NULL;
-   HANDLE output_write = NULL;
-   char *command_line = NULL;
-   size_t command_size;
-   char read_buffer[4096];
-   DWORD bytes_read;
-   b32 output_ok = true;
-
    arena_reset(&worker->output);
-   worker->exit_code = UINT32_MAX;
-   worker->launch_error = ERROR_SUCCESS;
-   worker->launched = false;
-
-   if (!CreatePipe(&output_read, &output_write, &security, 0)) {
-      worker->launch_error = GetLastError();
-      return;
-   }
-   if (!SetHandleInformation(output_read, HANDLE_FLAG_INHERIT, 0))
-   {
-      worker->launch_error = GetLastError();
-      CloseHandle(output_read);
-      CloseHandle(output_write);
-      return;
-   }
-
-   command_size = strlen(worker->command_line) + 1;
-   command_line = malloc(command_size);
-   if (!command_line)
-   {
-      worker->launch_error = ERROR_NOT_ENOUGH_MEMORY;
-      CloseHandle(output_read);
-      CloseHandle(output_write);
-      return;
-   }
-   memcpy(command_line, worker->command_line, command_size);
-
-   startup.cb = sizeof(startup);
-   startup.dwFlags = STARTF_USESTDHANDLES;
-   startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-   startup.hStdOutput = output_write;
-   startup.hStdError = output_write;
-
-   if (!CreateProcessA(NULL, command_line, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process))
-   {
-      worker->launch_error = GetLastError();
-      free(command_line);
-      CloseHandle(output_read);
-      CloseHandle(output_write);
-      return;
-   }
-   worker->launched = true;
-
-   free(command_line);
-   CloseHandle(output_write);
-   output_write = NULL;
-
-   while (ReadFile(output_read, read_buffer, sizeof(read_buffer), &bytes_read, NULL))
-   {
-      if (bytes_read > 0 && !output_append(&worker->output, read_buffer, bytes_read)) {
-         output_ok = false;
-      }
-   }
-
-   WaitForSingleObject(process.hProcess, INFINITE);
-   if (!GetExitCodeProcess(process.hProcess, &worker->exit_code)) {
-      worker->launch_error = GetLastError();
-   }
-   else if (!output_ok) {
-      worker->launch_error = ERROR_NOT_ENOUGH_MEMORY;
-   }
-
-   CloseHandle(output_read);
-   CloseHandle(process.hThread);
-   CloseHandle(process.hProcess);
-}
-
-static void print_windows_error(DWORD error)
-{
-   char message[512];
-   DWORD length = FormatMessageA(
-      FORMAT_MESSAGE_FROM_SYSTEM |
-      FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL,
-      error,
-      0,
-      message,
-      sizeof(message),
-      NULL
-   );
-
-   while (length > 0
-      &&  (message[length - 1] == '\r' || message[length - 1] == '\n' || message[length - 1] == ' ')) {
-      --length;
-   }
-   if (length > 0) {
-      message[length] = 0;
-      fprintf(stderr, "error %lu: %s\n", error, message);
-   }
-   else {
-      fprintf(stderr, "error %lu\n", error);
-   }
+	platform_run_command(worker->command_line, &worker->output, &worker->process);
 }
 
 static DWORD WINAPI worker_main(void *parameter)
@@ -411,15 +302,15 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
          worker_index = wait_result - WAIT_OBJECT_0;
          worker = &workers[worker_index];
 
-         if (verbosity >= 2 && worker->output.used > 0)
+         if (verbosity >= 2 && worker->process.output.size > 0)
          {
             printf("[%s]\n", graph_node_name(graph, worker->node));
-            fwrite(worker->output.data, 1, (size_t)worker->output.used, stdout);
-            if (worker->output.data[worker->output.used - 1] != '\n') {
+            fwrite(worker->process.output.data, 1, (size_t)worker->process.output.size, stdout);
+            if (worker->process.output.data[worker->process.output.size - 1] != '\n') {
                putchar('\n');
             }
          }
-         succeeded = worker->launch_error == ERROR_SUCCESS && worker->exit_code == 0;
+         succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
          if (verbosity >= 0)
          {
             logger_log(
@@ -432,7 +323,7 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
                printf("  command: %s\n  exit code: 0\n", worker->command_line);
             }
          }
-         if (worker->launch_error != ERROR_SUCCESS)
+         if (worker->process.error_code != 0)
          {
             Scratch scratch = get_scratch();
 
@@ -441,11 +332,18 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
                "[%s] %s\n  command: %s\n  "
                ,
                graph_node_name(graph, worker->node),
-               worker->launched ? "process error" : "failed to start process",
+               worker->process.launched ? "process error" : "failed to start process",
                worker->command_line
             );
 
-            print_windows_error(worker->launch_error);
+            {
+				String message;
+				if (platform_error_message(worker->process.error_code, scratch.arena, &message)) {
+					fprintf(stderr, "error %u: %s\n", worker->process.error_code, message.data);
+				} else {
+					fprintf(stderr, "error %u\n", worker->process.error_code);
+				}
+			}
 
             String executable = command_executable(scratch.arena, string_from_cstring(worker->command_line));
             if (executable.data)
@@ -471,14 +369,14 @@ b32 executor_run_with_options(Graph *graph, u32 worker_count, i32 verbosity)
             }
             end_scratch(scratch);
          }
-         else if (worker->exit_code != 0)
+         else if (worker->process.exit_code != 0)
          {
             fprintf(
                stderr,
-               "[%s] process exited with code %lu\n  command: %s\n"
+               "[%s] process exited with code %u\n  command: %s\n"
                ,
                graph_node_name(graph, worker->node),
-               worker->exit_code,
+               worker->process.exit_code,
                worker->command_line
             );
          }
