@@ -259,6 +259,25 @@ String_Array string_split(Arena *arena, String string, char separator)
 	return result;
 }
 
+String_Array string_split_lines(Arena *arena, String string)
+{
+	String_Array result = string_split(arena, string, '\n');
+	for (u32 i = 0; i < result.count; ++i) {
+		String *line = result.items + i;
+		if (line->size && line->data[line->size - 1] == '\r') --line->size;
+	}
+	return result;
+}
+
+String_Array string_split_block(Arena *arena, String string)
+{
+	String_Array result = string_split(arena, string, 0);
+	while (result.count && result.items[result.count - 1].size == 0) {
+		--result.count;
+	}
+	return result;
+}
+
 String arena_push_string_copy(Arena *arena, String string)
 {
 	char *data = arena_push(arena, string.size + 1);

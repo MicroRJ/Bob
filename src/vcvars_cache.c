@@ -56,52 +56,16 @@ static b32 parse_var(String line, Env_Entry *entry)
 	return true;
 }
 
-static b32 parse_environment_lines(Arena *arena, String capture, Env_Table *table)
+static b32 parse_environment_table(Arena *arena, String_Array lines, Env_Table *table)
 {
-	u32 capacity = string_count_lines(capture);
-	u64 start = 0;
-	table->items = arena_push_zero_aligned(arena, sizeof(*table->items) * capacity, _Alignof(Env_Entry));
+	table->items = arena_push_zero_aligned(arena, sizeof(*table->items) * lines.count, _Alignof(Env_Entry));
 	if (!table->items) return false;
-	table->capacity = capacity;
-
-	while (start < capture.size)
-	{
-		u64 end = start;
-		while (end < capture.size && capture.data[end] != '\n') ++end;
-		String line = string_slice(capture, start, end - start);
-		if (line.size && line.data[line.size - 1] == '\r') { --line.size; }
-		start = end < capture.size ? end + 1 : end;
-
+	table->capacity = lines.count;
+	for (u32 i = 0; i < lines.count; ++i) {
 		Env_Entry entry;
-		if (!parse_var(line, &entry)) { continue; }
+		if (!parse_var(lines.items[i], &entry)) continue;
 		if (table->count >= table->capacity) return false;
 		table->items[table->count++] = entry;
-	}
-	return true;
-}
-
-static b32 parse_environment_block(Arena *arena, String block, Env_Table *table)
-{
-	u32 capacity = 0;
-	u64 start = 0;
-	while (start < block.size) {
-		++capacity;
-		while (start < block.size && block.data[start]) ++start;
-		++start;
-	}
-	table->items = arena_push_zero_aligned(arena, sizeof(*table->items) * capacity, _Alignof(Env_Entry));
-	if (!table->items) return false;
-	table->capacity = capacity;
-	start = 0;
-	while (start < block.size)
-	{
-		u64 end = start;
-		Env_Entry entry;
-		while (end < block.size && block.data[end]) ++end;
-		if (parse_var(string_slice(block, start, end - start), &entry)) {
-			table->items[table->count++] = entry;
-		}
-		start = end + 1;
 	}
 	return true;
 }
@@ -361,7 +325,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to capture the current environment");
 		goto cleanup;
 	}
-	if (!parse_environment_block(arena, before_block, &before))
+	if (!parse_environment_table(arena, string_split_block(arena, before_block), &before))
 	{
 		log_error("unable to parse the current environment");
 		goto cleanup;
@@ -370,7 +334,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("vcvars64 failed with exit code %u", exit_code);
 		goto cleanup;
 	}
-	if (!parse_environment_lines(arena, after_capture, &after))
+	if (!parse_environment_table(arena, string_split_lines(arena, after_capture), &after))
 	{
 		log_error("unable to parse the environment produced by vcvars64");
 		goto cleanup;

@@ -98,6 +98,8 @@ typedef struct String_Array {
 #define string_equal bob_string_equal
 #define string_slice bob_string_slice
 #define string_split bob_string_split
+#define string_split_lines bob_string_split_lines
+#define string_split_block bob_string_split_block
 #define arena_push_string_copy bob_arena_push_string_copy
 #define arena_push_cstring bob_arena_push_cstring
 
@@ -136,6 +138,8 @@ b32 string_ensure_terminated(String string);
 b32 string_equal(String a, String b);
 String string_slice(String string, u64 offset, u64 size);
 String_Array string_split(Arena *arena, String string, char separator);
+String_Array string_split_lines(Arena *arena, String string);
+String_Array string_split_block(Arena *arena, String string);
 String arena_push_string_copy(Arena *arena, String string);
 String arena_push_cstring(Arena *arena, const char *text);
 b32 string_equal_insensitive(String left, String right);

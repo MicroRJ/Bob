@@ -129,6 +129,20 @@ static b32 test_arena_and_strings(void)
 		CHECK(string_equal(parts.items[2], STRING_LITERAL("b")));
 		CHECK(parts.items[3].size == 0);
 	}
+	{
+		String_Array lines = string_split_lines(&arena, STRING_LITERAL("one\r\ntwo\n"));
+		CHECK(lines.count == 3);
+		CHECK(string_equal(lines.items[0], STRING_LITERAL("one")));
+		CHECK(string_equal(lines.items[1], STRING_LITERAL("two")));
+		CHECK(lines.items[2].size == 0);
+	}
+	{
+		String_Array entries = string_split_block(&arena,
+			(String){ .data = "one\0two\0", .size = 8 });
+		CHECK(entries.count == 2);
+		CHECK(string_equal(entries.items[0], STRING_LITERAL("one")));
+		CHECK(string_equal(entries.items[1], STRING_LITERAL("two")));
+	}
 
     CHECK(arena_push(&arena, 1) != NULL);
     aligned = arena_push_zero_aligned(&arena, 32, 32);
