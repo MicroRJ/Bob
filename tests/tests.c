@@ -30,7 +30,7 @@ static b32 environment_equals(const char *name, const char *expected)
 {
     Scratch scratch = get_scratch();
     String value = {0};
-    b32 equal = platform_get_environment(name, scratch.arena, &value) &&
+	b32 equal = platform_get_environment(string_from_cstring(name), scratch.arena, &value) &&
         string_equal(value, string_from_cstring(expected));
     end_scratch(scratch);
     return equal;
@@ -45,9 +45,9 @@ static b32 test_vcvars_cache_application(void)
         "set BOB_VCVARS_TEST_SET=value\n";
     b32 result = false;
 
-    platform_set_environment("BOB_VCVARS_TEST_PREPEND", "base");
-    platform_set_environment("BOB_VCVARS_TEST_APPEND", "base");
-    platform_set_environment("BOB_VCVARS_TEST_SET", NULL);
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), STRING_LITERAL("base"));
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), STRING_LITERAL("base"));
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
 
     if (!vcvars_cache_apply(string_from_cstring(cache_text))) goto cleanup;
     if (!environment_equals("BOB_VCVARS_TEST_PREPEND", "tool;base")) goto cleanup;
@@ -56,9 +56,9 @@ static b32 test_vcvars_cache_application(void)
     result = true;
 
 cleanup:
-    platform_set_environment("BOB_VCVARS_TEST_PREPEND", NULL);
-    platform_set_environment("BOB_VCVARS_TEST_APPEND", NULL);
-    platform_set_environment("BOB_VCVARS_TEST_SET", NULL);
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), (String){0});
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), (String){0});
+	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
     return result;
 }
 
@@ -109,7 +109,7 @@ static b32 test_arena_and_strings(void)
     start = arena_top(&arena);
     CHECK(arena_push_text(&arena, "hello") == start);
     CHECK(arena_append_str(&arena, STRING_LITERAL(" arena")) != NULL);
-    CHECK(arena_pushf(&arena, " %d", 42) != NULL);
+    CHECK(arena_appendf(&arena, " %d", 42) != NULL);
     built = string_from_range(start, arena_top(&arena));
     CHECK(arena_push_zero(&arena, 1) != NULL);
     CHECK(string_equal(built, STRING_LITERAL("hello arena 42")));
@@ -119,6 +119,16 @@ static b32 test_arena_and_strings(void)
     CHECK(string_equal(copy, built));
     CHECK(copy.data[copy.size] == 0);
     CHECK(string_equal(string_slice(copy, 6, 5), STRING_LITERAL("arena")));
+	CHECK(string_ensure_terminated(STRING_LITERAL("hello")));
+	CHECK(!string_ensure_terminated(string_slice(STRING_LITERAL("hello"), 0, 4)));
+	{
+		String_Array parts = string_split(&arena, STRING_LITERAL("a;;b;"), ';');
+		CHECK(parts.count == 4);
+		CHECK(string_equal(parts.items[0], STRING_LITERAL("a")));
+		CHECK(parts.items[1].size == 0);
+		CHECK(string_equal(parts.items[2], STRING_LITERAL("b")));
+		CHECK(parts.items[3].size == 0);
+	}
 
     CHECK(arena_push(&arena, 1) != NULL);
     aligned = arena_push_zero_aligned(&arena, 32, 32);
@@ -444,7 +454,7 @@ static b32 test_executor_skips_existing_output(void)
     first_graph = graph_create();
     add_node(first_graph, "create output");
     CHECK(run_tasks(first_graph, &task, 1, 1));
-    CHECK(platform_file_info(output_path, &info));
+	CHECK(platform_file_info(string_from_cstring(output_path), &info));
     graph_destroy(first_graph);
 
     task.command_line = "bob_command_that_must_not_run.exe";
@@ -568,7 +578,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     graph = graph_create();
     add_node(graph, "newest input wins");
     CHECK(run_tasks(graph, &task, 1, 1));
-    CHECK(platform_file_info(marker, &info));
+	CHECK(platform_file_info(string_from_cstring(marker), &info));
     graph_destroy(graph);
 
     CHECK(DeleteFileA(output_b));
@@ -576,8 +586,8 @@ static b32 test_multiple_inputs_and_outputs(void)
     graph = graph_create();
     add_node(graph, "one output missing");
     CHECK(run_tasks(graph, &task, 1, 1));
-    CHECK(platform_file_info(output_b, &info));
-    CHECK(platform_file_info(marker, &info));
+	CHECK(platform_file_info(string_from_cstring(output_b), &info));
+	CHECK(platform_file_info(string_from_cstring(marker), &info));
     graph_destroy(graph);
 
     CHECK(DeleteFileA(input_a));
@@ -632,7 +642,7 @@ static b32 test_dependency_rebuild_propagates(void)
     parent = add_node(graph, "propagated parent");
     CHECK_OK(graph_add_dependency(graph, parent, dependency));
     CHECK(run_tasks(graph, tasks, 2, 1));
-    CHECK(platform_file_info(marker, &info));
+	CHECK(platform_file_info(string_from_cstring(marker), &info));
     graph_destroy(graph);
 
     CHECK(DeleteFileA(dependency_input));
@@ -690,7 +700,7 @@ static b32 test_recursive_include_rebuilds(void)
     graph = graph_create();
     add_node(graph, "recursive include dirty");
     CHECK(run_tasks(graph, &task, 1, 1));
-    CHECK(platform_file_info(marker, &info));
+	CHECK(platform_file_info(string_from_cstring(marker), &info));
     graph_destroy(graph);
 
     CHECK(write_test_file_at_time(output, 100000000000000400ULL));
@@ -699,7 +709,7 @@ static b32 test_recursive_include_rebuilds(void)
     graph = graph_create();
     add_node(graph, "recursive include clean");
     CHECK(run_tasks(graph, &task, 1, 1));
-    CHECK(!platform_file_info(marker, &info));
+	CHECK(!platform_file_info(string_from_cstring(marker), &info));
     graph_destroy(graph);
 
     CHECK(DeleteFileA(source));

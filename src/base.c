@@ -135,7 +135,7 @@ char *arena_append_str(Arena *arena, String string)
 	return arena_push_data(arena, string.data, string.size);
 }
 
-char *arena_push_char(Arena *arena, char character)
+char *arena_append_char(Arena *arena, char character)
 {
 	char *result = arena_push(arena, 1);
 	if (result) *result = character;
@@ -167,7 +167,7 @@ char *arena_pushfv(Arena *arena, const char *format, va_list arguments)
 	return data;
 }
 
-char *arena_pushf(Arena *arena, const char *format, ...)
+char *arena_appendf(Arena *arena, const char *format, ...)
 {
 	va_list arguments;
 	char *result;
@@ -218,6 +218,11 @@ String string_from_cstring(const char *text)
 	return string_from_data((char *)text, text ? (u64)strlen(text) : 0);
 }
 
+b32 string_ensure_terminated(String string)
+{
+	return string.data && string.data[string.size] == 0;
+}
+
 String string_slice(String string, u64 offset, u64 size)
 {
 	assert(offset <= string.size && size <= string.size - offset);
@@ -225,6 +230,33 @@ String string_slice(String string, u64 offset, u64 size)
 		return (String){0};
 	}
 	return string_from_data(string.data + offset, size);
+}
+
+String_Array string_split(Arena *arena, String string, char separator)
+{
+	String_Array result = {0};
+	if (!arena) return result;
+
+	u32 count = 1;
+	for (u64 i = 0; i < string.size; ++i) {
+		if (string.data[i] == separator) {
+			if (count == UINT32_MAX) return result;
+			++count;
+		}
+	}
+
+	result.items = arena_push_zero_aligned(arena, sizeof(*result.items) * count, _Alignof(String));
+	if (!result.items) return (String_Array){0};
+
+	u64 start = 0;
+
+	for (u64 i = 0; i <= string.size; ++i) {
+		if (i == string.size || string.data[i] == separator) {
+			result.items[result.count++] = string_slice(string, start, i - start);
+			start = i + 1;
+		}
+	}
+	return result;
 }
 
 String arena_push_string_copy(Arena *arena, String string)

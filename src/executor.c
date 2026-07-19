@@ -66,13 +66,13 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
    for (i = 0; i < task->output_count; ++i)
    {
       Platform_File_Info info;
-      if (!platform_file_info(task->outputs[i], &info)) return true;
+		if (!platform_file_info(string_from_cstring(task->outputs[i]), &info)) return true;
       if (info.write_time < oldest_output) { oldest_output = info.write_time; }
    }
    for (i = 0; i < task->input_count; ++i)
    {
       Platform_File_Info info;
-      if (!platform_file_info(task->inputs[i], &info)) return true;
+		if (!platform_file_info(string_from_cstring(task->inputs[i]), &info)) return true;
       if (info.write_time > newest_input) { newest_input = info.write_time; }
    }
    {

@@ -66,11 +66,11 @@ void logger_logv(Log_Level level, const char *tag, const char *format, va_list a
    colors = logger.colors &&
    platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
    if (colors) { arena_push_text(scratch.arena, level_color(level)); }
-   arena_pushf(scratch.arena, "[%s]", tag);
+   arena_appendf(scratch.arena, "[%s]", tag);
    if (colors) { arena_push_text(scratch.arena, "\x1b[0m"); }
-   arena_push_char(scratch.arena, ' ');
+   arena_append_char(scratch.arena, ' ');
    arena_pushfv(scratch.arena, format, arguments);
-   arena_push_char(scratch.arena, '\n');
+   arena_append_char(scratch.arena, '\n');
    message = string_from_range(start, arena_top(scratch.arena));
    fwrite(message.data, 1, (size_t)message.size, stream);
    fflush(stream);

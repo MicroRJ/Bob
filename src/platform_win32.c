@@ -9,6 +9,7 @@ static SRWLOCK output_lock = SRWLOCK_INIT;
 
 b32 platform_executable_resolves(String name)
 {
+	if (!string_ensure_terminated(name)) return false;
    Scratch scratch = get_scratch();
 	DWORD capacity = KILOBYTES(32);
    char *resolved = arena_reserve(scratch.arena, capacity);
@@ -18,12 +19,13 @@ b32 platform_executable_resolves(String name)
 	return found;
 }
 
-b32 platform_file_info(const char *path, Platform_File_Info *info)
+b32 platform_file_info(String path, Platform_File_Info *info)
 {
    WIN32_FILE_ATTRIBUTE_DATA attributes;
    ULARGE_INTEGER write_time;
 
-   if (!path || !info || !GetFileAttributesExA(path, GetFileExInfoStandard, &attributes)) {
+	if (!string_ensure_terminated(path) || !info ||
+		!GetFileAttributesExA(path.data, GetFileExInfoStandard, &attributes)) {
       return false;
    }
 
@@ -65,23 +67,23 @@ b32 platform_current_directory(Arena *arena, String *result)
    return false;
 }
 
-b32 platform_absolute_path(Arena *arena, const char *path, String *result)
+b32 platform_absolute_path(Arena *arena, String path, String *result)
 {
    u64 mark;
    DWORD required;
    DWORD length;
    char *data;
-   if (!arena || !path || !result) return false;
+	if (!arena || !string_ensure_terminated(path) || !result) return false;
    mark = arena_mark(arena);
    result->data = NULL;
    result->size = 0;
    for (;;)
    {
-      required = GetFullPathNameA(path, 0, NULL, NULL);
+		required = GetFullPathNameA(path.data, 0, NULL, NULL);
       if (required == 0) { goto failure; }
       data = arena_push(arena, required);
       if (!data) { goto failure; }
-      length = GetFullPathNameA(path, required, data, NULL);
+		length = GetFullPathNameA(path.data, required, data, NULL);
       if (length > 0 && length < required)
       {
          result->data = data;
@@ -96,7 +98,7 @@ b32 platform_absolute_path(Arena *arena, const char *path, String *result)
    return false;
 }
 
-b32 platform_read_entire_file(Arena *arena, const char *path, String *result)
+b32 platform_read_entire_file(Arena *arena, String path, String *result)
 {
    HANDLE file;
    LARGE_INTEGER file_size;
@@ -104,12 +106,12 @@ b32 platform_read_entire_file(Arena *arena, const char *path, String *result)
    size_t total = 0;
    u64 mark;
 
-   if (!arena || !path || !result) return false;
+	if (!arena || !string_ensure_terminated(path) || !result) return false;
    mark = arena_mark(arena);
    result->data = NULL;
    result->size = 0;
    file = CreateFileA(
-      path,
+		path.data,
       GENERIC_READ,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
       NULL,
@@ -149,13 +151,13 @@ b32 platform_read_entire_file(Arena *arena, const char *path, String *result)
    return true;
 }
 
-b32 platform_write_entire_file(const char *path, const void *data, size_t size)
+b32 platform_write_entire_file(String path, const void *data, size_t size)
 {
    HANDLE file;
    size_t total = 0;
 
-   if (!path || (!data && size)) return false;
-   file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (!string_ensure_terminated(path) || (!data && size)) return false;
+   file = CreateFileA(path.data, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
    if (file == INVALID_HANDLE_VALUE) return false;
    while (total < size)
    {
@@ -172,43 +174,67 @@ b32 platform_write_entire_file(const char *path, const void *data, size_t size)
    return true;
 }
 
-b32 platform_create_directory(const char *path)
+b32 platform_create_directory(String path)
 {
-   if (!path) return false;
-   if (CreateDirectoryA(path, NULL)) return true;
+	if (!string_ensure_terminated(path)) return false;
+	if (CreateDirectoryA(path.data, NULL)) return true;
    return GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
 b32 platform_local_app_data(Arena *arena, String *result) {
-   return platform_get_environment("LOCALAPPDATA", arena, result) &&
-   result->size > 0;
+	return platform_get_environment(STRING_LITERAL("LOCALAPPDATA"), arena, result) && result->size > 0;
 }
 
-b32 platform_get_environment(const char *name, Arena *arena, String *value)
+b32 platform_get_environment(String name, Arena *arena, String *value)
 {
    DWORD required;
    DWORD length;
    char *data;
-   if (!name || !arena || !value) return false;
+	if (!string_ensure_terminated(name) || !arena || !value) return false;
    value->data = NULL;
    value->size = 0;
    SetLastError(ERROR_SUCCESS);
-   required = GetEnvironmentVariableA(name, NULL, 0);
+	required = GetEnvironmentVariableA(name.data, NULL, 0);
    if (required == 0) {
       DWORD error = GetLastError();
       return error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND;
    }
    data = arena_reserve(arena, required);
    if (!data) return false;
-   length = GetEnvironmentVariableA(name, data, required);
+	length = GetEnvironmentVariableA(name.data, data, required);
    if (length == 0 || length >= required || !arena_push(arena, required)) return false;
    value->data = data;
    value->size = length;
    return true;
 }
 
-b32 platform_set_environment(const char *name, const char *value) {
-   return name && SetEnvironmentVariableA(name, value) != 0;
+b32 platform_get_environment_block(Arena *arena, String *block)
+{
+	LPCH environment;
+	LPCH cursor;
+	u64 size;
+	char *copy;
+
+	if (!arena || !block) return false;
+	block->data = NULL;
+	block->size = 0;
+	environment = GetEnvironmentStringsA();
+	if (!environment) return false;
+	cursor = environment;
+	while (*cursor) cursor += strlen(cursor) + 1;
+	size = (u64)(cursor - environment);
+	copy = arena_push_copy(arena, size + 1, environment);
+	FreeEnvironmentStringsA(environment);
+	if (!copy) return false;
+	block->data = copy;
+	block->size = size;
+	return true;
+}
+
+b32 platform_set_environment(String name, String value) {
+	if (!string_ensure_terminated(name)) return false;
+	if (value.data && !string_ensure_terminated(value)) return false;
+	return SetEnvironmentVariableA(name.data, value.data) != 0;
 }
 
 b32 platform_capture_stdout(const char *command_line, Arena *arena, String *output, u32 *exit_code)

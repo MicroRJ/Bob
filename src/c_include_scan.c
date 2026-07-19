@@ -349,8 +349,8 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
             if (slash) {
                 *slash = 0;
                 if (join_path(candidate, sizeof(candidate), directory, name) &&
-                    platform_file_info(candidate, &(Platform_File_Info){0}) &&
-                    platform_absolute_path(arena, candidate, resolved)) {
+					platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
+					platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
                     return true;
                 }
             }
@@ -359,16 +359,16 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
 
     for (i = 0; i < context->include_directory_count; ++i) {
         if (join_path(candidate, sizeof(candidate), context->include_directories[i], name) &&
-            platform_file_info(candidate, &(Platform_File_Info){0}) &&
-            platform_absolute_path(arena, candidate, resolved)) {
+			platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
+			platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
             return true;
         }
     }
     for (i = 0; i < context->command_include_directories.count; ++i) {
         if (join_path(candidate, sizeof(candidate),
                       context->command_include_directories.items[i].data, name) &&
-            platform_file_info(candidate, &(Platform_File_Info){0}) &&
-            platform_absolute_path(arena, candidate, resolved)) {
+			platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
+			platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
             return true;
         }
     }
@@ -388,8 +388,8 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
 
     scratch = get_scratch();
     if (depth > 256 ||
-        !platform_absolute_path(scratch.arena, path, &absolute) ||
-        !platform_file_info(absolute.data, &info)) {
+		!platform_absolute_path(scratch.arena, string_from_cstring(path), &absolute) ||
+		!platform_file_info(absolute, &info)) {
         end_scratch(scratch);
         return true;
     }
@@ -409,7 +409,7 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
         return true;
     }
 
-    if (!platform_read_entire_file(scratch.arena, absolute.data, &source)) {
+	if (!platform_read_entire_file(scratch.arena, absolute, &source)) {
         end_scratch(scratch);
         return true;
     }

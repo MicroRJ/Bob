@@ -37,7 +37,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
 
    {
       Platform_File_Info build_file;
-      if (!platform_file_info(path, &build_file))
+		if (!platform_file_info(string_from_cstring(path), &build_file))
       {
          Scratch scratch = get_scratch();
          String working_directory;
@@ -218,14 +218,20 @@ int main(int argument_count, char **arguments)
    }
    if (cache_vcvars)
    {
-      char cache_path[KILOBYTES(32)];
+		Scratch scratch;
+		String cache_path;
       if (has_build_path || worker_override || verbosity_override || profile)
       {
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;
       }
-      if (!vcvars_cache_refresh(cache_path, sizeof(cache_path))) return 1;
-      log_success("cached vcvars64 environment: %s", cache_path);
+		scratch = get_scratch();
+		if (!vcvars_cache_refresh(scratch.arena, &cache_path)) {
+			end_scratch(scratch);
+			return 1;
+		}
+		log_success("cached vcvars64 environment: %s", cache_path.data);
+		end_scratch(scratch);
       return 0;
    }
    profiler_set_enabled(profile);

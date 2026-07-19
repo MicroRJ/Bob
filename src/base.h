@@ -84,18 +84,20 @@ typedef struct String_Array {
 #define arena_push_data bob_arena_push_data
 #define arena_push_text bob_arena_push_text
 #define arena_append_str bob_arena_push_string
-#define arena_push_char bob_arena_push_char
+#define arena_append_char bob_arena_push_char
 #define arena_push_repeat bob_arena_push_repeat
 #define arena_pushfv bob_arena_pushfv
-#define arena_pushf bob_arena_pushf
+#define arena_appendf bob_arena_pushf
 #define get_scratch bob_get_scratch
 #define end_scratch bob_end_scratch
 #define destroy_global_scratch bob_destroy_global_scratch
 #define string_from_data bob_string_from_data
 #define string_from_range bob_string_from_range
 #define string_from_cstring bob_string_from_cstring
+#define string_ensure_terminated bob_string_ensure_terminated
 #define string_equal bob_string_equal
 #define string_slice bob_string_slice
+#define string_split bob_string_split
 #define arena_push_string_copy bob_arena_push_string_copy
 #define arena_push_cstring bob_arena_push_cstring
 
@@ -118,10 +120,10 @@ void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment, const void 
 char *arena_push_data(Arena *arena, const void *data, u64 size);
 char *arena_push_text(Arena *arena, const char *text);
 char *arena_append_str(Arena *arena, String string);
-char *arena_push_char(Arena *arena, char character);
+char *arena_append_char(Arena *arena, char character);
 void arena_push_repeat(Arena *arena, char character, u64 count);
 char *arena_pushfv(Arena *arena, const char *format, va_list arguments);
-char *arena_pushf(Arena *arena, const char *format, ...);
+char *arena_appendf(Arena *arena, const char *format, ...);
 
 Scratch get_scratch(void);
 void end_scratch(Scratch scratch);
@@ -130,8 +132,10 @@ void destroy_global_scratch(void);
 String string_from_data(void *data, u64 size);
 String string_from_range(void *start, void *end);
 String string_from_cstring(const char *text);
+b32 string_ensure_terminated(String string);
 b32 string_equal(String a, String b);
 String string_slice(String string, u64 offset, u64 size);
+String_Array string_split(Arena *arena, String string, char separator);
 String arena_push_string_copy(Arena *arena, String string);
 String arena_push_cstring(Arena *arena, const char *text);
 b32 string_equal_insensitive(String left, String right);
