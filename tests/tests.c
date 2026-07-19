@@ -3,7 +3,7 @@
 #include "elf_adapter.h"
 #include "c_include_scan.h"
 #include "logger.h"
-#include "platform.h"
+#include "platform/platform.h"
 #include "vcvars_cache.h"
 
 #define WIN32_LEAN_AND_MEAN

@@ -1,5 +1,5 @@
 #include "base.h"
-#include "platform.h"
+#include "platform/platform.h"
 
 #include <assert.h>
 #include <stdio.h>

@@ -1,5 +1,5 @@
 #include "c_include_scan.h"
-#include "platform.h"
+#include "platform/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>

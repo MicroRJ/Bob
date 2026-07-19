@@ -1,7 +1,7 @@
 #include "vcvars_cache.h"
 
 #include "logger.h"
-#include "platform.h"
+#include "platform/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -308,7 +308,7 @@ return saw_header;
 b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 {
 
-	static const char command[] = "cmd.exe /d /s /c \"call vcvars64 >nul&&set\"";
+	static const String command = STRING_LITERAL("cmd.exe /d /s /c \"call vcvars64 >nul&&set\"");
 
 	Env_Table before = {0};
 	Env_Table after = {0};
@@ -341,12 +341,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to parse the current environment");
 		goto cleanup;
 	}
-	if (!platform_run_command(
-		string_from_cstring(command),
-		arena,
-		(Platform_Process_Options){ .hide_window = true },
-		&process
-	)) {
+	if (!platform_run_command(command, arena, (Platform_Process_Options){ .hide_window = true }, &process)) {
 		log_error("unable to run vcvars64 (error %u)", process.error_code);
 		goto cleanup;
 	}

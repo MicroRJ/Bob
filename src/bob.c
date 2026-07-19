@@ -2,7 +2,7 @@
 #include "executor.h"
 #include "elf_adapter.h"
 #include "logger.h"
-#include "platform.h"
+#include "platform/platform.h"
 #include "profiler.h"
 #include "vcvars_cache.h"
 
