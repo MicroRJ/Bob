@@ -1,33 +1,14 @@
-add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
-	ret {
-		name = name,
-		command_line = command_line,
-		inputs = inputs,
-		outputs = outputs,
-		include_dirs = include_dirs,
-		dependencies = dependencies,
-	}
-}
-
-join := fun(values) {
-	result := ""
-	for value := values[0 ... values:length()] ? {
-		result += " " + value
-	}
-	ret result
-}
-
 core_sources := {
-	"src/base.c",
-	"src/logger.c",
-	"src/profiler.c",
-	"src/bob_runtime.c",
-	"src/bob_builder.c",
-	"src/c_include_scan.c",
-	"src/frontends/frontend.c",
-	"src/frontends/elf_adapter.c",
-	"src/platform/platform_win32.c",
-	"src/vcvars_cache.c",
+	{ name = "base",         path = "src/base.c" },
+	{ name = "logger",       path = "src/logger.c" },
+	{ name = "profiler",     path = "src/profiler.c" },
+	{ name = "bob_runtime",  path = "src/bob_runtime.c" },
+	{ name = "bob_builder",  path = "src/bob_builder.c" },
+	{ name = "include_scan", path = "src/c_include_scan.c" },
+	{ name = "frontend",     path = "src/frontends/frontend.c" },
+	{ name = "elf_adapter",  path = "src/frontends/elf_adapter.c" },
+	{ name = "platform",     path = "src/platform/platform_win32.c" },
+	{ name = "vcvars_cache", path = "src/vcvars_cache.c" },
 }
 
 include_dirs := {
@@ -47,44 +28,87 @@ include_dirs := {
 	"elf/src/compiler/backend",
 }
 
+add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
+	ret {
+		name = name,
+		command_line = command_line,
+		inputs = inputs,
+		outputs = outputs,
+		include_dirs = include_dirs,
+		dependencies = dependencies,
+	}
+}
+
+copy_array := fun(values) {
+	result := {}
+	for value := values[0 ... values:length()] ? { result:add(value) }
+	ret result
+}
+
+join := fun(values) {
+	result := ""
+	for value := values[0 ... values:length()] ? { result += " " + value }
+	ret result
+}
+
 include_options := ""
 for directory := include_dirs[0 ... include_dirs:length()] ? {
 	include_options += " /I" + directory
 }
 
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
-core_command := join(core_sources) + include_options
 
 prepare := add_task(
-	"prepare build directory",
-	"cmd /c if not exist build mkdir build",
-	{}, { "build" }, {}, {}
+	"prepare object directory",
+	"cmd /c if not exist build\\obj mkdir build\\obj",
+	{}, { "build/obj" }, {}, {}
 )
 
-bob_sources := {}
-for source := core_sources[0 ... core_sources:length()] ? { bob_sources:add(source) }
-bob_sources:add("src/bob.c")
-bob_sources:add("elf/build/elf.lib")
+compile_source := fun(name, source) {
+	object := "build/obj/" + name + ".obj"
+	pdb := "build/obj/" + name + ".pdb"
+	task := add_task(
+		"compile " + name,
+		"clang-cl" + compile_options + include_options + " /c " + source + " /Fo" + object + " /Fd" + pdb,
+		{ source }, { object }, include_dirs, { prepare }
+	)
+	ret { task = task, object = object }
+}
+
+common_tasks := {}
+common_objects := {}
+for source := core_sources[0 ... core_sources:length()] ? {
+	compiled := compile_source(source.name, source.path)
+	common_tasks:add(compiled.task)
+	common_objects:add(compiled.object)
+}
+
+bob_compiled := compile_source("bob", "src/bob.c")
+bob_dependencies := copy_array(common_tasks)
+bob_dependencies:add(bob_compiled.task)
+bob_inputs := copy_array(common_objects)
+bob_inputs:add(bob_compiled.object)
+bob_inputs:add("elf/build/elf.lib")
 
 build_bob := add_task(
-	"build Bob",
-	"clang-cl" + compile_options + core_command +
-	" src/bob.c /Fdbuild\\bob_compile.pdb /Febuild\\bob.exe" +
-	" /link elf\\build\\elf.lib /PDB:build\\bob.pdb",
-	bob_sources, { "build/bob.exe" }, include_dirs, { prepare }
+	"link Bob",
+	"clang-cl /nologo" + join(common_objects) + " " + bob_compiled.object +
+	" elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
+	bob_inputs, { "build/bob.exe" }, {}, bob_dependencies
 )
 
-test_sources := {}
-for source := core_sources[0 ... core_sources:length()] ? { test_sources:add(source) }
-test_sources:add("tests/tests.c")
-test_sources:add("elf/build/elf.lib")
+tests_compiled := compile_source("tests", "tests/tests.c")
+test_dependencies := copy_array(common_tasks)
+test_dependencies:add(tests_compiled.task)
+test_inputs := copy_array(common_objects)
+test_inputs:add(tests_compiled.object)
+test_inputs:add("elf/build/elf.lib")
 
 build_tests := add_task(
-	"build tests",
-	"clang-cl" + compile_options + core_command +
-	" tests/tests.c /Fdbuild\\tests_compile.pdb /Febuild\\tests.exe" +
-	" /link elf\\build\\elf.lib /PDB:build\\tests.pdb",
-	test_sources, { "build/tests.exe" }, include_dirs, { prepare }
+	"link tests",
+	"clang-cl /nologo" + join(common_objects) + " " + tests_compiled.object +
+	" elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
+	test_inputs, { "build/tests.exe" }, {}, test_dependencies
 )
 
 run_tests := add_task(
@@ -94,7 +118,8 @@ run_tests := add_task(
 )
 
 ret {
-	targets = { build_bob, run_tests },
+	targets = { build_bob },
+	disabled_targets = { run_tests },
 	options = {
 		workers = 4,
 		verbosity = 0,

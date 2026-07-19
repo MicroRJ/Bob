@@ -1,6 +1,5 @@
 #include "profiler.h"
 
-
 #include "logger.h"
 #include "platform/platform.h"
 
