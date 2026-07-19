@@ -683,6 +683,26 @@ static b32 test_dependency_rebuild_propagates(void)
     return true;
 }
 
+static b32 test_transparent_dependency(void)
+{
+	const char *parent_output = "build\\transparent_parent.out";
+	String parent_outputs[] = { string_from_cstring(parent_output) };
+	Bob_Task tasks[2] = {0};
+	CHECK(write_test_file_at_time(parent_output, 100000000000000300ULL));
+	tasks[0].command_line = STRING_LITERAL("cmd /c exit /b 0");
+	tasks[0].transparent = true;
+	tasks[1].command_line = STRING_LITERAL("bob_transparent_parent_must_not_run.exe");
+	tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
+	Bob *graph = bob_create();
+	Bob_Node *dependency = add_node(graph, "transparent dependency");
+	Bob_Node *parent = add_node(graph, "clean transparent parent");
+	CHECK_OK(bob_add_dependency(graph, parent, dependency));
+	CHECK(run_tasks(graph, tasks, 2, 1));
+	bob_destroy(graph);
+	CHECK(DeleteFileA(parent_output));
+	return true;
+}
+
 static b32 test_recursive_include_rebuilds(void)
 {
     const char *source = "build\\include_scan.c";
@@ -945,6 +965,7 @@ static int run_all_tests(void)
     run_test("newer input", test_newer_input_rebuilds);
     run_test("multiple inputs and outputs", test_multiple_inputs_and_outputs);
     run_test("dependency rebuild", test_dependency_rebuild_propagates);
+    run_test("transparent dependency", test_transparent_dependency);
     run_test("recursive includes", test_recursive_include_rebuilds);
     run_test("elf build descriptor", test_elf_descriptor);
     run_test("elf generated descriptor", test_elf_generated_descriptor);

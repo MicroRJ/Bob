@@ -43,6 +43,7 @@ typedef struct Bob_Task
    String_Array inputs;
    String_Array outputs;
    String_Array include_directories;
+   b32          transparent;
 }
 Bob_Task;
 

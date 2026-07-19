@@ -307,6 +307,14 @@ static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result)
          snprintf(result->error, sizeof(result->error), "task %u requires string fields 'name' and 'command_line'", i);
          goto cleanup;
       }
+	  elf_ValueView transparent = field(state, description, "transparent");
+	  if (transparent.type != ELF_VALUE_TYPE_NIL) {
+		 if (transparent.type != ELF_VALUE_TYPE_INTEGER) {
+			snprintf(result->error, sizeof(result->error), "transparent for '%s' must be a boolean", task.name.data);
+			goto cleanup;
+		 }
+		 task.transparent = transparent.as.integer != 0;
+	  }
 
       if (!copy_string_array(state, scratch.arena, field(state, description, "inputs"), "inputs", task.name, &task.inputs, result->error, sizeof(result->error))) goto cleanup;
       if (!copy_string_array(state, scratch.arena, field(state, description, "outputs"), "outputs", task.name, &task.outputs, result->error, sizeof(result->error))) goto cleanup;

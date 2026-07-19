@@ -42,6 +42,16 @@ prepare := {
 	dependencies = {},
 }
 
+build_elf := {
+	name = "build Elf library",
+	command_line = "cmd /c \"cd /d elf && ..\\selfhost\\bob.exe build.elf lib\"",
+	inputs = {},
+	outputs = {},
+	include_dirs = {},
+	dependencies = {},
+	transparent = true,
+}
+
 compile_source := fun(options) {
 	object := "build/obj/" + options.name + ".obj"
 	pdb := "build/obj/" + options.name + ".pdb"
@@ -73,6 +83,7 @@ bob_compiled := compile_source({
 })
 bob_dependencies := common_tasks:clone():extend({
 	bob_compiled.task,
+	build_elf,
 })
 bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
@@ -94,6 +105,7 @@ tests_compiled := compile_source({
 })
 test_dependencies := common_tasks:clone():extend({
 	tests_compiled.task,
+	build_elf,
 })
 test_inputs := common_objects:clone():extend({
 	tests_compiled.object, "elf/build/elf.lib",

@@ -70,7 +70,7 @@ static b32 task_needs_rebuild(const Bob_Node *node, const Bob_Task *task)
 
 	for (i = 0; i < bob_dependency_count(node); ++i) {
 		Bob_Node *dependency = bob_dependency(node, i);
-		if (!dependency || dependency->rebuilt) return true;
+		if (!dependency || (dependency->rebuilt && !dependency->task.transparent)) return true;
 	}
 
 	return newest_input > oldest_output;

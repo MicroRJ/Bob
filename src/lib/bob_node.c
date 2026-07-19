@@ -26,6 +26,7 @@ static b32 copy_task(Arena *arena, Bob_Task source, Bob_Task *result)
 {
    u64 mark = arena_mark(arena);
    *result = (Bob_Task){0};
+   result->transparent = source.transparent;
    result->name = arena_push_string_copy(arena, source.name);
    result->command_line = arena_push_string_copy(arena, source.command_line);
    if (!result->name.data || !result->command_line.data || !copy_string_array(arena, source.inputs, &result->inputs) || !copy_string_array(arena, source.outputs, &result->outputs) || !copy_string_array(arena, source.include_directories, &result->include_directories)) {
