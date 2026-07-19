@@ -10,18 +10,35 @@
 #include <string.h>
 #include <limits.h>
 
+static const char **push_string_pointers(Arena *arena, String_Array strings)
+{
+   const char **items;
+   u32 i;
+   if (!strings.count) return NULL;
+   items = arena_push_aligned(arena, strings.count * sizeof(*items), _Alignof(const char *));
+   if (!items) return NULL;
+   for (i = 0; i < strings.count; ++i) items[i] = strings.items[i].data;
+   return items;
+}
+
 static Task *push_task(Arena *arena, const Task_Desc *source)
 {
+   u64 mark = arena_mark(arena);
    Task *task = arena_push_zero_aligned(arena, sizeof(*task), _Alignof(Task));
    if (!task) return NULL;
 
-   task->command_line = source->command_line;
-   task->inputs = (const char **)source->inputs;
-   task->input_count = source->input_count;
-   task->outputs = (const char **)source->outputs;
-   task->output_count = source->output_count;
-   task->include_directories = (const char **)source->include_directories;
-   task->include_directory_count = source->include_directory_count;
+   task->command_line = source->command_line.data;
+   task->inputs = push_string_pointers(arena, source->inputs);
+   task->input_count = source->inputs.count;
+   task->outputs = push_string_pointers(arena, source->outputs);
+   task->output_count = source->outputs.count;
+   task->include_directories = push_string_pointers(arena, source->include_directories);
+   task->include_directory_count = source->include_directories.count;
+
+   if ((task->input_count && !task->inputs) || (task->output_count && !task->outputs) || (task->include_directory_count && !task->include_directories)) {
+      arena_restore(arena, mark);
+      return NULL;
+   }
 
    return task;
 }
@@ -62,7 +79,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
    }
    {
       b32 loaded_ok;
-      Profile_Scope scope = profile_scope_begin("load Elf build script");
+      Profile_Scope scope = profile_scope_begin("load elf build script");
       loaded_ok = elf_load_task_list(path, &task_arena, &loaded);
       profile_scope_end(&scope);
       if (!loaded_ok)
@@ -96,17 +113,17 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
       Graph_Error error;
       if (!task)
       {
-         log_error("out of memory while loading task '%s'", loaded.tasks[i].name);
+         log_error("out of memory while loading task '%s'", loaded.tasks[i].name.data);
          goto cleanup;
       }
       {
          Profile_Scope scope = profile_scope_begin("construct graph");
-         error = graph_add_node(graph, loaded.tasks[i].name, task, &node);
+         error = graph_add_node(graph, loaded.tasks[i].name.data, task, &node);
          profile_scope_end(&scope);
       }
       if (error != GRAPH_OK)
       {
-         log_error("%s: unable to create task '%s': %s", path, loaded.tasks[i].name, graph_error_str(error));
+         log_error("%s: unable to create task '%s': %s", path, loaded.tasks[i].name.data, graph_error_str(error));
          goto cleanup;
       }
    }
@@ -121,7 +138,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
 
          if (dependency >= task_count)
          {
-            log_error("%s: task '%s' has invalid dependency %u", path, loaded.tasks[i].name, dependency);
+            log_error("%s: task '%s' has invalid dependency %u", path, loaded.tasks[i].name.data, dependency);
             goto cleanup;
          }
          {
@@ -131,7 +148,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
          }
          if (error != GRAPH_OK)
          {
-            log_error("%s: unable to add dependency to '%s': %s", path, loaded.tasks[i].name, graph_error_str(error));
+            log_error("%s: unable to add dependency to '%s': %s", path, loaded.tasks[i].name.data, graph_error_str(error));
             goto cleanup;
          }
       }

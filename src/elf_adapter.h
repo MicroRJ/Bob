@@ -4,14 +4,11 @@
 #include "base.h"
 
 typedef struct Task_Desc {
-    char *name;
-    char *command_line;
-    char **inputs;
-    uint32_t input_count;
-    char **outputs;
-    uint32_t output_count;
-    char **include_directories;
-    uint32_t include_directory_count;
+    String name;
+    String command_line;
+    String_Array inputs;
+    String_Array outputs;
+    String_Array include_directories;
     uint32_t *dependencies;
     uint32_t dependency_count;
 } Task_Desc;

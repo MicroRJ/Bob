@@ -1,5 +1,3 @@
-tasks := {}
-
 add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
     task := {
         name = name
@@ -9,7 +7,6 @@ add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies)
         include_dirs = include_dirs
         dependencies = dependencies
     }
-    tasks:add(task)
     ret task
 }
 
@@ -21,7 +18,7 @@ prepare := add_task(
     {}
 )
 
-add_task(
+formatter := add_task(
     "build formatter",
     "clang-cl /nologo /std:c11 /W4 /WX tools\\formatter.c /Febuild\\formatter.exe",
     { "tools\\formatter.c" }, { "build\\formatter.exe" },
@@ -55,7 +52,7 @@ link := add_task(
     { compile_main, compile_message }
 )
 
-add_task(
+run := add_task(
     "run hello.exe",
     "build\\example\\hello.exe",
     { "build\\example\\hello.exe" }, {},
@@ -64,7 +61,7 @@ add_task(
 )
 
 ret {
-    tasks = tasks
+    targets = {formatter, run}
     options = {
         workers = 4
         verbosity = 0

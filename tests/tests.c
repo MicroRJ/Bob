@@ -762,21 +762,24 @@ static b32 test_elf_descriptor(void)
     Task_Array_Desc list;
 
     if (!elf_load_task_list("example/tasks.elf", &arena, &list)) {
-        printf("  Elf error: %s\n", list.error);
+        printf("  elf error: %s\n", list.error);
         arena_destroy(&arena);
         return false;
     }
     CHECK(list.count == 4);
-    CHECK(strcmp(list.tasks[0].name, "compile main") == 0);
-    CHECK(list.tasks[0].input_count == 1);
-    CHECK(list.tasks[0].output_count == 1);
-    CHECK(list.tasks[0].include_directory_count == 1);
+    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("run hello.exe")));
+    CHECK(list.tasks[0].dependency_count == 1);
+    CHECK(list.tasks[0].dependencies[0] == 1);
+    CHECK(string_equal(list.tasks[2].name, STRING_LITERAL("compile main")));
+    CHECK(list.tasks[2].inputs.count == 1);
+    CHECK(list.tasks[2].outputs.count == 1);
+    CHECK(list.tasks[2].include_directories.count == 1);
     CHECK(list.has_worker_count);
     CHECK(list.worker_count == 2);
     CHECK(list.has_verbosity);
     CHECK(list.verbosity == 0);
-    CHECK(list.tasks[2].dependency_count == 2);
-    CHECK(list.tasks[2].dependencies[0] == 0);
+    CHECK(list.tasks[1].dependency_count == 2);
+    CHECK(list.tasks[1].dependencies[0] == 2);
     arena_destroy(&arena);
     return true;
 }
@@ -787,15 +790,33 @@ static b32 test_elf_generated_descriptor(void)
     Task_Array_Desc list;
 
     if (!elf_load_task_list("example/tasks1.elf", &arena, &list)) {
-        printf("  Elf error: %s\n", list.error);
+        printf("  elf error: %s\n", list.error);
         arena_destroy(&arena);
         return false;
     }
     CHECK(list.count == 33);
-    CHECK(strcmp(list.tasks[0].name, "VS_Rect") == 0);
+    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("font_test")));
+    CHECK(list.tasks[0].dependency_count == 21);
     CHECK(list.tasks[6].dependency_count == 6);
-    CHECK(strcmp(list.tasks[27].name, "font_test") == 0);
-    CHECK(list.tasks[27].dependency_count == 21);
+    CHECK(string_equal(list.tasks[27].name, STRING_LITERAL("VS_Rect")));
+    arena_destroy(&arena);
+    return true;
+}
+
+static b32 test_bob_descriptor(void)
+{
+    Arena arena = arena_create(0);
+    Task_Array_Desc list;
+
+    if (!elf_load_task_list("build.elf", &arena, &list)) {
+        printf("  elf error: %s\n", list.error);
+        arena_destroy(&arena);
+        return false;
+    }
+    CHECK(list.count == 6);
+    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("build formatter")));
+    CHECK(string_equal(list.tasks[1].name, STRING_LITERAL("run hello.exe")));
+    CHECK(string_equal(list.tasks[2].name, STRING_LITERAL("prepare output directory")));
     arena_destroy(&arena);
     return true;
 }
@@ -888,13 +909,13 @@ static int build_tasks_from_elf(const char *path)
     }
 
     for (i = 0; i < task_count; ++i) {
-        if (graph_add_node(graph, loaded.tasks[i].name, &tasks[i],
+        if (graph_add_node(graph, loaded.tasks[i].name.data, &tasks[i],
                            &nodes[i]) != GRAPH_OK) {
             fprintf(stderr, "%s: unable to create task '%s'\n",
-                    path, loaded.tasks[i].name);
+                    path, loaded.tasks[i].name.data);
             goto cleanup;
         }
-        tasks[nodes[i]].command_line = loaded.tasks[i].command_line;
+        tasks[nodes[i]].command_line = loaded.tasks[i].command_line.data;
     }
 
     for (i = 0; i < task_count; ++i) {
@@ -905,12 +926,12 @@ static int build_tasks_from_elf(const char *path)
             u32 dependency = loaded.tasks[i].dependencies[dependency_index];
             if (dependency >= task_count) {
                 fprintf(stderr, "%s: task '%s' has invalid dependency %u\n",
-                        path, loaded.tasks[i].name, dependency);
+                        path, loaded.tasks[i].name.data, dependency);
                 goto cleanup;
             }
             if (graph_add_dependency(graph, nodes[i], nodes[dependency]) != GRAPH_OK) {
                 fprintf(stderr, "%s: unable to add dependency %u to '%s'\n",
-                        path, dependency, loaded.tasks[i].name);
+                        path, dependency, loaded.tasks[i].name.data);
                 goto cleanup;
             }
         }
@@ -944,8 +965,9 @@ static int run_all_tests(void)
     run_test("multiple inputs and outputs", test_multiple_inputs_and_outputs);
     run_test("dependency rebuild", test_dependency_rebuild_propagates);
     run_test("recursive includes", test_recursive_include_rebuilds);
-    run_test("Elf build descriptor", test_elf_descriptor);
-    run_test("Elf generated descriptor", test_elf_generated_descriptor);
+    run_test("elf build descriptor", test_elf_descriptor);
+    run_test("elf generated descriptor", test_elf_generated_descriptor);
+    run_test("Bob build descriptor", test_bob_descriptor);
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;

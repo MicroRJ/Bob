@@ -1,46 +1,45 @@
-## Bob
-						 (UNRELEASED)
+###    Are you frustrated with your build system?
 
-Are you frustrated with build systems?
+		  Bob Builds, Bob is Simple. It's just Bob.
 
-Here's Bob, he Builds.
+			     - For the C Programmer -
 
-He is Simple - It's For the C Programmer - It's just Bob.
+			     		 (UNRELEASED)
 
 ```elf
 
 options := {
-	workers = 4
+	workers   = 4
 	verbosity = 0
 }
 
 compile := {
-	name = "compile"
-	command_line = "clang-cl /c main.c /Fobuild\\main.obj"
-	inputs = {"main.c"}
-	outputs = {"build\\main.obj"}
+	name          = "compile",
+	command_line  = "clang-cl /c main.c /Fobuild\\main.obj",
+	inputs        = {"main.c"},
+	outputs       = {"build\\main.obj"},
 }
 
 link := {
-	name = "link"
-	command_line = "clang-cl build\\main.obj /Febuild\\hello.exe"
-	inputs = {"build\\main.obj"}
-	outputs = {"build\\hello.exe"}
-	dependencies = {compile}
+	name          = "link",
+	command_line  = "clang-cl build\\main.obj /Febuild\\hello.exe",
+	inputs        = {"build\\main.obj"},
+	outputs       = {"build\\hello.exe"},
+	dependencies  = {compile},
 }
 
-tasks := {compile, link}
+targets := {link}
 
 ret {
 	options = options
-	tasks = tasks
+	targets = targets
 }
 
 ```
 
-It works by running an 'elf' script. Looks for 'build.elf' by default.
+It works by running an 'elf' script ('build.elf' by default).
 
-The script returns a table with tasks, and options.
+The script returns a table with targets, and options.
 
 Then Bob builds it.
 
@@ -61,11 +60,11 @@ Bob is Simple.
 It uses a normal, minimal, general purpose, C like programming
 freaking language.
 
-All the script does is return a table of tasks.
+All the script does is return a table of targets.
 
 Generate the table however you want.
 
-Bob, takes the table, loads the tasks, builds a graph and, builds it.
+Bob takes the targets, discovers their dependencies, builds a graph and builds it.
 
 That's [clap] Freaking [clap] It [clap]
 

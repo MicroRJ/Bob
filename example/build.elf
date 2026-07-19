@@ -75,7 +75,7 @@ executables := {
 
 
 
-tasks := {}
+targets := {}
 shader_tasks := {}
 object_tasks := {}
 object_files := ""
@@ -86,7 +86,6 @@ add_task := fun(name, command_line, dependencies) {
         command_line = command_line,
         dependencies = dependencies,
     }
-    tasks:add(task)
     ret task
 }
 
@@ -126,7 +125,7 @@ for object := objects[0 ... objects:length()] ? {
 }
 
 for executable := executables[0 ... executables:length()] ? {
-    add_task(
+    target := add_task(
         executable.name,
         "clang-cl " + executable.source +
         " /Febuild/" + executable.name + ".exe" +
@@ -134,6 +133,7 @@ for executable := executables[0 ... executables:length()] ? {
         " src/ttf/freetype/freetype.lib",
         object_tasks
     )
+    targets:add(target)
 }
 
-ret { tasks = tasks }
+ret { targets = targets }
