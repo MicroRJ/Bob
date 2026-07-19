@@ -1,5 +1,5 @@
 #include "bob.h"
-#include "elf_adapter.h"
+#include "frontends/frontend.h"
 #include "logger.h"
 #include "platform/platform.h"
 #include "profiler.h"
@@ -8,25 +8,26 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <stdio.h>
 
-static int run_build(const char *path, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
+static int run_build(String path, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
 {
    Bob_Build build = {0};
    int exit_code = 1;
 
    {
       Platform_File_Info build_file;
-		if (!platform_file_info(string_from_cstring(path), &build_file))
+		if (!platform_file_info(path, &build_file))
       {
          Scratch scratch = begin_scratch();
          String working_directory;
          if (platform_current_directory(scratch.arena, &working_directory))
          {
-            log_error("%s: file not found (working directory: %s)", path, working_directory.data);
+            log_error("%s: file not found (working directory: %s)", path.data, working_directory.data);
          }
          else
          {
-            log_error("%s: file not found", path);
+            log_error("%s: file not found", path.data);
          }
          end_scratch(scratch);
          goto cleanup;
@@ -36,11 +37,11 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
    {
       b32 loaded_ok;
       Profile_Scope scope = profile_scope_begin("load elf build script");
-      loaded_ok = elf_load_build(path, &build);
+      loaded_ok = frontend_load_build(path, &build);
       profile_scope_end(&scope);
       if (!loaded_ok)
       {
-         log_error("%s: %s", path, build.error);
+         log_error("%s: %s", path.data, build.error);
          goto cleanup;
       }
    }
@@ -69,12 +70,13 @@ int main(int argument_count, char **arguments)
 {
    i32 verbosity = 0;
    u32 worker_count = 4;
-   const char *build_path = "build.elf";
+   String build_path = STRING_LITERAL("build.elf");
    b32 has_build_path = false;
    b32 worker_override = false;
    b32 verbosity_override = false;
    b32 cache_vcvars = false;
    b32 profile = false;
+   b32 profile_threads = false;
    int argument_index;
 
    logger_init();
@@ -121,14 +123,24 @@ int main(int argument_count, char **arguments)
       {
          profile = true;
       }
+      else if (strcmp(arguments[argument_index], "--profile-threads") == 0)
+      {
+         profile = true;
+         profile_threads = true;
+      }
+      else if (strcmp(arguments[argument_index], "--version") == 0)
+      {
+         printf("bob %s\n", BOB_VERSION);
+         return 0;
+      }
       else if (arguments[argument_index][0] != '-' && !has_build_path)
       {
-         build_path = arguments[argument_index];
+         build_path = string_from_cstring(arguments[argument_index]);
          has_build_path = true;
       }
       else
       {
-         log_error("usage: bob [build.elf] [--verbose [N]] [--workers N] [--profile]\n" "       bob --cache-vcvars");
+         log_error("usage: bob [build.elf] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
          return 2;
       }
    }
@@ -162,7 +174,7 @@ int main(int argument_count, char **arguments)
       Profile_Scope scope = profile_scope_begin("build");
       result = run_build(build_path, worker_count, worker_override, verbosity, verbosity_override);
       profile_scope_end(&scope);
-      profiler_print();
+      profiler_print(profile_threads);
       return result;
    }
 }

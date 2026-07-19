@@ -46,6 +46,11 @@ void platform_thread_destroy(Platform_Thread *thread)
 	free(thread);
 }
 
+u64 platform_current_thread_id(void)
+{
+	return GetCurrentThreadId();
+}
+
 Platform_Mutex *platform_mutex_create(void)
 {
 	Platform_Mutex *mutex = calloc(1, sizeof(*mutex));

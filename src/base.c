@@ -399,6 +399,11 @@ b32 string_ends_with(String text, String suffix)
 	(size_t)suffix.size) == 0;
 }
 
+b32 string_ends_with_insensitive(String text, String suffix)
+{
+	return suffix.size <= text.size && string_equal_insensitive(string_slice(text, text.size - suffix.size, suffix.size), suffix);
+}
+
 b32 string_is(String text, const char *literal)
 {
 	return string_equal(text, string_from_cstring(literal));

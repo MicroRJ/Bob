@@ -12,7 +12,7 @@ if not exist elf\build\elf.lib (
 )
 
 echo Building Bob...
-clang-cl /nologo /std:c11 /W4 /WX /Zi /Od src\base.c src\logger.c src\profiler.c src\bob_runtime.c src\bob_builder.c src\c_include_scan.c src\elf_adapter.c src\platform\platform_win32.c src\vcvars_cache.c src\bob.c ^
+clang-cl /nologo /std:c11 /W4 /WX /Zi /Od src\base.c src\logger.c src\profiler.c src\bob_runtime.c src\bob_builder.c src\c_include_scan.c src\frontends\frontend.c src\frontends\elf_adapter.c src\platform\platform_win32.c src\vcvars_cache.c src\bob.c ^
     /Isrc ^
     /Ielf\include /Ielf\src\base /Ielf\src\api /Ielf\src\core ^
     /Ielf\src\core\table /Ielf\src\core\atom /Ielf\src\platform ^
@@ -23,7 +23,7 @@ clang-cl /nologo /std:c11 /W4 /WX /Zi /Od src\base.c src\logger.c src\profiler.c
 if errorlevel 1 exit /b %errorlevel%
 
 echo Building tests...
-clang-cl /nologo /std:c11 /W4 /WX /Zi /Od src\base.c src\logger.c src\profiler.c src\bob_runtime.c src\bob_builder.c src\c_include_scan.c src\elf_adapter.c src\platform\platform_win32.c src\vcvars_cache.c tests\tests.c ^
+clang-cl /nologo /std:c11 /W4 /WX /Zi /Od src\base.c src\logger.c src\profiler.c src\bob_runtime.c src\bob_builder.c src\c_include_scan.c src\frontends\frontend.c src\frontends\elf_adapter.c src\platform\platform_win32.c src\vcvars_cache.c tests\tests.c ^
     /Isrc ^
     /Ielf\include /Ielf\src\base /Ielf\src\api /Ielf\src\core ^
     /Ielf\src\core\table /Ielf\src\core\atom /Ielf\src\platform ^

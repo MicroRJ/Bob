@@ -4,6 +4,8 @@
 #include "base.h"
 #include "platform\platform.h"
 
+#define BOB_VERSION "0.1.0-dev"
+
 typedef struct Platform_Mutex Platform_Mutex;
 typedef struct Platform_Condition Platform_Condition;
 typedef struct Bob Bob;

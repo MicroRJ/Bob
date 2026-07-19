@@ -75,7 +75,7 @@ static int table_list_add(Table_List *list, elf_Table *table)
    return 1;
 }
 
-b32 elf_load_build(const char *path, Bob_Build *result)
+b32 elf_load_build(String path, Bob_Build *result)
 {
    Scratch scratch;
    elf_State *state;
@@ -87,7 +87,7 @@ b32 elf_load_build(const char *path, Bob_Build *result)
    uint32_t i;
    int success = 0;
 
-   if (!path || !result) return false;
+   if (!path.data || !string_is_terminated(path) || !result) return false;
    scratch = begin_scratch();
    task_tables = (Table_List){ .arena = scratch.arena };
    memset(result, 0, sizeof(*result));
@@ -98,8 +98,8 @@ b32 elf_load_build(const char *path, Bob_Build *result)
       goto cleanup;
    }
 
-   if (!elf_push_code_file(state, path)) {
-      snprintf(result->error, sizeof(result->error), "unable to load '%s'", path);
+   if (!elf_push_code_file(state, path.data)) {
+      snprintf(result->error, sizeof(result->error), "unable to load '%s'", path.data);
       goto cleanup;
    }
    elf_push_nil(state);

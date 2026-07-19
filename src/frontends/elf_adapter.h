@@ -3,6 +3,6 @@
 
 #include "bob.h"
 
-b32 elf_load_build(const char *path, Bob_Build *result);
+b32 elf_load_build(String path, Bob_Build *result);
 
 #endif

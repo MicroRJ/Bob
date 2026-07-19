@@ -52,6 +52,7 @@ void platform_output_unlock(void);
 Platform_Thread *platform_thread_create(Platform_Thread_Function *function, void *data);
 b32 platform_thread_join(Platform_Thread *thread);
 void platform_thread_destroy(Platform_Thread *thread);
+u64 platform_current_thread_id(void);
 Platform_Mutex *platform_mutex_create(void);
 void platform_mutex_destroy(Platform_Mutex *mutex);
 void platform_mutex_lock(Platform_Mutex *mutex);

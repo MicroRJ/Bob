@@ -1,5 +1,5 @@
 #include "bob.h"
-#include "elf_adapter.h"
+#include "frontends/frontend.h"
 #include "c_include_scan.h"
 #include "logger.h"
 #include "platform/platform.h"
@@ -67,7 +67,7 @@ static b32 test_high_resolution_timer(void)
     u64 frequency = platform_performance_frequency();
     u64 before = platform_performance_counter();
     Sleep(1);
-    return frequency > 0 && platform_performance_counter() >= before;
+    return frequency > 0 && platform_performance_counter() >= before && platform_current_thread_id() != 0;
 }
 
 static Bob_Node *add_node(Bob *graph, const char *name)
@@ -126,6 +126,8 @@ static b32 test_arena_and_strings(void)
     CHECK(string_equal(string_slice(copy, 6, 5), STRING_LITERAL("arena")));
 	CHECK(string_is_terminated(STRING_LITERAL("hello")));
 	CHECK(!string_is_terminated(string_slice(STRING_LITERAL("hello"), 0, 4)));
+	CHECK(string_ends_with_insensitive(STRING_LITERAL("build.ELF"), STRING_LITERAL(".elf")));
+	CHECK(!string_ends_with_insensitive(STRING_LITERAL("build.lua"), STRING_LITERAL(".elf")));
 	{
 		String_Array parts = string_split(&arena, STRING_LITERAL("a;;b;"), ';');
 		CHECK(parts.count == 4);
@@ -749,7 +751,7 @@ static b32 test_elf_descriptor(void)
     Bob_Build build;
     const Bob_Task *task;
 
-    if (!elf_load_build("example/tasks.elf", &build)) {
+    if (!frontend_load_build(STRING_LITERAL("example/tasks.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -776,7 +778,7 @@ static b32 test_elf_generated_descriptor(void)
 {
     Bob_Build build;
 
-    if (!elf_load_build("example/tasks1.elf", &build)) {
+    if (!frontend_load_build(STRING_LITERAL("example/tasks1.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -793,7 +795,7 @@ static b32 test_bob_descriptor(void)
 {
     Bob_Build build;
 
-    if (!elf_load_build("build.elf", &build)) {
+    if (!frontend_load_build(STRING_LITERAL("build.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -861,13 +863,13 @@ static int build_example(void)
     return succeeded ? 0 : 1;
 }
 
-static int build_tasks_from_elf(const char *path)
+static int build_tasks_from_file(String path)
 {
     Bob_Build build = {0};
     u32 workers;
     int exit_code;
-    if (!elf_load_build(path, &build)) {
-        fprintf(stderr, "%s: %s\n", path, build.error);
+    if (!frontend_load_build(path, &build)) {
+        fprintf(stderr, "%s: %s\n", path.data, build.error);
         return 1;
     }
     workers = build.options.has_worker_count ? build.options.worker_count : 4;
@@ -939,10 +941,10 @@ int main(int argument_count, char **arguments)
             GetLastError() != ERROR_ALREADY_EXISTS) {
             return 1;
         }
-        return build_tasks_from_elf("example/tasks.elf");
+        return build_tasks_from_file(STRING_LITERAL("example/tasks.elf"));
     }
     if (argument_count == 1) {
-        return build_tasks_from_elf("build.elf");
+        return build_tasks_from_file(STRING_LITERAL("build.elf"));
     }
 
     fprintf(stderr, "usage: bob [--test]\n");

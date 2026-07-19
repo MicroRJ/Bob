@@ -117,6 +117,7 @@ String arena_push_cstring(Arena *arena, const char *text);
 b32 string_equal_insensitive(String left, String right);
 b32 string_starts_with(String text, String prefix);
 b32 string_ends_with(String text, String suffix);
+b32 string_ends_with_insensitive(String text, String suffix);
 b32 string_is(String text, const char *literal);
 u32 string_count_lines(String str);
 
