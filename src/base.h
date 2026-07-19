@@ -50,6 +50,8 @@ typedef struct Scratch {
 	u64 restore_used;
 } Scratch;
 
+#define SCRATCH_ARENA_COUNT 4
+
 typedef struct String {
 	union {
 		char *data;
@@ -65,7 +67,7 @@ typedef struct String_Array {
 
 #define STRING_LITERAL(text) ((String){ .data = (char *)(text), .size = sizeof(text) - 1 })
 
-extern THREAD_LOCAL Arena global_scratch_arena;
+extern THREAD_LOCAL Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
 
 Arena arena_create(u64 capacity);
 void arena_destroy(Arena *arena);
@@ -91,7 +93,8 @@ char *arena_appendf(Arena *arena, const char *format, ...);
 String arena_string_from(Arena *arena, void *start);
 void arena_finalize_string(Arena *arena, String string);
 
-Scratch get_scratch(void);
+Scratch begin_scratch(void);
+Scratch begin_different_scratch(Arena *conflict);
 void end_scratch(Scratch scratch);
 void destroy_global_scratch(void);
 

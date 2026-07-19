@@ -80,7 +80,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
 
    if (!path || !arena || !result) return 0;
    arena_start = arena_mark(arena);
-   scratch = get_scratch();
+   scratch = begin_scratch();
    memset(result, 0, sizeof(*result));
 
    state = elf_create_state();

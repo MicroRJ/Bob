@@ -61,7 +61,7 @@ void logger_logv(Log_Level level, const char *tag, const char *format, va_list a
    stream = level >= LOG_LEVEL_WARNING ? stderr : stdout;
 
    platform_output_lock();
-   scratch = get_scratch();
+   scratch = begin_scratch();
    start = arena_top(scratch.arena);
    colors = logger.colors &&
    platform_console_supports_colors(level >= LOG_LEVEL_WARNING);

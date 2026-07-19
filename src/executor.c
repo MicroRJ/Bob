@@ -116,7 +116,7 @@ static DWORD WINAPI worker_main(void *parameter)
    {
       WaitForSingleObject(worker->start_event, INFINITE);
       if (worker->stopping) {
-		 destroy_global_scratch();
+		 	destroy_global_scratch();
          return 0;
       }
 
@@ -326,7 +326,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
          }
          if (worker->process.error_code != 0)
          {
-            Scratch scratch = get_scratch();
+            Scratch scratch = begin_scratch();
 
             fprintf(
                stderr,

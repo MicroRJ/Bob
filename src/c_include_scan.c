@@ -386,7 +386,7 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
     u32 include_index;
     b32 succeeded = true;
 
-    scratch = get_scratch();
+    scratch = begin_scratch();
     if (depth > 256 ||
 		!platform_absolute_path(scratch.arena, string_from_cstring(path), &absolute) ||
 		!platform_file_info(absolute, &info)) {
@@ -450,7 +450,7 @@ b32 c_include_scan(const char **inputs, u32 input_count,
     context.include_directories = include_directories;
     context.include_directory_count = include_directory_count;
     context.result = result;
-    scratch = get_scratch();
+    scratch = begin_scratch();
     context.command_include_directories =
         parse_command_include_directories(scratch.arena, command_line);
 

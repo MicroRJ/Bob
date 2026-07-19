@@ -39,7 +39,7 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
       Platform_File_Info build_file;
 		if (!platform_file_info(string_from_cstring(path), &build_file))
       {
-         Scratch scratch = get_scratch();
+         Scratch scratch = begin_scratch();
          String working_directory;
          if (platform_current_directory(scratch.arena, &working_directory))
          {
@@ -225,7 +225,7 @@ int main(int argument_count, char **arguments)
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;
       }
-		scratch = get_scratch();
+		scratch = begin_scratch();
 		if (!vcvars_cache_refresh(scratch.arena, &cache_path)) {
 			end_scratch(scratch);
 			return 1;

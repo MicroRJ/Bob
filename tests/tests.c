@@ -28,7 +28,7 @@ static int tests_failed;
 
 static b32 environment_equals(const char *name, const char *expected)
 {
-    Scratch scratch = get_scratch();
+    Scratch scratch = begin_scratch();
     String value = {0};
 	b32 equal = platform_get_environment(string_from_cstring(name), scratch.arena, &value) &&
         string_equal(value, string_from_cstring(expected));
@@ -172,14 +172,21 @@ static b32 test_arena_and_strings(void)
     CHECK(arena_mark(&arena) == mark);
     arena_destroy(&arena);
 
-    outer = get_scratch();
+    outer = begin_scratch();
     CHECK(arena_append_text(outer.arena, "outer") != NULL);
-    inner = get_scratch();
+    inner = begin_scratch();
+	CHECK(inner.arena == outer.arena);
     CHECK(arena_append_text(inner.arena, "inner") != NULL);
     end_scratch(inner);
     CHECK(arena_mark(outer.arena) == inner.restore_used);
+	{
+		Scratch separate = begin_different_scratch(outer.arena);
+		CHECK(separate.arena != outer.arena);
+		CHECK(arena_append_text(separate.arena, "separate") != NULL);
+		end_scratch(separate);
+	}
     end_scratch(outer);
-    CHECK(arena_mark(&global_scratch_arena) == outer.restore_used);
+	CHECK(arena_mark(outer.arena) == outer.restore_used);
     destroy_global_scratch();
     return true;
 }
@@ -193,7 +200,7 @@ typedef struct Scratch_Thread_Test {
 static DWORD WINAPI scratch_thread_test_main(void *parameter)
 {
     Scratch_Thread_Test *test = parameter;
-    Scratch scratch = get_scratch();
+    Scratch scratch = begin_scratch();
     arena_append_text(scratch.arena, "thread scratch");
     test->arena = scratch.arena;
     SetEvent(test->ready);
@@ -205,7 +212,7 @@ static DWORD WINAPI scratch_thread_test_main(void *parameter)
 
 static b32 test_thread_local_scratch(void)
 {
-    Scratch main_scratch = get_scratch();
+    Scratch main_scratch = begin_scratch();
     Scratch_Thread_Test tests[2] = {0};
     HANDLE threads[2] = {0};
     HANDLE ready[2] = {0};

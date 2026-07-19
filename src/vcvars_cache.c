@@ -102,11 +102,16 @@ static b32 path_list_contains(String_Array list, String item)
 
 static String build_path_list_delta(Arena *arena, String before, String after)
 {
-	String_Array before_items = string_split(arena, before, ';');
-	String_Array after_items = string_split(arena, after, ';');
-	if (!before_items.items || !after_items.items) return (String){0};
+	Scratch scratch = begin_different_scratch(arena);
 
-	u64 result_start = arena_mark(arena);
+	String_Array before_items = string_split(scratch.arena, before, ';');
+	String_Array after_items = string_split(scratch.arena, after, ';');
+	if (!before_items.items || !after_items.items) {
+		end_scratch(scratch);
+		return (String){0};
+	}
+
+	char *result_start = arena_top(arena);
 	for (u32 i = 0; i < after_items.count; ++i) {
 		String item = after_items.items[i];
 		if (item.size && !path_list_contains(before_items, item)) {
@@ -114,8 +119,10 @@ static String build_path_list_delta(Arena *arena, String before, String after)
 			arena_append_char(arena, ';');
 		}
 	}
-	String result = arena_string_from(arena, (char *)arena->data + result_start);
+	String result = arena_string_from(arena, result_start);
 	arena_finalize_string(arena, result);
+
+	end_scratch(scratch);
 	return result;
 }
 
@@ -223,7 +230,7 @@ static b32 ensure_cache_path(Arena *arena, String *path)
 
 static b32 apply_rule(String action, String name, String value)
 {
-	Scratch scratch = get_scratch();
+	Scratch scratch = begin_scratch();
 	char *name_text = arena_append_str(scratch.arena, name);
 	char *value_text;
 	String current = {0};
@@ -368,7 +375,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 
 b32 vcvars_cache_load(void)
 {
-	Scratch scratch = get_scratch();
+	Scratch scratch = begin_scratch();
 	String path;
 	String data = {0};
 	b32 success;

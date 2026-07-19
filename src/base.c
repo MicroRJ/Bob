@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-THREAD_LOCAL Arena global_scratch_arena;
+THREAD_LOCAL Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
 
 Arena arena_create(u64 capacity)
 {
@@ -210,15 +210,22 @@ void arena_finalize_string(Arena *arena, String string)
 	arena_push_zero(arena, 1);
 }
 
-Scratch get_scratch(void)
+Scratch begin_scratch(void)
 {
-	Scratch scratch;
-	if (!global_scratch_arena.data) {
-		global_scratch_arena = arena_create(0);
+	return begin_different_scratch(NULL);
+}
+
+Scratch begin_different_scratch(Arena *conflict)
+{
+	for (u32 i = 0; i < SCRATCH_ARENA_COUNT; ++i) {
+		Arena *arena = global_scratch_arenas + i;
+		if (arena == conflict) continue;
+		if (!arena->data) *arena = arena_create(0);
+		assert(arena->data);
+		return (Scratch){ arena, arena->used };
 	}
-	scratch.arena = &global_scratch_arena;
-	scratch.restore_used = global_scratch_arena.used;
-	return scratch;
+	assert(!"no non-conflicting scratch arena available");
+	return (Scratch){0};
 }
 
 void end_scratch(Scratch scratch)
@@ -228,7 +235,9 @@ void end_scratch(Scratch scratch)
 
 void destroy_global_scratch(void)
 {
-	arena_destroy(&global_scratch_arena);
+	for (u32 i = 0; i < SCRATCH_ARENA_COUNT; ++i) {
+		arena_destroy(global_scratch_arenas + i);
+	}
 }
 
 String string_from_data(void *data, u64 size)

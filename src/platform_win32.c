@@ -10,7 +10,7 @@ static SRWLOCK output_lock = SRWLOCK_INIT;
 b32 platform_executable_resolves(String name)
 {
 	if (!string_is_terminated(name)) return false;
-   Scratch scratch = get_scratch();
+   Scratch scratch = begin_scratch();
 	DWORD capacity = KILOBYTES(32);
    char *resolved = arena_reserve(scratch.arena, capacity);
    DWORD length = resolved ? SearchPathA(NULL, name.data, ".exe", capacity, resolved, NULL) : 0;
@@ -270,7 +270,7 @@ b32 platform_capture_stdout(const char *command_line, Arena *arena, String *outp
    startup.hStdOutput = write_pipe;
    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
-   scratch = get_scratch();
+   scratch = begin_scratch();
    mutable_command = arena_push_cstring(scratch.arena, command_line);
    if (
       !mutable_command.data
