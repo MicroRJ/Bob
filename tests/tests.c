@@ -799,10 +799,11 @@ static b32 test_bob_descriptor(void)
         printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(bob_task_count(build.bob) == 6);
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("build formatter")));
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 1))->name, STRING_LITERAL("run hello.exe")));
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 2))->name, STRING_LITERAL("prepare output directory")));
+    CHECK(bob_task_count(build.bob) == 4);
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("build Bob")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 1))->name, STRING_LITERAL("run tests")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 2))->name, STRING_LITERAL("prepare build directory")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 3))->name, STRING_LITERAL("build tests")));
     bob_destroy(build.bob);
     return true;
 }

@@ -1,69 +1,102 @@
 add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
-    task := {
-        name = name
-        command_line = command_line
-        inputs = inputs
-        outputs = outputs
-        include_dirs = include_dirs
-        dependencies = dependencies
-    }
-    ret task
+	ret {
+		name = name,
+		command_line = command_line,
+		inputs = inputs,
+		outputs = outputs,
+		include_dirs = include_dirs,
+		dependencies = dependencies,
+	}
 }
 
+join := fun(values) {
+	result := ""
+	for value := values[0 ... values:length()] ? {
+		result += " " + value
+	}
+	ret result
+}
+
+core_sources := {
+	"src/base.c",
+	"src/logger.c",
+	"src/profiler.c",
+	"src/bob_runtime.c",
+	"src/bob_builder.c",
+	"src/c_include_scan.c",
+	"src/frontends/frontend.c",
+	"src/frontends/elf_adapter.c",
+	"src/platform/platform_win32.c",
+	"src/vcvars_cache.c",
+}
+
+include_dirs := {
+	"src",
+	"elf/include",
+	"elf/src/base",
+	"elf/src/api",
+	"elf/src/core",
+	"elf/src/core/table",
+	"elf/src/core/atom",
+	"elf/src/platform",
+	"elf/src/vm",
+	"elf/src/libs",
+	"elf/src/compiler",
+	"elf/src/compiler/frontend",
+	"elf/src/compiler/middle",
+	"elf/src/compiler/backend",
+}
+
+include_options := ""
+for directory := include_dirs[0 ... include_dirs:length()] ? {
+	include_options += " /I" + directory
+}
+
+compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
+core_command := join(core_sources) + include_options
+
 prepare := add_task(
-    "prepare output directory",
-    "cmd /c if not exist build\\example mkdir build\\example",
-    {}, { "build\\example" },
-    {},
-    {}
+	"prepare build directory",
+	"cmd /c if not exist build mkdir build",
+	{}, { "build" }, {}, {}
 )
 
-formatter := add_task(
-    "build formatter",
-    "clang-cl /nologo /std:c11 /W4 /WX tools\\formatter.c /Febuild\\formatter.exe",
-    { "tools\\formatter.c" }, { "build\\formatter.exe" },
-    {},
-    { prepare }
+bob_sources := {}
+for source := core_sources[0 ... core_sources:length()] ? { bob_sources:add(source) }
+bob_sources:add("src/bob.c")
+bob_sources:add("elf/build/elf.lib")
+
+build_bob := add_task(
+	"build Bob",
+	"clang-cl" + compile_options + core_command +
+	" src/bob.c /Fdbuild\\bob_compile.pdb /Febuild\\bob.exe" +
+	" /link elf\\build\\elf.lib /PDB:build\\bob.pdb",
+	bob_sources, { "build/bob.exe" }, include_dirs, { prepare }
 )
 
-compile_main := add_task(
-    "compile main",
-    "clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj",
-    { "example\\main.c" }, { "build\\example\\main.obj" },
-    { "example" },
-    { prepare }
+test_sources := {}
+for source := core_sources[0 ... core_sources:length()] ? { test_sources:add(source) }
+test_sources:add("tests/tests.c")
+test_sources:add("elf/build/elf.lib")
+
+build_tests := add_task(
+	"build tests",
+	"clang-cl" + compile_options + core_command +
+	" tests/tests.c /Fdbuild\\tests_compile.pdb /Febuild\\tests.exe" +
+	" /link elf\\build\\elf.lib /PDB:build\\tests.pdb",
+	test_sources, { "build/tests.exe" }, include_dirs, { prepare }
 )
 
-compile_message := add_task(
-    "compile message",
-    "clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj",
-    { "example\\message.c" },
-    { "build\\example\\message.obj" },
-    { "example" },
-    { prepare }
-)
-
-link := add_task(
-    "link hello.exe",
-    "clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe",
-    { "build\\example\\main.obj", "build\\example\\message.obj" },
-    { "build\\example\\hello.exe" },
-    {},
-    { compile_main, compile_message }
-)
-
-run := add_task(
-    "run hello.exe",
-    "build\\example\\hello.exe",
-    { "build\\example\\hello.exe" }, {},
-    {},
-    { link }
+run_tests := add_task(
+	"run tests",
+	"build\\tests.exe --test",
+	{ "build/tests.exe" }, {}, {}, { build_tests }
 )
 
 ret {
-    targets = {formatter, run}
-    options = {
-        workers = 4
-        verbosity = 0
-    }
+	targets = { build_bob, run_tests },
+	options = {
+		workers = 4,
+		verbosity = 0,
+	},
 }

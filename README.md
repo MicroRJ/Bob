@@ -43,6 +43,14 @@ The script returns a table with targets, and options.
 
 Then Bob builds it.
 
+## Building Bob
+
+```bat
+build.bat
+```
+
+Bob is self-hosting. `build.bat` uses the known-good `selfhost\bob.exe` to evaluate `build.elf`, build the current Bob and its tests, and run the test suite.
+
 
 ## Rant
 
