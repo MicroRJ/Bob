@@ -9,25 +9,27 @@ typedef u32 Node_Id;
 
 #define GRAPH_INVALID_TASK UINT32_MAX
 
-typedef enum Task_State {
-    GRAPH_TASK_PENDING,
-    GRAPH_TASK_READY,
-    GRAPH_TASK_RUNNING,
-    GRAPH_TASK_SUCCEEDED,
-    GRAPH_TASK_FAILED,
-    GRAPH_TASK_BLOCKED,
+typedef enum Task_State
+{
+   GRAPH_TASK_PENDING,
+   GRAPH_TASK_READY,
+   GRAPH_TASK_RUNNING,
+   GRAPH_TASK_SUCCEEDED,
+   GRAPH_TASK_FAILED,
+   GRAPH_TASK_BLOCKED,
 } Task_State;
 
-typedef enum Graph_Error {
-    GRAPH_OK,
-    GRAPH_ERROR_OUT_OF_MEMORY,
-    GRAPH_ERROR_INVALID_TASK,
-    GRAPH_ERROR_DUPLICATE_DEPENDENCY,
-    GRAPH_ERROR_SELF_DEPENDENCY,
-    GRAPH_ERROR_ALREADY_PREPARED,
-    GRAPH_ERROR_NOT_PREPARED,
-    GRAPH_ERROR_INVALID_STATE,
-    GRAPH_ERROR_CYCLE,
+typedef enum Graph_Error
+{
+   GRAPH_OK,
+   GRAPH_ERROR_OUT_OF_MEMORY,
+   GRAPH_ERROR_INVALID_TASK,
+   GRAPH_ERROR_DUPLICATE_DEPENDENCY,
+   GRAPH_ERROR_SELF_DEPENDENCY,
+   GRAPH_ERROR_ALREADY_PREPARED,
+   GRAPH_ERROR_NOT_PREPARED,
+   GRAPH_ERROR_INVALID_STATE,
+   GRAPH_ERROR_CYCLE,
 } Graph_Error;
 
 typedef struct Graph Graph;
@@ -35,8 +37,7 @@ typedef struct Graph Graph;
 Graph *graph_create(void);
 void graph_destroy(Graph *graph);
 
-Graph_Error graph_add_node(Graph *graph, const char *name, const void *data,
-                           Node_Id *node_out);
+Graph_Error graph_add_node(Graph *graph, const char *name, const void *data, Node_Id *node_out);
 Graph_Error graph_add_dependency(Graph *graph, Node_Id node, Node_Id dependency);
 
 /* Finalizes the graph and places all initially runnable nodes in the ready queue. */

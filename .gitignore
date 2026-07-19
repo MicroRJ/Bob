@@ -10,3 +10,6 @@ build/
 # Temporary files
 *.tmp
 *.log
+
+# Experiments
+tools/

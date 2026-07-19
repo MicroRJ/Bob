@@ -28,7 +28,7 @@ void arena_reset(Arena *arena)
 	if (arena) arena->used = 0;
 }
 
-u64 arena_mark(const Arena *arena)
+u64 arena_mark(Arena *arena)
 {
 	return arena ? arena->used : 0;
 }
@@ -46,35 +46,35 @@ void *arena_top(Arena *arena)
 
 void *arena_reserve_aligned(Arena *arena, u64 size, u64 alignment)
 {
-    uintptr_t top;
-    u64 padding;
+	uintptr_t top;
+	u64 padding;
 	u64 needed;
 
-    if (!arena || !arena->data || alignment == 0) {
+	if (!arena || !arena->data || alignment == 0) {
 		assert(!"invalid arena or alignment");
 		return NULL;
 	}
-    top = (uintptr_t)(arena->data + arena->used);
-    padding = (alignment - top % alignment) % alignment;
+	top = (uintptr_t)(arena->data + arena->used);
+	padding = (alignment - top % alignment) % alignment;
 	if (padding > arena->capacity - arena->used ||
-        size > arena->capacity - arena->used - padding) {
+	size > arena->capacity - arena->used - padding) {
 		assert(!"arena capacity exceeded");
-		return NULL;
-	}
-	needed = arena->used + padding + size;
-	if (needed > arena->committed) {
-		u64 commit_granularity = KILOBYTES(64);
-		u64 committed = (needed + commit_granularity - 1) &
-		~(commit_granularity - 1);
-		if (committed > arena->capacity) committed = arena->capacity;
-		if (!platform_virtual_commit(arena->data + arena->committed,
-		committed - arena->committed)) {
-			assert(!"unable to commit arena memory");
-		return NULL;
-	}
-	arena->committed = committed;
+	return NULL;
 }
-	return arena->data + arena->used + padding;
+needed = arena->used + padding + size;
+if (needed > arena->committed) {
+	u64 commit_granularity = KILOBYTES(64);
+	u64 committed = (needed + commit_granularity - 1) &
+	~(commit_granularity - 1);
+	if (committed > arena->capacity) committed = arena->capacity;
+	if (!platform_virtual_commit(arena->data + arena->committed,
+	committed - arena->committed)) {
+		assert(!"unable to commit arena memory");
+	return NULL;
+}
+arena->committed = committed;
+}
+return arena->data + arena->used + padding;
 }
 
 void *arena_reserve(Arena *arena, u64 size)
@@ -108,7 +108,7 @@ void *arena_push_zero(Arena *arena, u64 size)
 }
 
 void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment,
-	                          const void *data)
+const void *data)
 {
 	void *result = arena_push_aligned(arena, size, alignment);
 	if (result && size) memcpy(result, data, (size_t)size);
@@ -218,12 +218,6 @@ String string_from_cstring(const char *text)
 	return string_from_data((char *)text, text ? (u64)strlen(text) : 0);
 }
 
-b32 string_equal(String a, String b)
-{
-	return a.size == b.size &&
-	(a.size == 0 || memcmp(a.data, b.data, (size_t)a.size) == 0);
-}
-
 String string_slice(String string, u64 offset, u64 size)
 {
 	assert(offset <= string.size && size <= string.size - offset);
@@ -246,3 +240,54 @@ String arena_push_cstring(Arena *arena, const char *text)
 {
 	return arena_push_string_copy(arena, string_from_cstring(text));
 }
+
+b32 string_equal(String a, String b)
+{
+	return a.size == b.size && (a.size == 0 || memcmp(a.data, b.data, (size_t)a.size) == 0);
+}
+
+static b32 ascii_lower(u32 c)
+{
+	return c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c;
+}
+
+b32 string_equal_insensitive(String left, String right)
+{
+	u64 i;
+	if (left.size != right.size) return false;
+	for (i = 0; i < left.size; ++i) {
+		if (ascii_lower(left.data[i]) != ascii_lower(right.data[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+b32 string_starts_with(String text, String prefix)
+{
+	return prefix.size <= text.size &&
+	memcmp(text.data, prefix.data, (size_t)prefix.size) == 0;
+}
+
+b32 string_ends_with(String text, String suffix)
+{
+	return suffix.size <= text.size &&
+	memcmp(text.data + text.size - suffix.size, suffix.data,
+	(size_t)suffix.size) == 0;
+}
+
+b32 string_is(String text, const char *literal)
+{
+	return string_equal(text, string_from_cstring(literal));
+}
+
+u32 string_count_lines(String str)
+{
+	u64 i;
+	u32 count = str.size ? 1 : 0;
+	for (i = 0; i < str.size; ++i) {
+		if (str.data[i] == '\n') ++count;
+	}
+	return count;
+}
+

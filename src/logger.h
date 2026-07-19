@@ -3,20 +3,20 @@
 
 #include "base.h"
 
-typedef enum Log_Level {
-    LOG_LEVEL_TRACE,
-    LOG_LEVEL_INFO,
-    LOG_LEVEL_SUCCESS,
-    LOG_LEVEL_WARNING,
-    LOG_LEVEL_ERROR,
-    LOG_LEVEL_FATAL,
+typedef enum Log_Level
+{
+   LOG_LEVEL_TRACE,
+   LOG_LEVEL_INFO,
+   LOG_LEVEL_SUCCESS,
+   LOG_LEVEL_WARNING,
+   LOG_LEVEL_ERROR,
+   LOG_LEVEL_FATAL,
 } Log_Level;
 
 void logger_init(void);
 void logger_set_minimum_level(Log_Level level);
 void logger_set_colors(b32 enabled);
-void logger_logv(Log_Level level, const char *tag, const char *format,
-                 va_list arguments);
+void logger_logv(Log_Level level, const char *tag, const char *format, va_list arguments);
 void logger_log(Log_Level level, const char *tag, const char *format, ...);
 
 #define log_trace(...)   logger_log(LOG_LEVEL_TRACE,   "trace",   __VA_ARGS__)

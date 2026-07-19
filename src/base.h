@@ -98,7 +98,7 @@ extern Arena global_scratch_arena;
 Arena arena_create(u64 capacity);
 void arena_destroy(Arena *arena);
 void arena_reset(Arena *arena);
-u64 arena_mark(const Arena *arena);
+u64 arena_mark(Arena *arena);
 void arena_restore(Arena *arena, u64 mark);
 void *arena_top(Arena *arena);
 void *arena_reserve(Arena *arena, u64 size);
@@ -108,8 +108,7 @@ void *arena_push_aligned(Arena *arena, u64 size, u64 alignment);
 void *arena_push_zero(Arena *arena, u64 size);
 void *arena_push_zero_aligned(Arena *arena, u64 size, u64 alignment);
 void *arena_push_copy(Arena *arena, u64 size, const void *data);
-void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment,
-                              const void *data);
+void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment, const void *data);
 char *arena_push_data(Arena *arena, const void *data, u64 size);
 char *arena_push_text(Arena *arena, const char *text);
 char *arena_append_str(Arena *arena, String string);
@@ -129,5 +128,12 @@ b32 string_equal(String a, String b);
 String string_slice(String string, u64 offset, u64 size);
 String arena_push_string_copy(Arena *arena, String string);
 String arena_push_cstring(Arena *arena, const char *text);
+b32 string_equal_insensitive(String left, String right);
+b32 string_starts_with(String text, String prefix);
+b32 string_ends_with(String text, String suffix);
+b32 string_is(String text, const char *literal);
+u32 string_count_lines(String str);
+
+
 
 #endif

@@ -21,6 +21,14 @@ prepare := add_task(
     {}
 )
 
+add_task(
+    "build formatter",
+    "clang-cl /nologo /std:c11 /W4 /WX tools\\formatter.c /Febuild\\formatter.exe",
+    { "tools\\formatter.c" }, { "build\\formatter.exe" },
+    {},
+    { prepare }
+)
+
 compile_main := add_task(
     "compile main",
     "clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj",

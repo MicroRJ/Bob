@@ -6,8 +6,8 @@
 #include <stddef.h>
 
 typedef struct Platform_File_Info {
-    u64 write_time;
-    b32 is_directory;
+   u64 write_time;
+   b32 is_directory;
 } Platform_File_Info;
 
 b32 platform_file_info(const char *path, Platform_File_Info *info);
