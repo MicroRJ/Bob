@@ -2,6 +2,7 @@
 #define BOB_H
 
 #include "base.h"
+#include "platform\platform.h"
 
 typedef u32 Node_Id;
 
@@ -60,36 +61,45 @@ typedef struct Bob_Node
    u32            unfinished_dependencies;
    Bob_Task       task;
    Bob_Task_State state;
+   b32            rebuilt;
 }
 Bob_Node;
 
-typedef struct Bob_Task_Runtime
+typedef struct Bob Bob;
+
+typedef struct Bob_Worker
 {
-   b32 rebuilt;
+	Bob                    *bob;
+	u32                     index;
+	Platform_Thread        *thread;
+	Node_Id                 node;
+	String                  command_line;
+	Arena                   output;
+	Platform_Process_Result process;
+	b32                     awaiting_acknowledgement;
 }
-Bob_Task_Runtime;
+Bob_Worker;
 
 typedef struct Bob
 {
-   Arena     arena;
-   Bob_Node *nodes;
-   u32       node_count;
-   u32       node_capacity;
-   Node_Id  *ready;
-   u32       ready_count;
-   u32       ready_head;
-   u32       terminal_count;
-   b32       prepared;
-   b32       failed;
-   Bob_Task_Runtime *runtime;
-   Node_Id          *work;
-   u32               work_count;
-   u32              *completions;
-   u32               completion_count;
-   Platform_Mutex   *mutex;
+   Arena               arena;
+   Bob_Node           *nodes;
+   u32                 node_count;
+   u32                 node_capacity;
+   Node_Id            *ready;
+   u32                 ready_count;
+   u32                 ready_head;
+   u32                 terminal_count;
+   b32                 prepared;
+   b32                 failed;
+   Node_Id            *work;
+   u32                 work_count;
+   u32                *completions;
+   u32                 completion_count;
+   Platform_Mutex     *mutex;
    Platform_Condition *work_available;
    Platform_Condition *completion_available;
-   b32               stopping;
+   b32                 stopping;
 }
 Bob;
 

@@ -6,24 +6,40 @@
 
 #include <stdlib.h>
 
-typedef struct Worker
+static b32 task_needs_rebuild(const Bob *bob, Node_Id node, const Bob_Task *task)
 {
-	Bob *bob;
-	u32 index;
-	Platform_Thread *thread;
-	Node_Id node;
-	String command_line;
-	Arena output;
-	Platform_Process_Result process;
-	b32 awaiting_acknowledgement;
-}
-Worker;
+	u64 oldest_output = UINT64_MAX;
+	u64 newest_input = 0;
+	u32 i;
 
-static void request_stop_locked(Bob *bob)
-{
-	bob->stopping = true;
-	if (bob->work_available) platform_condition_broadcast(bob->work_available);
-	if (bob->completion_available) platform_condition_broadcast(bob->completion_available);
+	if (task->outputs.count == 0) return true;
+
+	for (i = 0; i < task->outputs.count; ++i) {
+		Platform_File_Info info;
+		if (!platform_file_info(task->outputs.items[i], &info)) return true;
+		if (info.write_time < oldest_output) oldest_output = info.write_time;
+	}
+	for (i = 0; i < task->inputs.count; ++i) {
+		Platform_File_Info info;
+		if (!platform_file_info(task->inputs.items[i], &info)) return true;
+		if (info.write_time > newest_input) newest_input = info.write_time;
+	}
+
+	{
+		Profile_Scope scope = profile_scope_begin("include scanning");
+		C_Include_Scan_Result scan;
+		b32 scan_ok = c_include_scan(task->inputs, task->include_directories, task->command_line, &scan);
+		profile_scope_end(&scope);
+		if (!scan_ok || scan.unresolved_quoted_include) return true;
+		if (scan.newest_write_time > newest_input) newest_input = scan.newest_write_time;
+	}
+
+	for (i = 0; i < bob_dependency_count(bob, node); ++i) {
+		Node_Id dependency = bob_dependency(bob, node, i);
+		if (dependency == BOB_INVALID_TASK || bob->nodes[dependency].rebuilt) return true;
+	}
+
+	return newest_input > oldest_output;
 }
 
 static String command_executable(Arena *arena, String command_line)
@@ -44,39 +60,14 @@ static String command_executable(Arena *arena, String command_line)
 	return arena_push_string_copy(arena, string_slice(command_line, start, end - start));
 }
 
-static b32 task_needs_rebuild(const Bob *bob, Node_Id node, const Bob_Task *task)
+static void request_stop_locked(Bob *bob)
 {
-	u64 oldest_output = UINT64_MAX;
-	u64 newest_input = 0;
-	u32 i;
-	if (task->outputs.count == 0) return true;
-	for (i = 0; i < task->outputs.count; ++i) {
-		Platform_File_Info info;
-		if (!platform_file_info(task->outputs.items[i], &info)) return true;
-		if (info.write_time < oldest_output) oldest_output = info.write_time;
-	}
-	for (i = 0; i < task->inputs.count; ++i) {
-		Platform_File_Info info;
-		if (!platform_file_info(task->inputs.items[i], &info)) return true;
-		if (info.write_time > newest_input) newest_input = info.write_time;
-	}
-	{
-		C_Include_Scan_Result scan;
-		b32 scan_ok;
-		Profile_Scope scope = profile_scope_begin("include scanning");
-		scan_ok = c_include_scan(task->inputs, task->include_directories, task->command_line, &scan);
-		profile_scope_end(&scope);
-		if (!scan_ok || scan.unresolved_quoted_include) return true;
-		if (scan.newest_write_time > newest_input) newest_input = scan.newest_write_time;
-	}
-	for (i = 0; i < bob_dependency_count(bob, node); ++i) {
-		Node_Id dependency = bob_dependency(bob, node, i);
-		if (dependency == BOB_INVALID_TASK || bob->runtime[dependency].rebuilt) return true;
-	}
-	return newest_input > oldest_output;
+	bob->stopping = true;
+	if (bob->work_available) platform_condition_broadcast(bob->work_available);
+	if (bob->completion_available) platform_condition_broadcast(bob->completion_available);
 }
 
-static void run_command(Worker *worker)
+static void run_command(Bob_Worker *worker)
 {
 	arena_reset(&worker->output);
 	platform_run_command(worker->command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &worker->process);
@@ -84,7 +75,7 @@ static void run_command(Worker *worker)
 
 static u32 worker_main(void *data)
 {
-	Worker *worker = data;
+	Bob_Worker *worker = data;
 	Bob *bob = worker->bob;
 	for (;;) {
 		Node_Id node;
@@ -125,7 +116,7 @@ static u32 worker_main(void *data)
 	return 0;
 }
 
-static void stop_workers(Bob *bob, Worker *workers, u32 thread_count, u32 arena_count)
+static void stop_workers(Bob *bob, Bob_Worker *workers, u32 thread_count, u32 arena_count)
 {
 	u32 i;
 	if (bob->mutex) {
@@ -140,7 +131,7 @@ static void stop_workers(Bob *bob, Worker *workers, u32 thread_count, u32 arena_
 	for (i = 0; i < arena_count; ++i) arena_destroy(&workers[i].output);
 }
 
-static b32 report_completion(Bob *bob, Worker *worker)
+static b32 report_completion(Bob *bob, Bob_Worker *worker)
 {
 	b32 succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
 	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(bob, worker->node), worker->process.output);
@@ -174,13 +165,12 @@ static b32 report_completion(Bob *bob, Worker *worker)
 
 b32 bob_build(Bob *bob, u32 worker_count)
 {
-	Worker *workers = NULL;
+	Bob_Worker *workers = NULL;
 	Bob_Error prepare_result;
 	u32 thread_count = 0;
 	u32 arena_count = 0;
 	u32 running = 0;
 	u32 task_count;
-	u64 runtime_size;
 	b32 internal_error = false;
 	u32 i;
 
@@ -209,13 +199,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 	bob->mutex = platform_mutex_create();
 	bob->work_available = platform_condition_create();
 	bob->completion_available = platform_condition_create();
-	runtime_size = task_count * sizeof(*bob->runtime);
-	bob->runtime = platform_virtual_reserve(runtime_size);
-	if (bob->runtime && !platform_virtual_commit(bob->runtime, runtime_size)) {
-		platform_virtual_free(bob->runtime);
-		bob->runtime = NULL;
-	}
-	if (!workers || !bob->work || !bob->completions || !bob->mutex || !bob->work_available || !bob->completion_available || !bob->runtime) {
+	if (!workers || !bob->work || !bob->completions || !bob->mutex || !bob->work_available || !bob->completion_available) {
 		internal_error = true;
 		goto cleanup;
 	}
@@ -256,7 +240,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 				}
 				continue;
 			}
-			bob->runtime[node].rebuilt = true;
+			bob->nodes[node].rebuilt = true;
 			platform_mutex_lock(bob->mutex);
 			bob->work[bob->work_count++] = node;
 			platform_condition_broadcast(bob->work_available);
@@ -270,7 +254,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 		}
 
 		{
-			Worker *worker = NULL;
+			Bob_Worker *worker = NULL;
 			b32 succeeded;
 			u32 worker_index;
 			platform_mutex_lock(bob->mutex);
@@ -304,14 +288,12 @@ cleanup:
 	platform_condition_destroy(bob->completion_available);
 	platform_condition_destroy(bob->work_available);
 	platform_mutex_destroy(bob->mutex);
-	platform_virtual_free(bob->runtime);
 	free(bob->completions);
 	free(bob->work);
 	free(workers);
 	bob->completion_available = NULL;
 	bob->work_available = NULL;
 	bob->mutex = NULL;
-	bob->runtime = NULL;
 	bob->completions = NULL;
 	bob->work = NULL;
 	bob->completion_count = 0;
