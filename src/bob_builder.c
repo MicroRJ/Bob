@@ -1,4 +1,4 @@
-#include "executor.h"
+#include "bob.h"
 #include "c_include_scan.h"
 #include "logger.h"
 #include "platform/platform.h"
@@ -143,7 +143,7 @@ static void stop_workers(Worker *workers, u32 count)
    }
 }
 
-b32 executor_run(Bob *graph, u32 worker_count)
+b32 bob_build(Bob *graph, u32 worker_count)
 {
    Worker *workers;
    HANDLE *done_events;

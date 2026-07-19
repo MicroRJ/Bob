@@ -7,7 +7,6 @@ typedef u32 Node_Id;
 
 #define BOB_INVALID_TASK UINT32_MAX
 
-
 typedef enum Bob_Error
 {
    BOB_OK,
@@ -110,5 +109,6 @@ const Bob_Task *bob_get_task(const Bob *bob, Node_Id node);
 u32 bob_dependency_count(const Bob *bob, Node_Id node);
 Node_Id bob_dependency(const Bob *bob, Node_Id node, u32 index);
 const char *bob_error_string(Bob_Error result);
+b32 bob_build(Bob *bob, u32 worker_count);
 
 #endif

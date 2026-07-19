@@ -1,5 +1,4 @@
 #include "bob.h"
-#include "executor.h"
 #include "elf_adapter.h"
 #include "logger.h"
 #include "platform/platform.h"
@@ -56,8 +55,8 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
 	logger_set_verbosity(verbosity);
 
    {
-      Profile_Scope scope = profile_scope_begin("executor");
-      exit_code = executor_run(build.bob, worker_count) ? 0 : 1;
+      Profile_Scope scope = profile_scope_begin("builder");
+      exit_code = bob_build(build.bob, worker_count) ? 0 : 1;
       profile_scope_end(&scope);
    }
 

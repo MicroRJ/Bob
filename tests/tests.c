@@ -1,5 +1,4 @@
 #include "bob.h"
-#include "executor.h"
 #include "elf_adapter.h"
 #include "c_include_scan.h"
 #include "logger.h"
@@ -92,7 +91,7 @@ static b32 run_tasks(Bob *graph, const Bob_Task *tasks, u32 task_count,
             return false;
         }
     }
-    return executor_run(graph, worker_count);
+    return bob_build(graph, worker_count);
 }
 
 static b32 test_arena_and_strings(void)
@@ -383,7 +382,7 @@ static b32 get_test_executable(char *buffer, u32 buffer_size)
     return length > 0 && length < buffer_size;
 }
 
-static b32 test_executor_runs_in_parallel(void)
+static b32 test_builder_runs_in_parallel(void)
 {
     Bob *graph = bob_create();
     Node_Id a = add_node(graph, "slow a");
@@ -430,7 +429,7 @@ static b32 test_executor_runs_in_parallel(void)
     return true;
 }
 
-static b32 test_executor_propagates_failure(void)
+static b32 test_builder_propagates_failure(void)
 {
     Bob *graph = bob_create();
     Node_Id fail = add_node(graph, "fail");
@@ -461,7 +460,7 @@ static b32 test_executor_propagates_failure(void)
     return true;
 }
 
-static b32 test_executor_reports_missing_executable(void)
+static b32 test_builder_reports_missing_executable(void)
 {
     Bob *graph = bob_create();
     Node_Id missing = add_node(graph, "missing executable");
@@ -475,7 +474,7 @@ static b32 test_executor_reports_missing_executable(void)
     return true;
 }
 
-static b32 test_executor_skips_existing_output(void)
+static b32 test_builder_skips_existing_output(void)
 {
     const char *output_path = "build\\incremental_test.out";
     String outputs[] = { string_from_cstring(output_path) };
@@ -872,7 +871,7 @@ static int build_tasks_from_elf(const char *path)
         return 1;
     }
     workers = build.options.has_worker_count ? build.options.worker_count : 4;
-    exit_code = executor_run(build.bob, workers) ? 0 : 1;
+    exit_code = bob_build(build.bob, workers) ? 0 : 1;
     bob_destroy(build.bob);
     return exit_code;
 }
@@ -889,10 +888,10 @@ static int run_all_tests(void)
     run_test("failure blocks dependents", test_failure_blocks_dependents);
     run_test("cycle rejection", test_cycle_is_rejected);
     run_test("invalid edge rejection", test_invalid_edges_are_rejected);
-    run_test("executor parallelism", test_executor_runs_in_parallel);
-    run_test("executor failure", test_executor_propagates_failure);
-    run_test("missing executable", test_executor_reports_missing_executable);
-    run_test("incremental output", test_executor_skips_existing_output);
+    run_test("builder parallelism", test_builder_runs_in_parallel);
+    run_test("builder failure", test_builder_propagates_failure);
+    run_test("missing executable", test_builder_reports_missing_executable);
+    run_test("incremental output", test_builder_skips_existing_output);
     run_test("newer input", test_newer_input_rebuilds);
     run_test("multiple inputs and outputs", test_multiple_inputs_and_outputs);
     run_test("dependency rebuild", test_dependency_rebuild_propagates);
