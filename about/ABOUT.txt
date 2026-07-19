@@ -1,0 +1,18 @@
+What is Bob?
+
+It's a C library that handles parallel execution tasks.
+Tasks form a DAG, where each node or task has dependencies.
+Bob ensures there are no cycles, and that dependencies are
+processed prior to their dependents. If a task fails, their
+dependents do so too.
+
+Bob will also only run a task if it needs to, incrementally.
+That's the core part.
+
+As to what this project is.
+
+It's the intersection of that and an actual runner that you
+can call to build your stuff.
+
+
+

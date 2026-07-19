@@ -36,9 +36,8 @@ static int run_build(String path, u32 worker_count, b32 worker_override, i32 ver
    }
 
    {
-      b32 loaded_ok;
       Profile_Scope scope = profile_scope_begin("load elf build script");
-      loaded_ok = frontend_load_build(path, &build);
+      b32 loaded_ok = frontend_load_build(path, &build);
       profile_scope_end(&scope);
       if (!loaded_ok)
       {
@@ -72,7 +71,9 @@ int main(int argument_count, char **arguments)
    i32 verbosity = 0;
    u32 worker_count = 4;
    String build_path = STRING_LITERAL("build.elf");
+   String function_name = STRING_LITERAL("build");
    b32 has_build_path = false;
+   b32 has_function = false;
    b32 worker_override = false;
    b32 verbosity_override = false;
    b32 cache_vcvars = false;
@@ -134,14 +135,29 @@ int main(int argument_count, char **arguments)
          printf("bob %s\n", BOB_VERSION);
          return 0;
       }
-      else if (arguments[argument_index][0] != '-' && !has_build_path)
+      else if (arguments[argument_index][0] != '-')
       {
-         build_path = string_from_cstring(arguments[argument_index]);
-         has_build_path = true;
+         String argument = string_from_cstring(arguments[argument_index]);
+         if (frontend_supports_path(argument)) {
+            if (has_build_path) {
+               log_error("multiple build files specified: %s", argument.data);
+               return 2;
+            }
+            build_path = argument;
+            has_build_path = true;
+         }
+         else if (!has_function) {
+            function_name = argument;
+            has_function = true;
+         }
+         else {
+            log_error("unexpected positional argument: %s", argument.data);
+            return 2;
+         }
       }
       else
       {
-         log_error("usage: bob [build.elf] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
+         log_error("usage: bob [build-file] [function] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
          return 2;
       }
    }
@@ -149,7 +165,7 @@ int main(int argument_count, char **arguments)
    {
 		Scratch scratch;
 		String cache_path;
-      if (has_build_path || worker_override || verbosity_override || profile)
+      if (has_build_path || has_function || worker_override || verbosity_override || profile)
       {
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;
@@ -162,6 +178,10 @@ int main(int argument_count, char **arguments)
 		log_success("cached vcvars64 environment: %s", cache_path.data);
 		end_scratch(scratch);
       return 0;
+   }
+   if (!string_is(function_name, "build")) {
+      log_error("script function invocation is not implemented yet: %s", function_name.data);
+      return 2;
    }
    profiler_set_enabled(profile);
    profiler_reset();
