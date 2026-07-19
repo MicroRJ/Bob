@@ -6,15 +6,19 @@
 
 typedef struct Builder Builder;
 
-typedef struct Worker
+typedef struct Completion
 {
-	Builder                 *builder;
-	Platform_Thread         *thread;
 	Bob_Node                *node;
-	Arena                    output;
 	Platform_Process_Result  process;
 	b32                      rebuilt;
-	b32                      awaiting_acknowledgement;
+}
+Completion;
+
+typedef struct Worker
+{
+	Builder         *builder;
+	Platform_Thread *thread;
+	Arena            output;
 }
 Worker;
 
@@ -28,7 +32,7 @@ struct Builder
 	u32                 running;
 	Bob_Node          **work;
 	u32                 work_count;
-	Worker            **completions;
+	Completion        **completions;
 	u32                 completion_count;
 	Platform_Mutex     *mutex;
 	Platform_Condition *work_available;
@@ -97,10 +101,9 @@ static void request_stop_locked(Builder *builder)
 	if (builder->completion_available) platform_condition_broadcast(builder->completion_available);
 }
 
-static void run_command(Worker *worker)
+static void run_command(Worker *worker, Completion *completion)
 {
-	arena_reset(&worker->output);
-	platform_run_command(worker->node->task.command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &worker->process);
+	platform_run_command(completion->node->task.command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &completion->process);
 }
 
 static u32 worker_main(void *data)
@@ -109,8 +112,6 @@ static u32 worker_main(void *data)
 	Builder *builder = worker->builder;
 	for (;;)
 	{
-		b32 stopping;
-
 		platform_mutex_lock(builder->mutex);
 		while (!builder->stopping && builder->work_count == 0) {
 			if (!platform_condition_wait(builder->work_available, builder->mutex)) {
@@ -130,30 +131,30 @@ static u32 worker_main(void *data)
 
 		Profile_Scope incremental_check_scope = profile_scope_begin("incremental checks");
 		b32 needs_rebuild = task_needs_rebuild(node, task);
-	profile_scope_end(&incremental_check_scope);
-	worker->rebuilt = needs_rebuild;
-	worker->node = node;
+		profile_scope_end(&incremental_check_scope);
+
+		Completion *completion = arena_push_zero_aligned(&worker->output, sizeof(*completion), _Alignof(Completion));
+		if (!completion) {
+			log_fatal("worker output arena exhausted");
+			platform_mutex_lock(builder->mutex);
+			request_stop_locked(builder);
+			platform_mutex_unlock(builder->mutex);
+			break;
+		}
+		completion->node = node;
+		completion->rebuilt = needs_rebuild;
 
 		if (needs_rebuild)
 		{
 			Profile_Scope scope = profile_scope_begin("task processes");
-			run_command(worker);
+			run_command(worker, completion);
 			profile_scope_end(&scope);
 		}
 
 		platform_mutex_lock(builder->mutex);
-		worker->awaiting_acknowledgement = true;
-		builder->completions[builder->completion_count++] = worker;
+		builder->completions[builder->completion_count++] = completion;
 		platform_condition_signal(builder->completion_available);
-		while (!builder->stopping && worker->awaiting_acknowledgement) {
-			if (!platform_condition_wait(builder->work_available, builder->mutex)) {
-				log_fatal("failed waiting for task completion acknowledgement");
-				request_stop_locked(builder);
-			}
-		}
-		stopping = builder->stopping;
 		platform_mutex_unlock(builder->mutex);
-		if (stopping) break;
 	}
 	destroy_global_scratch();
 	return 0;
@@ -173,46 +174,63 @@ static void stop_workers(Builder *builder)
 	for (u32 i = 0; i < builder->arena_count; ++i) arena_destroy(&builder->workers[i].output);
 }
 
-static b32 report_completion(Worker *worker)
+static b32 completion_succeeded(const Completion *completion)
 {
-	ASSERT(worker);
-	ASSERT(worker->node);
+	return !completion->rebuilt || (completion->process.error_code == 0 && completion->process.exit_code == 0);
+}
 
-	String command_line = worker->node->task.command_line;
-	worker->node->rebuilt = worker->rebuilt;
-	if (!worker->rebuilt) {
-		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(worker->node));
+static void report_completion(const Completion *completion)
+{
+	ASSERT(completion);
+	ASSERT(completion->node);
+
+	String command_line = completion->node->task.command_line;
+	if (!completion->rebuilt) {
+		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(completion->node));
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
-		return true;
+		return;
 	}
-	b32 succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
-	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(worker->node), worker->process.output);
-	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(worker->node));
+	b32 succeeded = completion_succeeded(completion);
+	if (completion->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(completion->node), completion->process.output);
+	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(completion->node));
 	if (succeeded) {
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
 		logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
 	}
-	if (worker->process.error_code != 0) {
+	if (completion->process.error_code != 0) {
 		Scratch scratch = begin_scratch();
 		String executable;
 		String working_directory;
-		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "%s", worker->process.launched ? "process error" : "failed to start process");
+		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "%s", completion->process.launched ? "process error" : "failed to start process");
 		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 		{
 			String message;
-			if (platform_error_message(worker->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", worker->process.error_code, message.data);
-			else logger_log(LOG_LEVEL_ERROR, "os", "error %u", worker->process.error_code);
+			if (platform_error_message(completion->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", completion->process.error_code, message.data);
+			else logger_log(LOG_LEVEL_ERROR, "os", "error %u", completion->process.error_code);
 		}
 		executable = command_executable(scratch.arena, command_line);
 		if (executable.data) logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data, platform_executable_resolves(executable) ? "found" : "not found in current directory or PATH");
 		else logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
 		if (platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
 		end_scratch(scratch);
-	} else if (worker->process.exit_code != 0) {
-		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "process exited with code %u", worker->process.exit_code);
+	} else if (completion->process.exit_code != 0) {
+		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "process exited with code %u", completion->process.exit_code);
 		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 	}
-	return succeeded;
+}
+
+static void dispatch_ready(Builder *builder)
+{
+	platform_mutex_lock(builder->mutex);
+	u32 previous_work_count = builder->work_count;
+	Bob_Node *node;
+	while (builder->running < builder->worker_count && bob_take_ready(builder->bob, &node))
+	{
+		builder->work[builder->work_count++] = node;
+		++builder->running;
+	}
+	if (builder->work_count > previous_work_count) platform_condition_broadcast(builder->work_available);
+	platform_mutex_unlock(builder->mutex);
 }
 
 b32 bob_build(Bob *bob, u32 worker_count)
@@ -241,49 +259,38 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 	Builder builder = { .bob = bob, .worker_count = worker_count };
 	Scratch scratch = begin_scratch();
-	b32 internal_error = false;
 	builder.workers = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.workers), _Alignof(Worker));
 	builder.work = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.work), _Alignof(Bob_Node *));
-	builder.completions = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.completions), _Alignof(Worker *));
+	builder.completions = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.completions), _Alignof(Completion *));
 	builder.mutex = platform_mutex_create();
 	builder.work_available = platform_condition_create();
 	builder.completion_available = platform_condition_create();
-	if (!builder.workers || !builder.work || !builder.completions || !builder.mutex || !builder.work_available || !builder.completion_available) {
-		internal_error = true;
-		goto cleanup;
-	}
 
-	for (u32 i = 0; i < worker_count; ++i) {
+	b32 internal_error = !builder.workers || !builder.work || !builder.completions || !builder.mutex || !builder.work_available || !builder.completion_available;
+	if (internal_error) goto cleanup;
+
+	for (u32 i = 0; i < worker_count; ++i)
+	{
 		Worker *worker = &builder.workers[i];
 		worker->builder = &builder;
 		worker->output = arena_create(MEGABYTES(256));
-		if (!worker->output.data) {
-			internal_error = true;
-			break;
-		}
-		++builder.arena_count;
+		internal_error = !worker->output.data;
+		if (internal_error) goto cleanup;
+
+		++ builder.arena_count;
+
 		worker->thread = platform_thread_create(worker_main, worker);
-		if (!worker->thread) {
-			internal_error = true;
-			break;
-		}
-		++builder.thread_count;
+		internal_error = !worker->thread;
+		if (internal_error) goto cleanup;
+
+		++ builder.thread_count;
 	}
-	if (internal_error) goto cleanup;
 
-	while (!bob_is_finished(bob))
+	while (!internal_error && !bob_is_finished(bob))
 	{
-		platform_mutex_lock(builder.mutex);
-		Bob_Node *node;
-		while (builder.running < builder.worker_count && bob_take_ready(bob, &node))
-		{
-			builder.work[builder.work_count++] = node;
-			++builder.running;
-		}
-		platform_condition_broadcast(builder.work_available);
-		platform_mutex_unlock(builder.mutex);
+		dispatch_ready(&builder);
 
-		if (internal_error || bob_is_finished(bob)) break;
+		if (bob_is_finished(bob)) break;
 
 		if (builder.running == 0) {
 			internal_error = true;
@@ -298,32 +305,28 @@ b32 bob_build(Bob *bob, u32 worker_count)
 			}
 		}
 
-		Worker *worker = NULL;
+		Completion *completion = NULL;
 		if (builder.completion_count > 0) {
-			worker = builder.completions[--builder.completion_count];
+			completion = builder.completions[--builder.completion_count];
 		}
 		platform_mutex_unlock(builder.mutex);
 
-		if (!worker) {
+		if (!completion) {
 			internal_error = true;
 			break;
 		}
 
-		Profile_Scope report_completion_scope = profile_scope_begin("report_completion_scope");
-		b32 succeeded = report_completion(worker);
-		if (bob_complete(bob, worker->node, succeeded) != BOB_OK) {
+		b32 succeeded = completion_succeeded(completion);
+		completion->node->rebuilt = completion->rebuilt;
+		if (bob_complete(bob, completion->node, succeeded) != BOB_OK) {
 			internal_error = true;
 		}
-		profile_scope_end(&report_completion_scope);
-
-		platform_mutex_lock(builder.mutex);
-		worker->node = NULL;
-		worker->awaiting_acknowledgement = false;
-		platform_condition_broadcast(builder.work_available);
-		platform_mutex_unlock(builder.mutex);
-
 		--builder.running;
-		if (internal_error) break;
+		if (!internal_error) dispatch_ready(&builder);
+
+		Profile_Scope report_completion_scope = profile_scope_begin("report completion");
+		report_completion(completion);
+		profile_scope_end(&report_completion_scope);
 	}
 
 cleanup:
