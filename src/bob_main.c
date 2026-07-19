@@ -11,7 +11,7 @@
 #include <limits.h>
 #include <stdio.h>
 
-static int run_build(Script *script, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
+static int run_build(Script *script, Cmd_Options command_line_options)
 {
    Bob_Build build = {0};
    int exit_code = 1;
@@ -20,19 +20,12 @@ static int run_build(Script *script, u32 worker_count, b32 worker_override, i32 
 		log_error("%s", build.error);
 		goto cleanup;
 	}
-   if (!worker_override && build.options.has_worker_count)
-   {
-      worker_count = build.options.worker_count;
-   }
-   if (!verbosity_override && build.options.has_verbosity)
-   {
-      verbosity = build.options.verbosity;
-   }
-	logger_set_verbosity(verbosity);
+	Script_Options options = script_options_resolve(build.options, command_line_options);
+	logger_set_verbosity(options.verbosity);
 
    {
       Profile_Scope scope = profile_scope_begin("builder");
-      exit_code = bob_build(build.bob, worker_count) ? 0 : 1;
+      exit_code = bob_build(build.bob, options.worker_count) ? 0 : 1;
       profile_scope_end(&scope);
    }
 
@@ -41,7 +34,7 @@ static int run_build(Script *script, u32 worker_count, b32 worker_override, i32 
    return exit_code;
 }
 
-static int run_script(String path, String function_name, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
+static int run_script(String path, String function_name, Cmd_Options command_line_options)
 {
 	Platform_File_Info build_file;
 	if (!platform_file_info(path, &build_file))
@@ -64,13 +57,7 @@ static int run_script(String path, String function_name, u32 worker_count, b32 w
 		end_scratch(scratch);
 		return 1;
 	}
-	Bob_Options overrides = {
-		.worker_count = worker_count,
-		.verbosity = verbosity,
-		.has_worker_count = worker_override,
-		.has_verbosity = verbosity_override,
-	};
-	script_set_build_overrides(script, overrides);
+	script_set_command_line_options(script, command_line_options);
 
 	int exit_code = 1;
 	if (script_has_function(script, function_name)) {
@@ -78,7 +65,7 @@ static int run_script(String path, String function_name, u32 worker_count, b32 w
 		if (exit_code) log_error("%s: %s", path.data, script_error(script).data);
 	}
 	else if (string_is(function_name, "build")) {
-		exit_code = run_build(script, worker_count, worker_override, verbosity, verbosity_override);
+		exit_code = run_build(script, command_line_options);
 	}
 	else
 	{
@@ -104,14 +91,11 @@ static int run_script(String path, String function_name, u32 worker_count, b32 w
 
 int main(int argument_count, char **arguments)
 {
-   i32 verbosity = 0;
-   u32 worker_count = 4;
+   Cmd_Options command_line_options = {0};
    String build_path = STRING_LITERAL("build.elf");
    String function_name = STRING_LITERAL("build");
    b32 has_build_path = false;
    b32 has_function = false;
-   b32 worker_override = false;
-   b32 verbosity_override = false;
    b32 cache_vcvars = false;
    b32 profile = false;
    b32 profile_threads = false;
@@ -123,8 +107,8 @@ int main(int argument_count, char **arguments)
    {
       if (strcmp(arguments[argument_index], "--verbose") == 0)
       {
-         verbosity = 1;
-         verbosity_override = true;
+         command_line_options.verbosity = 1;
+         command_line_options.has_verbosity = true;
          if (argument_index + 1 < argument_count)
          {
             char *end;
@@ -136,7 +120,7 @@ int main(int argument_count, char **arguments)
                   log_error("invalid verbosity level: %s", arguments[argument_index + 1]);
                   return 2;
                }
-               verbosity = (i32)parsed;
+               command_line_options.verbosity = (i32)parsed;
                ++argument_index;
             }
          }
@@ -150,8 +134,8 @@ int main(int argument_count, char **arguments)
             log_error("invalid worker count: %s", arguments[argument_index]);
             return 2;
          }
-         worker_count = (u32)parsed;
-         worker_override = true;
+         command_line_options.worker_count = (u32)parsed;
+         command_line_options.has_worker_count = true;
       }
       else if (strcmp(arguments[argument_index], "--cache-vcvars") == 0)
       {
@@ -201,7 +185,7 @@ int main(int argument_count, char **arguments)
    {
 		Scratch scratch;
 		String cache_path;
-      if (has_build_path || has_function || worker_override || verbosity_override || profile)
+      if (has_build_path || has_function || command_line_options.has_worker_count || command_line_options.has_verbosity || profile)
       {
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;
@@ -225,7 +209,7 @@ int main(int argument_count, char **arguments)
    {
       int result;
       Profile_Scope scope = profile_scope_begin("build");
-      result = run_script(build_path, function_name, worker_count, worker_override, verbosity, verbosity_override);
+      result = run_script(build_path, function_name, command_line_options);
       profile_scope_end(&scope);
       profiler_print(profile_threads);
       return result;

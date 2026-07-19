@@ -20,7 +20,7 @@ struct Script
 	void *context;
 	String_Array functions;
 	String error;
-	Bob_Options build_overrides;
+	Cmd_Options command_line_options;
 	b32 loaded;
 	b32 failed;
 };

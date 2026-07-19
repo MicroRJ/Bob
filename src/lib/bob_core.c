@@ -191,7 +191,10 @@ static void report_completion(const Completion *completion)
 		return;
 	}
 	b32 succeeded = completion_succeeded(completion);
-	if (completion->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(completion->node), completion->process.output);
+	if (completion->process.output.size > 0) {
+		if (succeeded) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(completion->node), completion->process.output);
+		else logger_log_string(LOG_LEVEL_ERROR, bob_task_name(completion->node), completion->process.output);
+	}
 	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(completion->node));
 	if (succeeded) {
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);

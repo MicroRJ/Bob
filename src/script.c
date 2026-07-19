@@ -1,6 +1,6 @@
 #include "script_internal.h"
 
-#include "frontends/elf_adapter.h"
+#include "scripts/elf_adapter.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -87,9 +87,9 @@ b32 script_has_function(Script *script, String name)
 	return false;
 }
 
-void script_set_build_overrides(Script *script, Bob_Options options)
+void script_set_command_line_options(Script *script, Cmd_Options options)
 {
-	if (script) script->build_overrides = options;
+	if (script) script->command_line_options = options;
 }
 
 b32 script_invoke(Script *script, String name)

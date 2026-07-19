@@ -31,13 +31,10 @@ ELF_FUNCTION(l_bob_build)
 		return 1;
 	}
 
-	u32 worker_count = build.options.has_worker_count ? build.options.worker_count : 4;
-	i32 verbosity = build.options.has_verbosity ? build.options.verbosity : 0;
-	if (script->build_overrides.has_worker_count) worker_count = script->build_overrides.worker_count;
-	if (script->build_overrides.has_verbosity) verbosity = script->build_overrides.verbosity;
-	logger_set_verbosity(verbosity);
+	Script_Options options = script_options_resolve(build.options, script->command_line_options);
+	logger_set_verbosity(options.verbosity);
 	Profile_Scope scope = profile_scope_begin("builder");
-	b32 succeeded = bob_build(build.bob, worker_count);
+	b32 succeeded = bob_build(build.bob, options.worker_count);
 	profile_scope_end(&scope);
 	bob_destroy(build.bob);
 	if (!succeeded) {

@@ -78,23 +78,6 @@ struct Bob
    b32                 failed;
 };
 
-typedef struct Bob_Options
-{
-   u32 worker_count;
-   i32 verbosity;
-   b32 has_worker_count;
-   b32 has_verbosity;
-}
-Bob_Options;
-
-typedef struct Bob_Build
-{
-   Bob          *bob;
-   Bob_Options   options;
-   char          error[256];
-}
-Bob_Build;
-
 Bob *bob_create(void);
 void bob_destroy(Bob *bob);
 Bob_Error bob_prepare(Bob *bob);

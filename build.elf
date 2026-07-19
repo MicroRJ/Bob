@@ -2,17 +2,18 @@ core_sources := {
 	{ name = "base",         path = "src/base.c" },
 	{ name = "logger",       path = "src/logger.c" },
 	{ name = "profiler",     path = "src/profiler.c" },
-	{ name = "bob_runtime",  path = "src/bob_runtime.c" },
-	{ name = "bob_builder",  path = "src/bob_builder.c" },
-	{ name = "include_scan", path = "src/c_include_scan.c" },
+	{ name = "bob_core",     path = "src/lib/bob_core.c" },
+	{ name = "bob_node",     path = "src/lib/bob_node.c" },
+	{ name = "include_scan", path = "src/lib/c_include_scan.c" },
+	{ name = "vcvars_cache", path = "src/lib/vcvars_cache.c" },
 	{ name = "script",       path = "src/script.c" },
-	{ name = "elf_adapter",  path = "src/frontends/elf_adapter.c" },
+	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
 	{ name = "platform",     path = "src/platform/platform_win32.c" },
-	{ name = "vcvars_cache", path = "src/vcvars_cache.c" },
 }
 
 include_dirs := {
 	"src",
+	"src/lib",
 	"elf/include",
 	"elf/src/base",
 	"elf/src/api",
@@ -28,22 +29,6 @@ include_dirs := {
 	"elf/src/compiler/backend",
 }
 
-add_task := fun(name, command_line, inputs, outputs, include_dirs, dependencies) {
-	ret {
-		name = name,
-		command_line = command_line,
-		inputs = inputs,
-		outputs = outputs,
-		include_dirs = include_dirs,
-		dependencies = dependencies,
-	}
-}
-
-copy_array := fun(values) {
-	result := {}
-	for value := values[0 ... values:length()] ? { result:add(value) }
-	ret result
-}
 
 join := fun(values) {
 	result := ""
@@ -58,67 +43,94 @@ for directory := include_dirs[0 ... include_dirs:length()] ? {
 
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
 
-prepare := add_task(
-	"prepare object directory",
-	"cmd /c if not exist build\\obj mkdir build\\obj",
-	{}, { "build/obj" }, {}, {}
-)
+prepare := {
+	name = "prepare object directory",
+	command_line = "cmd /c if not exist build\\obj mkdir build\\obj",
+	inputs = {},
+	outputs = { "build/obj" },
+	include_dirs = {},
+	dependencies = {},
+}
 
-compile_source := fun(name, source) {
-	object := "build/obj/" + name + ".obj"
-	pdb := "build/obj/" + name + ".pdb"
-	task := add_task(
-		"compile " + name,
-		"clang-cl" + compile_options + include_options + " /c " + source + " /Fo" + object + " /Fd" + pdb,
-		{ source }, { object }, include_dirs, { prepare }
-	)
+compile_source := fun(options) {
+	object := "build/obj/" + options.name + ".obj"
+	pdb := "build/obj/" + options.name + ".pdb"
+	task := {
+		name = "compile " + options.name,
+		command_line = "clang-cl" + compile_options + include_options + " /c " + options.source + " /Fo" + object + " /Fd" + pdb,
+		inputs = { options.source },
+		outputs = { object },
+		include_dirs = include_dirs,
+		dependencies = { prepare },
+	}
 	ret { task = task, object = object }
 }
 
 common_tasks := {}
 common_objects := {}
 for source := core_sources[0 ... core_sources:length()] ? {
-	compiled := compile_source(source.name, source.path)
+	compiled := compile_source({
+		name = source.name,
+		source = source.path,
+	})
 	common_tasks:add(compiled.task)
 	common_objects:add(compiled.object)
 }
 
-bob_compiled := compile_source("bob", "src/bob.c")
-bob_dependencies := copy_array(common_tasks)
+bob_compiled := compile_source({
+	name = "bob",
+	source = "src/bob_main.c",
+})
+bob_dependencies := common_tasks:clone()
 bob_dependencies:add(bob_compiled.task)
-bob_inputs := copy_array(common_objects)
-bob_inputs:add(bob_compiled.object)
-bob_inputs:add("elf/build/elf.lib")
+bob_inputs := common_objects:merge({
+	bob_compiled.object,
+	"elf/build/elf.lib",
+})
 
-build_bob := add_task(
-	"link Bob",
-	"clang-cl /nologo" + join(common_objects) + " " + bob_compiled.object +
-	" elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
-	bob_inputs, { "build/bob.exe" }, {}, bob_dependencies
-)
+build_bob := {
+	name = "link Bob",
+	command_line = "clang-cl /nologo" + join(common_objects) + " " + bob_compiled.object +
+		" elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
+	inputs = bob_inputs,
+	outputs = { "build/bob.exe" },
+	include_dirs = {},
+	dependencies = bob_dependencies,
+}
 
-tests_compiled := compile_source("tests", "tests/tests.c")
-test_dependencies := copy_array(common_tasks)
-test_dependencies:add(tests_compiled.task)
-test_inputs := copy_array(common_objects)
-test_inputs:add(tests_compiled.object)
-test_inputs:add("elf/build/elf.lib")
+tests_compiled := compile_source({
+	name = "tests",
+	source = "tests/tests.c",
+})
+test_dependencies := common_tasks:merge({
+	tests_compiled.task,
+})
+test_inputs := common_objects:merge({
+	tests_compiled.object,
+	"elf/build/elf.lib",
+})
 
-build_tests := add_task(
-	"link tests",
-	"clang-cl /nologo" + join(common_objects) + " " + tests_compiled.object +
-	" elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
-	test_inputs, { "build/tests.exe" }, {}, test_dependencies
-)
+build_tests := {
+	name = "link tests",
+	command_line = "clang-cl /nologo" + join(common_objects) + " " + tests_compiled.object +
+		" elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
+	inputs = test_inputs,
+	outputs = { "build/tests.exe" },
+	include_dirs = {},
+	dependencies = test_dependencies,
+}
 
-run_tests := add_task(
-	"run tests",
-	"build\\tests.exe --test",
-	{ "build/tests.exe" }, {}, {}, { build_tests }
-)
+run_tests := {
+	name = "run tests",
+	command_line = "build\\tests.exe --test",
+	inputs = { "build/tests.exe" },
+	outputs = {},
+	include_dirs = {},
+	dependencies = { build_tests },
+}
 
 options := {
-	workers = 4,
+	workers   = 4,
 	verbosity = 0,
 }
 

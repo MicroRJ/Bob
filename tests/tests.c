@@ -803,6 +803,26 @@ static b32 test_bob_script(void)
     return true;
 }
 
+static b32 test_option_resolution(void)
+{
+	Script_Options script = {
+		.worker_count = 2,
+		.verbosity = 0,
+		.has_worker_count = true,
+		.has_verbosity = true,
+	};
+	Cmd_Options command_line = {
+		.verbosity = 3,
+		.has_verbosity = true,
+	};
+	Script_Options merged = script_options_resolve(script, command_line);
+	CHECK(merged.worker_count == 2);
+	CHECK(merged.verbosity == 3);
+	CHECK(merged.has_worker_count);
+	CHECK(merged.has_verbosity);
+	return true;
+}
+
 static b32 test_script_functions(void)
 {
     Arena arena = arena_create(MEGABYTES(16));
@@ -894,6 +914,7 @@ static int build_tasks_from_file(String path)
 static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
+    run_test("option resolution", test_option_resolution);
     run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
     run_test("high resolution timer", test_high_resolution_timer);
