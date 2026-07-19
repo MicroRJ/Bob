@@ -1,5 +1,11 @@
 build := fun() {
-	ret 1
+	ret bob.build({
+		targets = {},
+		options = {
+			workers = 1,
+			verbosity = 0,
+		},
+	})
 }
 
 clean := fun() {

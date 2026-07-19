@@ -791,20 +791,15 @@ static b32 test_elf_generated_descriptor(void)
     return true;
 }
 
-static b32 test_bob_descriptor(void)
+static b32 test_bob_script(void)
 {
-    Bob_Build build;
-
-    if (!script_load_build(STRING_LITERAL("build.elf"), &build)) {
-        printf("  elf error: %s\n", build.error);
-        return false;
-    }
-    CHECK(bob_task_count(build.bob) == 13);
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("link Bob")));
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 1))->name, STRING_LITERAL("compile base")));
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 11))->name, STRING_LITERAL("compile bob")));
-    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 12))->name, STRING_LITERAL("prepare object directory")));
-    bob_destroy(build.bob);
+    Arena arena = arena_create(MEGABYTES(16));
+    Script *script = script_load(&arena, STRING_LITERAL("build.elf"));
+    CHECK(script_is_loaded(script));
+    CHECK(script_has_function(script, STRING_LITERAL("build")));
+    CHECK(script_has_function(script, STRING_LITERAL("test")));
+    script_destroy(script);
+    arena_destroy(&arena);
     return true;
 }
 
@@ -918,7 +913,7 @@ static int run_all_tests(void)
     run_test("recursive includes", test_recursive_include_rebuilds);
     run_test("elf build descriptor", test_elf_descriptor);
     run_test("elf generated descriptor", test_elf_generated_descriptor);
-    run_test("Bob build descriptor", test_bob_descriptor);
+    run_test("Bob build script", test_bob_script);
     run_test("script functions", test_script_functions);
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);

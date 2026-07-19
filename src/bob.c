@@ -64,6 +64,13 @@ static int run_script(String path, String function_name, u32 worker_count, b32 w
 		end_scratch(scratch);
 		return 1;
 	}
+	Bob_Options overrides = {
+		.worker_count = worker_count,
+		.verbosity = verbosity,
+		.has_worker_count = worker_override,
+		.has_verbosity = verbosity_override,
+	};
+	script_set_build_overrides(script, overrides);
 
 	int exit_code = 1;
 	if (script_has_function(script, function_name)) {

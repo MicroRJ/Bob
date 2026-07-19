@@ -1,6 +1,8 @@
 #include "elf_adapter.h"
 
 #include "elf.h"
+#include "logger.h"
+#include "profiler.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +13,45 @@ typedef struct Elf_Script
 	elf_Table *exports;
 }
 Elf_Script;
+
+static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result);
+
+ELF_FUNCTION(l_bob_build)
+{
+	(void)nargs;
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	elf_Table *arguments = elf_arg_table(S, 1);
+	Bob_Build build = {0};
+	if (!read_build_table(script, arguments, &build))
+	{
+		script_set_error(script, "%s", build.error);
+		script->failed = true;
+		elf_push_int(S, false);
+		return 1;
+	}
+
+	u32 worker_count = build.options.has_worker_count ? build.options.worker_count : 4;
+	i32 verbosity = build.options.has_verbosity ? build.options.verbosity : 0;
+	if (script->build_overrides.has_worker_count) worker_count = script->build_overrides.worker_count;
+	if (script->build_overrides.has_verbosity) verbosity = script->build_overrides.verbosity;
+	logger_set_verbosity(verbosity);
+	Profile_Scope scope = profile_scope_begin("builder");
+	b32 succeeded = bob_build(build.bob, worker_count);
+	profile_scope_end(&scope);
+	bob_destroy(build.bob);
+	if (!succeeded) {
+		script_set_error(script, "build failed");
+		script->failed = true;
+	}
+	elf_push_int(S, succeeded);
+	return 1;
+}
+
+static const elf_Binding bob_bindings[] =
+{
+	{ "build", l_bob_build },
+};
 
 static b32 is_function(elf_ValueView value)
 {
@@ -26,6 +67,8 @@ b32 elf_script_load(Script *script, String path)
 		script_set_error(script, "unable to create elf state");
 		return false;
 	}
+	elf_set_user_data(elf->state, script);
+	elf_register_library(elf->state, "bob", bob_bindings, ARRAY_COUNT(bob_bindings));
 	if (!elf_push_code_file(elf->state, path.data)) {
 		script_set_error(script, "unable to load '%s'", path.data);
 		return false;
@@ -147,14 +190,13 @@ static int table_list_add(Table_List *list, elf_Table *table)
    return 1;
 }
 
-b32 elf_script_read_build(Script *script, Bob_Build *result)
+static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result)
 {
    Scratch scratch;
    elf_ValueView targets_value;
    elf_ValueView options_value;
    Elf_Script *elf;
    elf_State *state;
-   elf_Table *root;
    Table_List task_tables;
    uint32_t i;
    int success = 0;
@@ -165,7 +207,6 @@ b32 elf_script_read_build(Script *script, Bob_Build *result)
    memset(result, 0, sizeof(*result));
    elf = script->context;
    state = elf->state;
-   root = elf->exports;
    options_value = field(state, root, "options");
    if (options_value.type != ELF_VALUE_TYPE_NIL)
    {
@@ -315,4 +356,10 @@ b32 elf_script_read_build(Script *script, Bob_Build *result)
       memcpy(result->error, error, sizeof(error));
    }
    return success;
+}
+
+b32 elf_script_read_build(Script *script, Bob_Build *result)
+{
+	Elf_Script *elf = script->context;
+	return read_build_table(script, elf->exports, result);
 }

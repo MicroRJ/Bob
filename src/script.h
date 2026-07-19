@@ -13,6 +13,7 @@ b32 script_is_loaded(Script *script);
 String script_error(Script *script);
 String_Array script_functions(Script *script);
 b32 script_has_function(Script *script, String name);
+void script_set_build_overrides(Script *script, Bob_Options options);
 b32 script_invoke(Script *script, String name);
 
 // Compatibility with scripts that return { targets, options }.

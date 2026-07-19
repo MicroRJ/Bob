@@ -28,20 +28,20 @@ link := {
 	dependencies  = {compile},
 }
 
-targets := {link}
+build := fun() {
+	ret bob.build({
+		options = options,
+		targets = {link},
+	})
+}
 
 ret {
-	options = options
-	targets = targets
+	build = build,
 }
 
 ```
 
 It works by running an 'elf' script ('build.elf' by default).
-
-The script returns a table with targets, and options.
-
-Then Bob builds it.
 
 ## Building Bob
 
@@ -65,7 +65,7 @@ Bob is Simple.
 It uses a normal, minimal, general purpose, C like programming
 freaking language.
 
-All the script does is return a table of targets.
+All the script does is call Bob with a table of targets.
 
 Generate the table however you want.
 

@@ -20,7 +20,9 @@ struct Script
 	void *context;
 	String_Array functions;
 	String error;
+	Bob_Options build_overrides;
 	b32 loaded;
+	b32 failed;
 };
 
 void script_set_error(Script *script, const char *format, ...);

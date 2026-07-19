@@ -117,11 +117,25 @@ run_tests := add_task(
 	{ "build/tests.exe" }, {}, {}, { build_tests }
 )
 
-ret {
-	targets = { build_bob },
-	disabled_targets = { run_tests },
-	options = {
-		workers = 4,
-		verbosity = 0,
-	},
+options := {
+	workers = 4,
+	verbosity = 0,
 }
+
+entries := {}
+
+entries.build = fun() {
+	ret bob.build({
+		targets = { build_bob },
+		options = options,
+	})
+}
+
+entries.test = fun() {
+	ret bob.build({
+		targets = { run_tests },
+		options = options,
+	})
+}
+
+ret entries

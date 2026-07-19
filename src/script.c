@@ -87,6 +87,11 @@ b32 script_has_function(Script *script, String name)
 	return false;
 }
 
+void script_set_build_overrides(Script *script, Bob_Options options)
+{
+	if (script) script->build_overrides = options;
+}
+
 b32 script_invoke(Script *script, String name)
 {
 	if (!script_is_loaded(script)) return false;
@@ -94,11 +99,12 @@ b32 script_invoke(Script *script, String name)
 		script_set_error(script, "script has no function '%.*s'", (int)name.size, name.data);
 		return false;
 	}
+	script->failed = false;
 	Scratch scratch = begin_different_scratch(script->arena);
 	String terminated_name = arena_push_string_copy(scratch.arena, name);
 	b32 result = script->backend->invoke(script, terminated_name);
 	end_scratch(scratch);
-	return result;
+	return result && !script->failed;
 }
 
 b32 script_read_build(Script *script, Bob_Build *result)
