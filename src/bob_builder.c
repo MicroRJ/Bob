@@ -6,7 +6,7 @@
 
 #include <stdlib.h>
 
-static b32 task_needs_rebuild(const Bob *bob, Node_Id node, const Bob_Task *task)
+static b32 task_needs_rebuild(const Bob_Node *node, const Bob_Task *task)
 {
 	u64 oldest_output = UINT64_MAX;
 	u64 newest_input = 0;
@@ -34,9 +34,9 @@ static b32 task_needs_rebuild(const Bob *bob, Node_Id node, const Bob_Task *task
 		if (scan.newest_write_time > newest_input) newest_input = scan.newest_write_time;
 	}
 
-	for (i = 0; i < bob_dependency_count(bob, node); ++i) {
-		Node_Id dependency = bob_dependency(bob, node, i);
-		if (dependency == BOB_INVALID_TASK || bob->nodes[dependency].rebuilt) return true;
+	for (i = 0; i < bob_dependency_count(node); ++i) {
+		Bob_Node *dependency = bob_dependency(node, i);
+		if (!dependency || dependency->rebuilt) return true;
 	}
 
 	return newest_input > oldest_output;
@@ -78,7 +78,7 @@ static u32 worker_main(void *data)
 	Bob_Worker *worker = data;
 	Bob *bob = worker->bob;
 	for (;;) {
-		Node_Id node;
+		Bob_Node *node;
 		const Bob_Task *task;
 		b32 stopping;
 		platform_mutex_lock(bob->mutex);
@@ -92,7 +92,7 @@ static u32 worker_main(void *data)
 		node = bob->work[--bob->work_count];
 		platform_mutex_unlock(bob->mutex);
 
-		task = bob_get_task(bob, node);
+		task = bob_get_task(node);
 		worker->node = node;
 		worker->command_line = task->command_line;
 		{
@@ -103,7 +103,7 @@ static u32 worker_main(void *data)
 
 		platform_mutex_lock(bob->mutex);
 		worker->awaiting_acknowledgement = true;
-		bob->completions[bob->completion_count++] = worker->index;
+	bob->completions[bob->completion_count++] = worker;
 		platform_condition_signal(bob->completion_available);
 		while (!bob->stopping && worker->awaiting_acknowledgement) {
 			if (!platform_condition_wait(bob->work_available, bob->mutex)) request_stop_locked(bob);
@@ -131,11 +131,11 @@ static void stop_workers(Bob *bob, Bob_Worker *workers, u32 thread_count, u32 ar
 	for (i = 0; i < arena_count; ++i) arena_destroy(&workers[i].output);
 }
 
-static b32 report_completion(Bob *bob, Bob_Worker *worker)
+static b32 report_completion(Bob_Worker *worker)
 {
 	b32 succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
-	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(bob, worker->node), worker->process.output);
-	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(bob, worker->node));
+	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(worker->node), worker->process.output);
+	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(worker->node));
 	if (succeeded) {
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line.data);
 		logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
@@ -144,7 +144,7 @@ static b32 report_completion(Bob *bob, Bob_Worker *worker)
 		Scratch scratch = begin_scratch();
 		String executable;
 		String working_directory;
-		logger_log(LOG_LEVEL_ERROR, bob_task_name(bob, worker->node), "%s", worker->process.launched ? "process error" : "failed to start process");
+		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "%s", worker->process.launched ? "process error" : "failed to start process");
 		logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
 		{
 			String message;
@@ -157,7 +157,7 @@ static b32 report_completion(Bob *bob, Bob_Worker *worker)
 		if (platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
 		end_scratch(scratch);
 	} else if (worker->process.exit_code != 0) {
-		logger_log(LOG_LEVEL_ERROR, bob_task_name(bob, worker->node), "process exited with code %u", worker->process.exit_code);
+		logger_log(LOG_LEVEL_ERROR, bob_task_name(worker->node), "process exited with code %u", worker->process.exit_code);
 		logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
 	}
 	return succeeded;
@@ -177,7 +177,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 	if (!bob || worker_count == 0) return false;
 	task_count = bob_task_count(bob);
 	for (i = 0; i < task_count; ++i) {
-		const Bob_Task *task = bob_get_task(bob, i);
+		const Bob_Task *task = bob_get_task(bob_node_at(bob, i));
 		if (!task || !task->command_line.data) return false;
 		if ((task->inputs.count && !task->inputs.items) || (task->outputs.count && !task->outputs.items) || (task->include_directories.count && !task->include_directories.items)) return false;
 	}
@@ -206,8 +206,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 	for (i = 0; i < worker_count; ++i) {
 		workers[i].bob = bob;
-		workers[i].index = i;
-		workers[i].node = BOB_INVALID_TASK;
+		workers[i].node = NULL;
 		workers[i].output = arena_create(MEGABYTES(256));
 		if (!workers[i].output.data) {
 			internal_error = true;
@@ -224,15 +223,15 @@ b32 bob_build(Bob *bob, u32 worker_count)
 	if (internal_error) goto cleanup;
 
 	while (!bob_is_finished(bob)) {
-		Node_Id node;
+		Bob_Node *node;
 		while (running < worker_count && bob_take_ready(bob, &node)) {
-			const Bob_Task *task = bob_get_task(bob, node);
+			const Bob_Task *task = bob_get_task(node);
 			b32 needs_rebuild;
 			Profile_Scope scope = profile_scope_begin("incremental checks");
-			needs_rebuild = task_needs_rebuild(bob, node, task);
+			needs_rebuild = task_needs_rebuild(node, task);
 			profile_scope_end(&scope);
 			if (!needs_rebuild) {
-				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(bob, node));
+				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(node));
 				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line.data);
 				if (bob_complete(bob, node, true) != BOB_OK) {
 					internal_error = true;
@@ -240,7 +239,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 				}
 				continue;
 			}
-			bob->nodes[node].rebuilt = true;
+			node->rebuilt = true;
 			platform_mutex_lock(bob->mutex);
 			bob->work[bob->work_count++] = node;
 			platform_condition_broadcast(bob->work_available);
@@ -256,14 +255,12 @@ b32 bob_build(Bob *bob, u32 worker_count)
 		{
 			Bob_Worker *worker = NULL;
 			b32 succeeded;
-			u32 worker_index;
 			platform_mutex_lock(bob->mutex);
 			while (!bob->stopping && bob->completion_count == 0) {
 				if (!platform_condition_wait(bob->completion_available, bob->mutex)) request_stop_locked(bob);
 			}
 			if (bob->completion_count > 0) {
-				worker_index = bob->completions[--bob->completion_count];
-				worker = &workers[worker_index];
+				worker = bob->completions[--bob->completion_count];
 			}
 			platform_mutex_unlock(bob->mutex);
 			if (!worker) {
@@ -271,10 +268,10 @@ b32 bob_build(Bob *bob, u32 worker_count)
 				break;
 			}
 
-			succeeded = report_completion(bob, worker);
+			succeeded = report_completion(worker);
 			if (bob_complete(bob, worker->node, succeeded) != BOB_OK) internal_error = true;
 			platform_mutex_lock(bob->mutex);
-			worker->node = BOB_INVALID_TASK;
+			worker->node = NULL;
 			worker->awaiting_acknowledgement = false;
 			platform_condition_broadcast(bob->work_available);
 			platform_mutex_unlock(bob->mutex);

@@ -4,12 +4,10 @@
 #include "base.h"
 #include "platform\platform.h"
 
-typedef u32 Node_Id;
-
 typedef struct Platform_Mutex Platform_Mutex;
 typedef struct Platform_Condition Platform_Condition;
-
-#define BOB_INVALID_TASK UINT32_MAX
+typedef struct Bob Bob;
+typedef struct Bob_Node Bob_Node;
 
 typedef enum Bob_Error
 {
@@ -46,33 +44,29 @@ typedef struct Bob_Task
 }
 Bob_Task;
 
-typedef struct Bob_Id_Array
+typedef struct Bob_Node_Array
 {
-   Node_Id  *items;
-   u32       count;
-   u32       capacity;
+   Bob_Node **items;
+   u32        count;
+   u32        capacity;
 }
-Bob_Id_Array;
+Bob_Node_Array;
 
-typedef struct Bob_Node
+struct Bob_Node
 {
-   Bob_Id_Array   dependencies;
-   Bob_Id_Array   dependents;
+   Bob_Node_Array dependencies;
+   Bob_Node_Array dependents;
    u32            unfinished_dependencies;
    Bob_Task       task;
    Bob_Task_State state;
    b32            rebuilt;
-}
-Bob_Node;
-
-typedef struct Bob Bob;
+};
 
 typedef struct Bob_Worker
 {
 	Bob                    *bob;
-	u32                     index;
 	Platform_Thread        *thread;
-	Node_Id                 node;
+	Bob_Node               *node;
 	String                  command_line;
 	Arena                   output;
 	Platform_Process_Result process;
@@ -80,28 +74,27 @@ typedef struct Bob_Worker
 }
 Bob_Worker;
 
-typedef struct Bob
+struct Bob
 {
    Arena               arena;
-   Bob_Node           *nodes;
+   Bob_Node          **nodes;
    u32                 node_count;
    u32                 node_capacity;
-   Node_Id            *ready;
+   Bob_Node          **ready;
    u32                 ready_count;
    u32                 ready_head;
    u32                 terminal_count;
    b32                 prepared;
    b32                 failed;
-   Node_Id            *work;
+   Bob_Node          **work;
    u32                 work_count;
-   u32                *completions;
+   Bob_Worker        **completions;
    u32                 completion_count;
    Platform_Mutex     *mutex;
    Platform_Condition *work_available;
    Platform_Condition *completion_available;
    b32                 stopping;
-}
-Bob;
+};
 
 typedef struct Bob_Options
 {
@@ -125,19 +118,20 @@ void bob_destroy(Bob *bob);
 Bob_Error bob_prepare(Bob *bob);
 b32 bob_build(Bob *bob, u32 worker_count);
 
-b32 bob_take_ready(Bob *bob, Node_Id *node_out);
-Bob_Error bob_add_task(Bob *bob, Bob_Task task, Node_Id *node_out);
-Bob_Error bob_set_task(Bob *bob, Node_Id node, Bob_Task task);
-Bob_Error bob_add_dependency(Bob *bob, Node_Id node, Node_Id dependency);
-Bob_Error bob_complete(Bob *bob, Node_Id node, b32 succeeded);
+b32 bob_take_ready(Bob *bob, Bob_Node **node_out);
+Bob_Error bob_add_task(Bob *bob, Bob_Task task, Bob_Node **node_out);
+Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task task);
+Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency);
+Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded);
 b32 bob_is_finished(const Bob *bob);
 b32 bob_has_failed(const Bob *bob);
 u32 bob_task_count(const Bob *bob);
-const char *bob_task_name(const Bob *bob, Node_Id node);
-Bob_Task_State bob_task_state(const Bob *bob, Node_Id node);
-const Bob_Task *bob_get_task(const Bob *bob, Node_Id node);
-u32 bob_dependency_count(const Bob *bob, Node_Id node);
-Node_Id bob_dependency(const Bob *bob, Node_Id node, u32 index);
+Bob_Node *bob_node_at(const Bob *bob, u32 index);
+const char *bob_task_name(const Bob_Node *node);
+Bob_Task_State bob_task_state(const Bob_Node *node);
+const Bob_Task *bob_get_task(const Bob_Node *node);
+u32 bob_dependency_count(const Bob_Node *node);
+Bob_Node *bob_dependency(const Bob_Node *node, u32 index);
 const char *bob_error_string(Bob_Error result);
 
 #endif

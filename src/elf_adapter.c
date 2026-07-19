@@ -206,7 +206,7 @@ b32 elf_load_build(const char *path, Bob_Build *result)
    {
       Bob_Task task = {0};
       elf_Table *description = task_tables.items[i];
-      Node_Id node;
+      Bob_Node *node;
       Bob_Error bob_error;
       task.name = copy_string_value(scratch.arena, field(state, description, "name"));
       task.command_line = copy_string_value(scratch.arena, field(state, description, "command_line"));
@@ -239,9 +239,11 @@ b32 elf_load_build(const char *path, Bob_Build *result)
          Bob_Error bob_error;
          resolved = table_list_find(&task_tables, dependency_value.as.table);
          if (resolved == UINT32_MAX) goto cleanup;
-         bob_error = bob_add_dependency(result->bob, i, resolved);
+         Bob_Node *node = bob_node_at(result->bob, i);
+         Bob_Node *dependency_node = bob_node_at(result->bob, resolved);
+         bob_error = bob_add_dependency(result->bob, node, dependency_node);
          if (bob_error != BOB_OK) {
-            snprintf(result->error, sizeof(result->error), "unable to add dependency to '%s': %s", bob_task_name(result->bob, i), bob_error_string(bob_error));
+            snprintf(result->error, sizeof(result->error), "unable to add dependency to '%s': %s", bob_task_name(node), bob_error_string(bob_error));
             goto cleanup;
          }
       }

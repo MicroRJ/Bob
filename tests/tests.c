@@ -70,9 +70,9 @@ static b32 test_high_resolution_timer(void)
     return frequency > 0 && platform_performance_counter() >= before;
 }
 
-static Node_Id add_node(Bob *graph, const char *name)
+static Bob_Node *add_node(Bob *graph, const char *name)
 {
-    Node_Id node = BOB_INVALID_TASK;
+    Bob_Node *node = NULL;
     Bob_Error result = bob_add_task(graph, (Bob_Task){ .name = string_from_cstring(name) }, &node);
     if (result != BOB_OK) {
         printf("  unable to add node %s: %s\n", name, bob_error_string(result));
@@ -87,7 +87,7 @@ static b32 run_tasks(Bob *graph, const Bob_Task *tasks, u32 task_count,
     u32 i;
     if (bob_task_count(graph) != task_count) return false;
     for (i = 0; i < task_count; ++i) {
-        if (bob_set_task(graph, (Node_Id)i, tasks[i]) != BOB_OK) {
+        if (bob_set_task(graph, bob_node_at(graph, i), tasks[i]) != BOB_OK) {
             return false;
         }
     }
@@ -263,9 +263,9 @@ static b32 test_empty_graph(void)
 static b32 test_linear_graph(void)
 {
     Bob *graph = bob_create();
-    Node_Id compile = add_node(graph, "compile");
-    Node_Id link = add_node(graph, "link");
-    Node_Id node;
+    Bob_Node *compile = add_node(graph, "compile");
+    Bob_Node *link = add_node(graph, "link");
+    Bob_Node *node;
 
     CHECK_OK(bob_add_dependency(graph, link, compile));
     CHECK_OK(bob_prepare(graph));
@@ -288,12 +288,12 @@ static b32 test_linear_graph(void)
 static b32 test_parallel_fan_in(void)
 {
     Bob *graph = bob_create();
-    Node_Id a = add_node(graph, "a");
-    Node_Id b = add_node(graph, "b");
-    Node_Id link = add_node(graph, "link");
-    Node_Id first;
-    Node_Id second;
-    Node_Id node;
+    Bob_Node *a = add_node(graph, "a");
+    Bob_Node *b = add_node(graph, "b");
+    Bob_Node *link = add_node(graph, "link");
+    Bob_Node *first;
+    Bob_Node *second;
+    Bob_Node *node;
 
     CHECK_OK(bob_add_dependency(graph, link, a));
     CHECK_OK(bob_add_dependency(graph, link, b));
@@ -320,12 +320,12 @@ static b32 test_parallel_fan_in(void)
 static b32 test_failure_blocks_dependents(void)
 {
     Bob *graph = bob_create();
-    Node_Id compile = add_node(graph, "compile");
-    Node_Id link = add_node(graph, "link");
-    Node_Id package = add_node(graph, "package");
-    Node_Id independent = add_node(graph, "independent");
-    Node_Id first;
-    Node_Id second;
+    Bob_Node *compile = add_node(graph, "compile");
+    Bob_Node *link = add_node(graph, "link");
+    Bob_Node *package = add_node(graph, "package");
+    Bob_Node *independent = add_node(graph, "independent");
+    Bob_Node *first;
+    Bob_Node *second;
 
     CHECK_OK(bob_add_dependency(graph, link, compile));
     CHECK_OK(bob_add_dependency(graph, package, link));
@@ -337,8 +337,8 @@ static b32 test_failure_blocks_dependents(void)
           (first == independent && second == compile));
 
     CHECK_OK(bob_complete(graph, compile, false));
-    CHECK(bob_task_state(graph, link) == BOB_TASK_BLOCKED);
-    CHECK(bob_task_state(graph, package) == BOB_TASK_BLOCKED);
+    CHECK(bob_task_state(link) == BOB_TASK_BLOCKED);
+    CHECK(bob_task_state(package) == BOB_TASK_BLOCKED);
     CHECK(!bob_is_finished(graph));
 
     CHECK_OK(bob_complete(graph, independent, true));
@@ -351,9 +351,9 @@ static b32 test_failure_blocks_dependents(void)
 static b32 test_cycle_is_rejected(void)
 {
     Bob *graph = bob_create();
-    Node_Id a = add_node(graph, "a");
-    Node_Id b = add_node(graph, "b");
-    Node_Id c = add_node(graph, "c");
+    Bob_Node *a = add_node(graph, "a");
+    Bob_Node *b = add_node(graph, "b");
+    Bob_Node *c = add_node(graph, "c");
 
     CHECK_OK(bob_add_dependency(graph, a, b));
     CHECK_OK(bob_add_dependency(graph, b, c));
@@ -366,8 +366,8 @@ static b32 test_cycle_is_rejected(void)
 static b32 test_invalid_edges_are_rejected(void)
 {
     Bob *graph = bob_create();
-    Node_Id a = add_node(graph, "a");
-    Node_Id b = add_node(graph, "b");
+    Bob_Node *a = add_node(graph, "a");
+    Bob_Node *b = add_node(graph, "b");
 
     CHECK(bob_add_dependency(graph, a, a) == BOB_ERROR_SELF_DEPENDENCY);
     CHECK_OK(bob_add_dependency(graph, a, b));
@@ -385,9 +385,9 @@ static b32 get_test_executable(char *buffer, u32 buffer_size)
 static b32 test_builder_runs_in_parallel(void)
 {
     Bob *graph = bob_create();
-    Node_Id a = add_node(graph, "slow a");
-    Node_Id b = add_node(graph, "slow b");
-    Node_Id link = add_node(graph, "link");
+    Bob_Node *a = add_node(graph, "slow a");
+    Bob_Node *b = add_node(graph, "slow b");
+    Bob_Node *link = add_node(graph, "link");
     Bob_Task tasks[3] = {0};
     char executable[MAX_PATH];
     char command_a[2 * MAX_PATH];
@@ -412,9 +412,9 @@ static b32 test_builder_runs_in_parallel(void)
     CHECK(snprintf(command_b, sizeof(command_b), "\"%s\" --barrier %s %s b", executable, event_b_name, event_a_name) > 0);
     CHECK(snprintf(command_link, sizeof(command_link), "\"%s\" --child 0 0 link", executable) > 0);
 
-    tasks[a].command_line = string_from_cstring(command_a);
-    tasks[b].command_line = string_from_cstring(command_b);
-    tasks[link].command_line = string_from_cstring(command_link);
+    tasks[0].command_line = string_from_cstring(command_a);
+    tasks[1].command_line = string_from_cstring(command_b);
+    tasks[2].command_line = string_from_cstring(command_link);
 
     CHECK_OK(bob_add_dependency(graph, link, a));
     CHECK_OK(bob_add_dependency(graph, link, b));
@@ -432,9 +432,9 @@ static b32 test_builder_runs_in_parallel(void)
 static b32 test_builder_propagates_failure(void)
 {
     Bob *graph = bob_create();
-    Node_Id fail = add_node(graph, "fail");
-    Node_Id blocked = add_node(graph, "blocked");
-    Node_Id independent = add_node(graph, "independent");
+    Bob_Node *fail = add_node(graph, "fail");
+    Bob_Node *blocked = add_node(graph, "blocked");
+    Bob_Node *independent = add_node(graph, "independent");
     Bob_Task tasks[3] = {0};
     char executable[MAX_PATH];
     char fail_command[2 * MAX_PATH];
@@ -446,15 +446,15 @@ static b32 test_builder_propagates_failure(void)
     CHECK(snprintf(blocked_command, sizeof(blocked_command), "\"%s\" --child 0 0 blocked", executable) > 0);
     CHECK(snprintf(independent_command, sizeof(independent_command), "\"%s\" --child 0 0 independent", executable) > 0);
 
-    tasks[fail].command_line = string_from_cstring(fail_command);
-    tasks[blocked].command_line = string_from_cstring(blocked_command);
-    tasks[independent].command_line = string_from_cstring(independent_command);
+    tasks[0].command_line = string_from_cstring(fail_command);
+    tasks[1].command_line = string_from_cstring(blocked_command);
+    tasks[2].command_line = string_from_cstring(independent_command);
     CHECK_OK(bob_add_dependency(graph, blocked, fail));
 
     CHECK(!run_tasks(graph, tasks, 3, 2));
-    CHECK(bob_task_state(graph, fail) == BOB_TASK_FAILED);
-    CHECK(bob_task_state(graph, blocked) == BOB_TASK_BLOCKED);
-    CHECK(bob_task_state(graph, independent) == BOB_TASK_SUCCEEDED);
+    CHECK(bob_task_state(fail) == BOB_TASK_FAILED);
+    CHECK(bob_task_state(blocked) == BOB_TASK_BLOCKED);
+    CHECK(bob_task_state(independent) == BOB_TASK_SUCCEEDED);
     CHECK(bob_is_finished(graph));
     bob_destroy(graph);
     return true;
@@ -463,13 +463,13 @@ static b32 test_builder_propagates_failure(void)
 static b32 test_builder_reports_missing_executable(void)
 {
     Bob *graph = bob_create();
-    Node_Id missing = add_node(graph, "missing executable");
+    Bob_Node *missing = add_node(graph, "missing executable");
     Bob_Task task = {
         .command_line = STRING_LITERAL("bob_executable_that_does_not_exist_7f31.exe --input x.c")
     };
 
     CHECK(!run_tasks(graph, &task, 1, 1));
-    CHECK(bob_task_state(graph, missing) == BOB_TASK_FAILED);
+    CHECK(bob_task_state(missing) == BOB_TASK_FAILED);
     bob_destroy(graph);
     return true;
 }
@@ -497,7 +497,7 @@ static b32 test_builder_skips_existing_output(void)
     second_graph = bob_create();
     add_node(second_graph, "skip existing output");
     CHECK(run_tasks(second_graph, &task, 1, 1));
-    CHECK(bob_task_state(second_graph, 0) == BOB_TASK_SUCCEEDED);
+    CHECK(bob_task_state(bob_node_at(second_graph, 0)) == BOB_TASK_SUCCEEDED);
     bob_destroy(second_graph);
 
     CHECK(DeleteFileA(output_path));
@@ -641,8 +641,8 @@ static b32 test_dependency_rebuild_propagates(void)
     String parent_outputs[] = { string_from_cstring(parent_output) };
     Bob_Task tasks[2] = {0};
     Bob *graph;
-    Node_Id dependency;
-    Node_Id parent;
+    Bob_Node *dependency;
+    Bob_Node *parent;
     Platform_File_Info info;
 
     DeleteFileA(marker);
@@ -754,10 +754,10 @@ static b32 test_elf_descriptor(void)
         return false;
     }
     CHECK(bob_task_count(build.bob) == 4);
-    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("run hello.exe")));
-    CHECK(bob_dependency_count(build.bob, 0) == 1);
-    CHECK(bob_dependency(build.bob, 0, 0) == 1);
-    task = bob_get_task(build.bob, 2);
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("run hello.exe")));
+    CHECK(bob_dependency_count(bob_node_at(build.bob, 0)) == 1);
+    CHECK(bob_dependency(bob_node_at(build.bob, 0), 0) == bob_node_at(build.bob, 1));
+    task = bob_get_task(bob_node_at(build.bob, 2));
     CHECK(string_equal(task->name, STRING_LITERAL("compile main")));
     CHECK(task->inputs.count == 1);
     CHECK(task->outputs.count == 1);
@@ -766,8 +766,8 @@ static b32 test_elf_descriptor(void)
     CHECK(build.options.worker_count == 2);
     CHECK(build.options.has_verbosity);
     CHECK(build.options.verbosity == 0);
-    CHECK(bob_dependency_count(build.bob, 1) == 2);
-    CHECK(bob_dependency(build.bob, 1, 0) == 2);
+    CHECK(bob_dependency_count(bob_node_at(build.bob, 1)) == 2);
+    CHECK(bob_dependency(bob_node_at(build.bob, 1), 0) == bob_node_at(build.bob, 2));
     bob_destroy(build.bob);
     return true;
 }
@@ -781,10 +781,10 @@ static b32 test_elf_generated_descriptor(void)
         return false;
     }
     CHECK(bob_task_count(build.bob) == 33);
-    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("font_test")));
-    CHECK(bob_dependency_count(build.bob, 0) == 21);
-    CHECK(bob_dependency_count(build.bob, 6) == 6);
-    CHECK(string_equal(bob_get_task(build.bob, 27)->name, STRING_LITERAL("VS_Rect")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("font_test")));
+    CHECK(bob_dependency_count(bob_node_at(build.bob, 0)) == 21);
+    CHECK(bob_dependency_count(bob_node_at(build.bob, 6)) == 6);
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 27))->name, STRING_LITERAL("VS_Rect")));
     bob_destroy(build.bob);
     return true;
 }
@@ -798,9 +798,9 @@ static b32 test_bob_descriptor(void)
         return false;
     }
     CHECK(bob_task_count(build.bob) == 6);
-    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("build formatter")));
-    CHECK(string_equal(bob_get_task(build.bob, 1)->name, STRING_LITERAL("run hello.exe")));
-    CHECK(string_equal(bob_get_task(build.bob, 2)->name, STRING_LITERAL("prepare output directory")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 0))->name, STRING_LITERAL("build formatter")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 1))->name, STRING_LITERAL("run hello.exe")));
+    CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 2))->name, STRING_LITERAL("prepare output directory")));
     bob_destroy(build.bob);
     return true;
 }
@@ -821,10 +821,10 @@ static void run_test(const char *name, b32 (*test)(void))
 static int build_example(void)
 {
     Bob *graph;
-    Node_Id compile_main;
-    Node_Id compile_message;
-    Node_Id link;
-    Node_Id run;
+    Bob_Node *compile_main;
+    Bob_Node *compile_message;
+    Bob_Node *link;
+    Bob_Node *run;
     Bob_Task tasks[4] = {0};
     b32 succeeded;
 
@@ -844,10 +844,10 @@ static int build_example(void)
     link = add_node(graph, "link hello.exe");
     run = add_node(graph, "run hello.exe");
 
-    tasks[compile_main].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj");
-    tasks[compile_message].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj");
-    tasks[link].command_line = STRING_LITERAL("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
-    tasks[run].command_line = STRING_LITERAL("build\\example\\hello.exe");
+    tasks[0].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj");
+    tasks[1].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj");
+    tasks[2].command_line = STRING_LITERAL("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
+    tasks[3].command_line = STRING_LITERAL("build\\example\\hello.exe");
 
     if (bob_add_dependency(graph, link, compile_main) != BOB_OK ||
         bob_add_dependency(graph, link, compile_message) != BOB_OK ||

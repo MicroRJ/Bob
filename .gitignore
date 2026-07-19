@@ -7,6 +7,9 @@ build/
 *.user
 *.VC.db
 
+# Sublime Text
+*.sublime-workspace
+
 # Temporary files
 *.tmp
 *.log

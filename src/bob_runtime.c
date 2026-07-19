@@ -69,25 +69,31 @@ static b32 reserve(Bob *bob, void **memory, u32 element_size, u32 count, u32 *ca
    return true;
 }
 
-static b32 node_array_push(Bob *bob, Bob_Id_Array *array, Node_Id node)
+static b32 node_array_push(Bob *bob, Bob_Node_Array *array, Bob_Node *node)
 {
    if (!reserve(bob, (void **)&array->items, sizeof(*array->items), array->count,
-   &array->capacity, array->count + 1, _Alignof(Node_Id))) {
+   &array->capacity, array->count + 1, _Alignof(Bob_Node *))) {
       return false;
    }
    array->items[array->count++] = node;
    return true;
 }
 
-static b32 valid_node(const Bob *bob, Node_Id node) {
-   return bob && (u32)node < bob->node_count;
+static b32 valid_node(const Bob *bob, const Bob_Node *node)
+{
+   u32 i;
+   if (!bob || !node) return false;
+   for (i = 0; i < bob->node_count; ++i) {
+      if (bob->nodes[i] == node) return true;
+   }
+   return false;
 }
 
-static b32 enqueue_ready(Bob *bob, Node_Id node)
+static b32 enqueue_ready(Bob *bob, Bob_Node *node)
 {
    /* A node is enqueued at most once, so node_count slots are sufficient. */
    bob->ready[bob->ready_count++] = node;
-   bob->nodes[node].state = BOB_TASK_READY;
+   node->state = BOB_TASK_READY;
    return true;
 }
 
@@ -111,7 +117,7 @@ void bob_destroy(Bob *bob)
    free(bob);
 }
 
-Bob_Error bob_add_task(Bob *bob, Bob_Task task, Node_Id *node_out)
+Bob_Error bob_add_task(Bob *bob, Bob_Task task, Bob_Node **node_out)
 {
    Bob_Node *node;
 
@@ -121,54 +127,48 @@ Bob_Error bob_add_task(Bob *bob, Bob_Task task, Node_Id *node_out)
    if (bob->prepared) {
       return BOB_ERROR_ALREADY_PREPARED;
    }
-   if (bob->node_count >= UINT32_MAX) {
-      return BOB_ERROR_OUT_OF_MEMORY;
-   }
    if (!reserve(bob, (void **)&bob->nodes, sizeof(*bob->nodes),
    bob->node_count, &bob->node_capacity, bob->node_count + 1,
-   _Alignof(Bob_Node))) {
+   _Alignof(Bob_Node *))) {
       return BOB_ERROR_OUT_OF_MEMORY;
    }
 
-   node = &bob->nodes[bob->node_count];
-   memset(node, 0, sizeof(*node));
+   node = bob_push(bob, sizeof(*node), _Alignof(Bob_Node));
+   if (!node) return BOB_ERROR_OUT_OF_MEMORY;
    if (!copy_task(&bob->arena, task, &node->task)) return BOB_ERROR_OUT_OF_MEMORY;
    node->state = BOB_TASK_PENDING;
 
-   *node_out = (Node_Id)bob->node_count;
+   bob->nodes[bob->node_count] = node;
+   *node_out = node;
    ++bob->node_count;
    return BOB_OK;
 }
 
-Bob_Error bob_add_dependency(Bob *bob, Node_Id node_id, Node_Id dependency_id)
+Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency)
 {
-   Bob_Node *node;
-   Bob_Node *dependency;
    u32 i;
 
-   if (!valid_node(bob, node_id) || !valid_node(bob, dependency_id)) {
+   if (!valid_node(bob, node) || !valid_node(bob, dependency)) {
       return BOB_ERROR_INVALID_TASK;
    }
    if (bob->prepared) {
       return BOB_ERROR_ALREADY_PREPARED;
    }
-   if (node_id == dependency_id) {
+   if (node == dependency) {
       return BOB_ERROR_SELF_DEPENDENCY;
    }
 
-   node = &bob->nodes[node_id];
-   dependency = &bob->nodes[dependency_id];
    for (i = 0; i < node->dependencies.count; ++i)
    {
-      if (node->dependencies.items[i] == dependency_id) {
+      if (node->dependencies.items[i] == dependency) {
          return BOB_ERROR_DUPLICATE_DEPENDENCY;
       }
    }
 
-   if (!node_array_push(bob, &node->dependencies, dependency_id)) {
+   if (!node_array_push(bob, &node->dependencies, dependency)) {
       return BOB_ERROR_OUT_OF_MEMORY;
    }
-   if (!node_array_push(bob, &dependency->dependents, node_id)) {
+   if (!node_array_push(bob, &dependency->dependents, node)) {
       --node->dependencies.count;
       return BOB_ERROR_OUT_OF_MEMORY;
    }
@@ -178,8 +178,7 @@ Bob_Error bob_add_dependency(Bob *bob, Node_Id node_id, Node_Id dependency_id)
 static Bob_Error validate_acyclic(Bob *bob)
 {
    u64 arena_start;
-   u32 *remaining;
-   Node_Id *queue;
+   Bob_Node **queue;
    u32 head = 0;
    u32 count = 0;
    u32 visited = 0;
@@ -190,33 +189,33 @@ static Bob_Error validate_acyclic(Bob *bob)
    }
 
    arena_start = arena_mark(&bob->arena);
-   remaining = bob_push(bob, bob->node_count * sizeof(*remaining), _Alignof(u32));
-   queue = bob_push(bob, bob->node_count * sizeof(*queue), _Alignof(Node_Id));
-   if (!remaining || !queue) {
+   queue = bob_push(bob, bob->node_count * sizeof(*queue), _Alignof(Bob_Node *));
+   if (!queue) {
       arena_restore(&bob->arena, arena_start);
       return BOB_ERROR_OUT_OF_MEMORY;
    }
 
    for (i = 0; i < bob->node_count; ++i)
    {
-      remaining[i] = bob->nodes[i].dependencies.count;
-      if (remaining[i] == 0) {
-         queue[count++] = (Node_Id)i;
+      Bob_Node *node = bob->nodes[i];
+      node->unfinished_dependencies = node->dependencies.count;
+      if (node->unfinished_dependencies == 0) {
+         queue[count++] = node;
       }
    }
 
    while (head < count)
    {
-      Node_Id node_id = queue[head++];
-      const Bob_Id_Array *dependents = &bob->nodes[node_id].dependents;
+      Bob_Node *node = queue[head++];
+      const Bob_Node_Array *dependents = &node->dependents;
       ++visited;
 
       for (i = 0; i < dependents->count; ++i)
       {
-         Node_Id dependent_id = dependents->items[i];
-         --remaining[dependent_id];
-         if (remaining[dependent_id] == 0) {
-            queue[count++] = dependent_id;
+         Bob_Node *dependent = dependents->items[i];
+         --dependent->unfinished_dependencies;
+         if (dependent->unfinished_dependencies == 0) {
+            queue[count++] = dependent;
          }
       }
    }
@@ -244,7 +243,7 @@ Bob_Error bob_prepare(Bob *bob)
 
    if (bob->node_count > 0)
    {
-      bob->ready = bob_push(bob, bob->node_count * sizeof(*bob->ready), _Alignof(Node_Id));
+      bob->ready = bob_push(bob, bob->node_count * sizeof(*bob->ready), _Alignof(Bob_Node *));
       if (!bob->ready) {
          return BOB_ERROR_OUT_OF_MEMORY;
       }
@@ -253,32 +252,31 @@ Bob_Error bob_prepare(Bob *bob)
    bob->prepared = true;
    for (i = 0; i < bob->node_count; ++i)
    {
-      Bob_Node *node = &bob->nodes[i];
+      Bob_Node *node = bob->nodes[i];
       node->unfinished_dependencies = node->dependencies.count;
       if (node->unfinished_dependencies == 0) {
-         enqueue_ready(bob, (Node_Id)i);
+         enqueue_ready(bob, node);
       }
    }
    return BOB_OK;
 }
 
-b32 bob_take_ready(Bob *bob, Node_Id *node_out)
+b32 bob_take_ready(Bob *bob, Bob_Node **node_out)
 {
-   Node_Id node;
+   Bob_Node *node;
 
    if (!bob || !bob->prepared || !node_out || bob->ready_head == bob->ready_count) {
       return false;
    }
 
    node = bob->ready[bob->ready_head++];
-   bob->nodes[node].state = BOB_TASK_RUNNING;
+   node->state = BOB_TASK_RUNNING;
    *node_out = node;
    return true;
 }
 
-static void block_node_and_dependents(Bob *bob, Node_Id node_id)
+static void block_node_and_dependents(Bob *bob, Bob_Node *node)
 {
-   Bob_Node *node = &bob->nodes[node_id];
    u32 i;
 
    if (node->state == BOB_TASK_BLOCKED || node->state == BOB_TASK_SUCCEEDED ||
@@ -293,19 +291,17 @@ static void block_node_and_dependents(Bob *bob, Node_Id node_id)
    }
 }
 
-Bob_Error bob_complete(Bob *bob, Node_Id node_id, b32 succeeded)
+Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded)
 {
-   Bob_Node *node;
    u32 i;
 
    if (!bob || !bob->prepared) {
       return BOB_ERROR_NOT_PREPARED;
    }
-   if (!valid_node(bob, node_id)) {
+   if (!valid_node(bob, node)) {
       return BOB_ERROR_INVALID_TASK;
    }
 
-   node = &bob->nodes[node_id];
    if (node->state != BOB_TASK_RUNNING) {
       return BOB_ERROR_INVALID_STATE;
    }
@@ -324,15 +320,14 @@ Bob_Error bob_complete(Bob *bob, Node_Id node_id, b32 succeeded)
 
    for (i = 0; i < node->dependents.count; ++i)
    {
-      Node_Id dependent_id = node->dependents.items[i];
-      Bob_Node *dependent = &bob->nodes[dependent_id];
+      Bob_Node *dependent = node->dependents.items[i];
 
       if (dependent->state != BOB_TASK_PENDING) {
          continue;
       }
       --dependent->unfinished_dependencies;
       if (dependent->unfinished_dependencies == 0) {
-         enqueue_ready(bob, dependent_id);
+         enqueue_ready(bob, dependent);
       }
    }
    return BOB_OK;
@@ -350,33 +345,37 @@ u32 bob_task_count(const Bob *bob) {
    return bob ? bob->node_count : 0;
 }
 
-const char *bob_task_name(const Bob *bob, Node_Id node) {
-   return valid_node(bob, node) ? bob->nodes[node].task.name.data : NULL;
+Bob_Node *bob_node_at(const Bob *bob, u32 index) {
+   return bob && index < bob->node_count ? bob->nodes[index] : NULL;
 }
 
-Bob_Task_State bob_task_state(const Bob *bob, Node_Id node) {
-   return valid_node(bob, node) ? bob->nodes[node].state : BOB_TASK_BLOCKED;
+const char *bob_task_name(const Bob_Node *node) {
+   return node ? node->task.name.data : NULL;
 }
 
-const Bob_Task *bob_get_task(const Bob *bob, Node_Id node) {
-   return valid_node(bob, node) ? &bob->nodes[node].task : NULL;
+Bob_Task_State bob_task_state(const Bob_Node *node) {
+   return node ? node->state : BOB_TASK_BLOCKED;
 }
 
-Bob_Error bob_set_task(Bob *bob, Node_Id node, Bob_Task task)
+const Bob_Task *bob_get_task(const Bob_Node *node) {
+   return node ? &node->task : NULL;
+}
+
+Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task task)
 {
    if (!valid_node(bob, node)) return BOB_ERROR_INVALID_TASK;
-   if (!task.name.data) task.name = bob->nodes[node].task.name;
-   if (!copy_task(&bob->arena, task, &bob->nodes[node].task)) return BOB_ERROR_OUT_OF_MEMORY;
+   if (!task.name.data) task.name = node->task.name;
+   if (!copy_task(&bob->arena, task, &node->task)) return BOB_ERROR_OUT_OF_MEMORY;
    return BOB_OK;
 }
 
-u32 bob_dependency_count(const Bob *bob, Node_Id node) {
-   return valid_node(bob, node) ? bob->nodes[node].dependencies.count : 0;
+u32 bob_dependency_count(const Bob_Node *node) {
+   return node ? node->dependencies.count : 0;
 }
 
-Node_Id bob_dependency(const Bob *bob, Node_Id node, u32 index) {
-   if (!valid_node(bob, node) || index >= bob->nodes[node].dependencies.count) return BOB_INVALID_TASK;
-   return bob->nodes[node].dependencies.items[index];
+Bob_Node *bob_dependency(const Bob_Node *node, u32 index) {
+   if (!node || index >= node->dependencies.count) return NULL;
+   return node->dependencies.items[index];
 }
 
 const char *bob_error_string(Bob_Error result)
