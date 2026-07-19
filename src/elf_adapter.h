@@ -1,20 +1,10 @@
 #ifndef ELF_ADAPTER_H
 #define ELF_ADAPTER_H
 
-#include "base.h"
-
-typedef struct Task_Desc {
-    String name;
-    String command_line;
-    String_Array inputs;
-    String_Array outputs;
-    String_Array include_directories;
-    uint32_t *dependencies;
-    uint32_t dependency_count;
-} Task_Desc;
+#include "task.h"
 
 typedef struct Task_Array_Desc {
-    Task_Desc *tasks;
+    Task *tasks;
     uint32_t count;
     uint32_t worker_count;
     int32_t verbosity;

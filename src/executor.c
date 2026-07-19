@@ -17,13 +17,17 @@ typedef struct Worker
    HANDLE done_event;
 
    Node_Id node;
-   const char *command_line;
+   String command_line;
    Arena output;
    Platform_Process_Result process;
 
    b32 stopping;
    b32 busy;
 } Worker;
+
+typedef struct Task_Runtime {
+   b32 rebuilt;
+} Task_Runtime;
 
 static String command_executable(Arena *arena, String command_line)
 {
@@ -54,38 +58,31 @@ static String command_executable(Arena *arena, String command_line)
    return arena_push_string_copy(arena, string_slice(command_line, start, end - start));
 }
 
-static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task, const b32 *rebuilt)
+static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task, const Task_Runtime *runtime)
 {
    u64 oldest_output = UINT64_MAX;
    u64 newest_input = 0;
    u32 i;
 
-   if (task->output_count == 0) return true;
+   if (task->outputs.count == 0) return true;
 
-   for (i = 0; i < task->output_count; ++i)
+   for (i = 0; i < task->outputs.count; ++i)
    {
       Platform_File_Info info;
-		if (!platform_file_info(string_from_cstring(task->outputs[i]), &info)) return true;
+		if (!platform_file_info(task->outputs.items[i], &info)) return true;
       if (info.write_time < oldest_output) { oldest_output = info.write_time; }
    }
-   for (i = 0; i < task->input_count; ++i)
+   for (i = 0; i < task->inputs.count; ++i)
    {
       Platform_File_Info info;
-		if (!platform_file_info(string_from_cstring(task->inputs[i]), &info)) return true;
+		if (!platform_file_info(task->inputs.items[i], &info)) return true;
       if (info.write_time > newest_input) { newest_input = info.write_time; }
    }
    {
       C_Include_Scan_Result scan;
       b32 scan_ok;
       Profile_Scope scope = profile_scope_begin("include scanning");
-      scan_ok = c_include_scan(
-         task->inputs,
-         task->input_count,
-         task->include_directories,
-         task->include_directory_count,
-         task->command_line,
-         &scan
-      );
+      scan_ok = c_include_scan(task->inputs, task->include_directories, task->command_line, &scan);
       profile_scope_end(&scope);
       if (!scan_ok || scan.unresolved_quoted_include) {
          return true;
@@ -96,7 +93,7 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
    }
    for (i = 0; i < graph_node_dependency_count(graph, node); ++i) {
       Node_Id dependency = graph_node_dependency(graph, node, i);
-      if (dependency == GRAPH_INVALID_TASK || rebuilt[dependency]) return true;
+      if (dependency == GRAPH_INVALID_TASK || runtime[dependency].rebuilt) return true;
    }
    return newest_input > oldest_output;
 }
@@ -104,12 +101,7 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
 static void run_command(Worker *worker)
 {
    arena_reset(&worker->output);
-	platform_run_command(
-		string_from_cstring(worker->command_line),
-		&worker->output,
-		(Platform_Process_Options){ .capture_stderr = true },
-		&worker->process
-	);
+	platform_run_command(worker->command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &worker->process);
 }
 
 static DWORD WINAPI worker_main(void *parameter)
@@ -155,7 +147,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
 {
    Worker *workers;
    HANDLE *done_events;
-   b32 *rebuilt;
+   Task_Runtime *runtime;
    Graph_Error prepare_result;
    u32 created = 0;
    u32 running = 0;
@@ -170,12 +162,10 @@ b32 executor_run(Graph *graph, u32 worker_count)
    for (i = 0; i < task_count; ++i)
    {
       const Task *task = graph_node_data(graph, (Node_Id)i);
-      if (!task || !task->command_line) {
+      if (!task || !task->command_line.data) {
          return false;
       }
-      if ((task->input_count && !task->inputs)
-         ||  (task->output_count && !task->outputs)
-         ||  (task->include_directory_count && !task->include_directories)) {
+      if ((task->inputs.count && !task->inputs.items) || (task->outputs.count && !task->outputs.items) || (task->include_directories.count && !task->include_directories.items)) {
          return false;
       }
    }
@@ -202,12 +192,12 @@ b32 executor_run(Graph *graph, u32 worker_count)
 
    workers = calloc(worker_count, sizeof(*workers));
    done_events = malloc(worker_count * sizeof(*done_events));
-   rebuilt = calloc(task_count, sizeof(*rebuilt));
-   if (!workers || !done_events || !rebuilt)
+   runtime = calloc(task_count, sizeof(*runtime));
+   if (!workers || !done_events || !runtime)
    {
       free(workers);
       free(done_events);
-      free(rebuilt);
+      free(runtime);
       return false;
    }
 
@@ -242,7 +232,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
       stop_workers(workers, created);
       free(done_events);
       free(workers);
-      free(rebuilt);
+      free(runtime);
       return false;
    }
 
@@ -258,12 +248,12 @@ b32 executor_run(Graph *graph, u32 worker_count)
             const Task *task = graph_node_data(graph, node);
             b32 needs_rebuild;
             Profile_Scope scope = profile_scope_begin("incremental checks");
-            needs_rebuild = task_needs_rebuild(graph, node, task, rebuilt);
+            needs_rebuild = task_needs_rebuild(graph, node, task, runtime);
             profile_scope_end(&scope);
             if (!needs_rebuild)
             {
 				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", graph_node_name(graph, node));
-				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line);
+				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line.data);
                if (graph_complete(graph, node, true) != GRAPH_OK) {
                   internal_error = true;
                   break;
@@ -274,7 +264,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
             worker->node = node;
             worker->command_line = task->command_line;
             worker->busy = true;
-            rebuilt[node] = true;
+            runtime[node].rebuilt = true;
             ++running;
             SetEvent(worker->start_event);
          }
@@ -314,7 +304,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
                graph_node_name(graph, worker->node)
 		 );
 		 if (succeeded) {
-			logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line);
+			logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line.data);
 			logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
 		 }
          if (worker->process.error_code != 0)
@@ -323,7 +313,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
 
 			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node), "%s",
 				worker->process.launched ? "process error" : "failed to start process");
-			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line);
+			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
 
             {
 				String message;
@@ -335,7 +325,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
 				}
 			}
 
-            String executable = command_executable(scratch.arena, string_from_cstring(worker->command_line));
+            String executable = command_executable(scratch.arena, worker->command_line);
             if (executable.data)
             {
                b32 executable_resolves = platform_executable_resolves(executable);
@@ -358,7 +348,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
          {
 			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node),
 				"process exited with code %u", worker->process.exit_code);
-			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line);
+			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
          }
 
          if (graph_complete(graph, worker->node, succeeded) != GRAPH_OK) {
@@ -375,6 +365,6 @@ b32 executor_run(Graph *graph, u32 worker_count)
    stop_workers(workers, worker_count);
    free(done_events);
    free(workers);
-   free(rebuilt);
+   free(runtime);
    return !internal_error && !graph_has_failed(graph);
 }

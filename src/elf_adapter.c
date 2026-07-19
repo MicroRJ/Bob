@@ -199,7 +199,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
    }
 
    result->count = task_tables.count;
-   result->tasks = arena_push_zero_aligned(arena, result->count * sizeof(*result->tasks), _Alignof(Task_Desc));
+   result->tasks = arena_push_zero_aligned(arena, result->count * sizeof(*result->tasks), _Alignof(Task));
    if (result->count && !result->tasks) {
       snprintf(result->error, sizeof(result->error), "out of memory");
       goto cleanup;
@@ -207,7 +207,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
 
    for (i = 0; i < result->count; ++i)
    {
-      Task_Desc *output = &result->tasks[i];
+      Task *output = &result->tasks[i];
       elf_Table *description = task_tables.items[i];
       output->name = copy_string_value(arena, field(state, description, "name"));
       output->command_line = copy_string_value(arena, field(state, description, "command_line"));
@@ -228,7 +228,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
 
    for (i = 0; i < result->count; ++i)
    {
-      Task_Desc *output = &result->tasks[i];
+      Task *output = &result->tasks[i];
       elf_ValueView dependencies_value = field(state, task_tables.items[i], "dependencies");
       uint32_t dependency;
 

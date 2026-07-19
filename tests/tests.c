@@ -25,6 +25,7 @@ static int tests_failed;
     } while (0)
 
 #define CHECK_OK(expression) CHECK((expression) == GRAPH_OK)
+#define STRING_ARRAY_FROM(array) ((String_Array){ .items = (array), .count = ARRAY_COUNT(array) })
 
 static b32 environment_equals(const char *name, const char *expected)
 {
@@ -412,9 +413,9 @@ static b32 test_executor_runs_in_parallel(void)
     CHECK(snprintf(command_b, sizeof(command_b), "\"%s\" --barrier %s %s b", executable, event_b_name, event_a_name) > 0);
     CHECK(snprintf(command_link, sizeof(command_link), "\"%s\" --child 0 0 link", executable) > 0);
 
-    tasks[a].command_line = command_a;
-    tasks[b].command_line = command_b;
-    tasks[link].command_line = command_link;
+    tasks[a].command_line = string_from_cstring(command_a);
+    tasks[b].command_line = string_from_cstring(command_b);
+    tasks[link].command_line = string_from_cstring(command_link);
 
     CHECK_OK(graph_add_dependency(graph, link, a));
     CHECK_OK(graph_add_dependency(graph, link, b));
@@ -446,9 +447,9 @@ static b32 test_executor_propagates_failure(void)
     CHECK(snprintf(blocked_command, sizeof(blocked_command), "\"%s\" --child 0 0 blocked", executable) > 0);
     CHECK(snprintf(independent_command, sizeof(independent_command), "\"%s\" --child 0 0 independent", executable) > 0);
 
-    tasks[fail].command_line = fail_command;
-    tasks[blocked].command_line = blocked_command;
-    tasks[independent].command_line = independent_command;
+    tasks[fail].command_line = string_from_cstring(fail_command);
+    tasks[blocked].command_line = string_from_cstring(blocked_command);
+    tasks[independent].command_line = string_from_cstring(independent_command);
     CHECK_OK(graph_add_dependency(graph, blocked, fail));
 
     CHECK(!run_tasks(graph, tasks, 3, 2));
@@ -465,7 +466,7 @@ static b32 test_executor_reports_missing_executable(void)
     Graph *graph = graph_create();
     Node_Id missing = add_node(graph, "missing executable");
     Task task = {
-        .command_line = "bob_executable_that_does_not_exist_7f31.exe --input x.c"
+        .command_line = STRING_LITERAL("bob_executable_that_does_not_exist_7f31.exe --input x.c")
     };
 
     CHECK(!run_tasks(graph, &task, 1, 1));
@@ -477,16 +478,15 @@ static b32 test_executor_reports_missing_executable(void)
 static b32 test_executor_skips_existing_output(void)
 {
     const char *output_path = "build\\incremental_test.out";
-    const char *outputs[] = { output_path };
+    String outputs[] = { string_from_cstring(output_path) };
     Graph *first_graph;
     Graph *second_graph;
     Task task = {0};
     Platform_File_Info info;
 
     DeleteFileA(output_path);
-    task.command_line = "cmd /c echo built>build\\incremental_test.out";
-    task.outputs = outputs;
-    task.output_count = 1;
+    task.command_line = STRING_LITERAL("cmd /c echo built>build\\incremental_test.out");
+    task.outputs = STRING_ARRAY_FROM(outputs);
 
     first_graph = graph_create();
     add_node(first_graph, "create output");
@@ -494,7 +494,7 @@ static b32 test_executor_skips_existing_output(void)
 	CHECK(platform_file_info(string_from_cstring(output_path), &info));
     graph_destroy(first_graph);
 
-    task.command_line = "bob_command_that_must_not_run.exe";
+    task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
     second_graph = graph_create();
     add_node(second_graph, "skip existing output");
     CHECK(run_tasks(second_graph, &task, 1, 1));
@@ -550,19 +550,17 @@ static b32 test_newer_input_rebuilds(void)
 {
     const char *input_path = "build\\incremental_test.in";
     const char *output_path = "build\\incremental_test.out";
-    const char *inputs[] = { input_path };
-    const char *outputs[] = { output_path };
+    String inputs[] = { string_from_cstring(input_path) };
+    String outputs[] = { string_from_cstring(output_path) };
     Task task = {0};
     Graph *clean_graph;
     Graph *dirty_graph;
 
     CHECK(write_test_file_at_time(input_path, 100000000000000000ULL));
     CHECK(write_test_file_at_time(output_path, 100000000000000100ULL));
-    task.command_line = "bob_command_that_must_not_run.exe";
-    task.inputs = inputs;
-    task.input_count = 1;
-    task.outputs = outputs;
-    task.output_count = 1;
+    task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
+    task.inputs = STRING_ARRAY_FROM(inputs);
+    task.outputs = STRING_ARRAY_FROM(outputs);
 
     clean_graph = graph_create();
     add_node(clean_graph, "clean timestamps");
@@ -570,7 +568,7 @@ static b32 test_newer_input_rebuilds(void)
     graph_destroy(clean_graph);
 
     CHECK(write_test_file_at_time(input_path, 100000000000000200ULL));
-    task.command_line = "cmd /c echo rebuilt>build\\incremental_test.out";
+    task.command_line = STRING_LITERAL("cmd /c echo rebuilt>build\\incremental_test.out");
     dirty_graph = graph_create();
     add_node(dirty_graph, "dirty timestamps");
     CHECK(run_tasks(dirty_graph, &task, 1, 1));
@@ -588,8 +586,8 @@ static b32 test_multiple_inputs_and_outputs(void)
     const char *output_a = "build\\multi_a.out";
     const char *output_b = "build\\multi_b.out";
     const char *marker = "build\\multi.marker";
-    const char *inputs[] = { input_a, input_b };
-    const char *outputs[] = { output_a, output_b };
+    String inputs[] = { string_from_cstring(input_a), string_from_cstring(input_b) };
+    String outputs[] = { string_from_cstring(output_a), string_from_cstring(output_b) };
     Task task = {0};
     Graph *graph;
     Platform_File_Info info;
@@ -599,11 +597,9 @@ static b32 test_multiple_inputs_and_outputs(void)
     CHECK(write_test_file_at_time(input_b, 100000000000000150ULL));
     CHECK(write_test_file_at_time(output_a, 100000000000000200ULL));
     CHECK(write_test_file_at_time(output_b, 100000000000000250ULL));
-    task.command_line = "bob_command_that_must_not_run.exe";
-    task.inputs = inputs;
-    task.input_count = 2;
-    task.outputs = outputs;
-    task.output_count = 2;
+    task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
+    task.inputs = STRING_ARRAY_FROM(inputs);
+    task.outputs = STRING_ARRAY_FROM(outputs);
 
     graph = graph_create();
     add_node(graph, "clean multiple files");
@@ -611,7 +607,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     graph_destroy(graph);
 
     CHECK(write_test_file_at_time(input_b, 100000000000000225ULL));
-    task.command_line = "cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker";
+    task.command_line = STRING_LITERAL("cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker");
     graph = graph_create();
     add_node(graph, "newest input wins");
     CHECK(run_tasks(graph, &task, 1, 1));
@@ -641,9 +637,9 @@ static b32 test_dependency_rebuild_propagates(void)
     const char *dependency_output = "build\\dependency.out";
     const char *parent_output = "build\\parent.out";
     const char *marker = "build\\parent.marker";
-    const char *dependency_inputs[] = { dependency_input };
-    const char *dependency_outputs[] = { dependency_output };
-    const char *parent_outputs[] = { parent_output };
+    String dependency_inputs[] = { string_from_cstring(dependency_input) };
+    String dependency_outputs[] = { string_from_cstring(dependency_output) };
+    String parent_outputs[] = { string_from_cstring(parent_output) };
     Task tasks[2] = {0};
     Graph *graph;
     Node_Id dependency;
@@ -655,14 +651,11 @@ static b32 test_dependency_rebuild_propagates(void)
     CHECK(write_test_file_at_time(dependency_output, 100000000000000200ULL));
     CHECK(write_test_file_at_time(parent_output, 100000000000000300ULL));
 
-    tasks[0].command_line = "bob_dependency_that_must_not_run.exe";
-    tasks[0].inputs = dependency_inputs;
-    tasks[0].input_count = 1;
-    tasks[0].outputs = dependency_outputs;
-    tasks[0].output_count = 1;
-    tasks[1].command_line = "bob_parent_that_must_not_run.exe";
-    tasks[1].outputs = parent_outputs;
-    tasks[1].output_count = 1;
+    tasks[0].command_line = STRING_LITERAL("bob_dependency_that_must_not_run.exe");
+    tasks[0].inputs = STRING_ARRAY_FROM(dependency_inputs);
+    tasks[0].outputs = STRING_ARRAY_FROM(dependency_outputs);
+    tasks[1].command_line = STRING_LITERAL("bob_parent_that_must_not_run.exe");
+    tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
 
     graph = graph_create();
     dependency = add_node(graph, "clean dependency");
@@ -672,8 +665,8 @@ static b32 test_dependency_rebuild_propagates(void)
     graph_destroy(graph);
 
     CHECK(write_test_file_at_time(dependency_input, 100000000000000400ULL));
-    tasks[0].command_line = "cmd /c echo dependency>build\\dependency.out";
-    tasks[1].command_line = "cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker";
+    tasks[0].command_line = STRING_LITERAL("cmd /c echo dependency>build\\dependency.out");
+    tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
     graph = graph_create();
     dependency = add_node(graph, "dirty dependency");
     parent = add_node(graph, "propagated parent");
@@ -696,9 +689,9 @@ static b32 test_recursive_include_rebuilds(void)
     const char *header_b = "build\\include_scan_b.h";
     const char *output = "build\\include_scan.obj";
     const char *marker = "build\\include_scan.marker";
-    const char *inputs[] = { source };
-    const char *outputs[] = { output };
-    const char *include_directories[] = { "build" };
+    String inputs[] = { string_from_cstring(source) };
+    String outputs[] = { string_from_cstring(output) };
+    String include_directories[] = { STRING_LITERAL("build") };
     Task task = {0};
     Graph *graph;
     Platform_File_Info info;
@@ -721,18 +714,14 @@ static b32 test_recursive_include_rebuilds(void)
     CHECK(write_test_text_at_time(header_b, "#include \"include_scan_a.h\"\n",
                                   100000000000000300ULL));
     CHECK(write_test_file_at_time(output, 100000000000000200ULL));
-    CHECK(c_include_scan(inputs, 1, NULL, 0,
-                         "clang-cl /Ibuild -c build\\include_scan.c", &scan));
+    CHECK(c_include_scan(STRING_ARRAY_FROM(inputs), (String_Array){0}, STRING_LITERAL("clang-cl /Ibuild -c build\\include_scan.c"), &scan));
     CHECK(!scan.unresolved_quoted_include);
     CHECK(scan.newest_write_time == 100000000000000300ULL);
 
-    task.command_line = "cmd /c echo object>build\\include_scan.obj && echo rebuilt>build\\include_scan.marker";
-    task.inputs = inputs;
-    task.input_count = 1;
-    task.outputs = outputs;
-    task.output_count = 1;
-    task.include_directories = include_directories;
-    task.include_directory_count = 1;
+    task.command_line = STRING_LITERAL("cmd /c echo object>build\\include_scan.obj && echo rebuilt>build\\include_scan.marker");
+    task.inputs = STRING_ARRAY_FROM(inputs);
+    task.outputs = STRING_ARRAY_FROM(outputs);
+    task.include_directories = STRING_ARRAY_FROM(include_directories);
 
     graph = graph_create();
     add_node(graph, "recursive include dirty");
@@ -742,7 +731,7 @@ static b32 test_recursive_include_rebuilds(void)
 
     CHECK(write_test_file_at_time(output, 100000000000000400ULL));
     CHECK(DeleteFileA(marker));
-    task.command_line = "bob_include_scanner_must_not_run.exe";
+    task.command_line = STRING_LITERAL("bob_include_scanner_must_not_run.exe");
     graph = graph_create();
     add_node(graph, "recursive include clean");
     CHECK(run_tasks(graph, &task, 1, 1));
@@ -860,14 +849,10 @@ static int build_example(void)
     link = add_node(graph, "link hello.exe");
     run = add_node(graph, "run hello.exe");
 
-    tasks[compile_main].command_line =
-        "clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj";
-    tasks[compile_message].command_line =
-        "clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj";
-    tasks[link].command_line =
-        "clang-cl /nologo build\\example\\main.obj build\\example\\message.obj "
-        "/Febuild\\example\\hello.exe";
-    tasks[run].command_line = "build\\example\\hello.exe";
+    tasks[compile_main].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj");
+    tasks[compile_message].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj");
+    tasks[link].command_line = STRING_LITERAL("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
+    tasks[run].command_line = STRING_LITERAL("build\\example\\hello.exe");
 
     if (graph_add_dependency(graph, link, compile_main) != GRAPH_OK ||
         graph_add_dependency(graph, link, compile_message) != GRAPH_OK ||
@@ -915,7 +900,7 @@ static int build_tasks_from_elf(const char *path)
                     path, loaded.tasks[i].name.data);
             goto cleanup;
         }
-        tasks[nodes[i]].command_line = loaded.tasks[i].command_line.data;
+        tasks[nodes[i]] = loaded.tasks[i];
     }
 
     for (i = 0; i < task_count; ++i) {

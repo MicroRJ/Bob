@@ -6,8 +6,7 @@
 #include <string.h>
 
 typedef struct Scan_Context {
-    const char **include_directories;
-    u32 include_directory_count;
+    String_Array include_directories;
     String_Array command_include_directories;
     char **visited;
     u32 visited_count;
@@ -53,16 +52,15 @@ static b32 next_command_argument(const char **cursor_in_out, char *argument,
     return true;
 }
 
-static String_Array parse_command_include_directories(Arena *arena,
-                                                      const char *command_line)
+static String_Array parse_command_include_directories(Arena *arena, String command_line)
 {
     String_Array result = {0};
-    const char *cursor = command_line;
+    const char *cursor = command_line.data;
     char argument[KILOBYTES(32)];
     size_t maximum_count;
 
-    if (!command_line) return result;
-    maximum_count = strlen(command_line) / 2 + 1;
+    if (!command_line.data) return result;
+    maximum_count = command_line.size / 2 + 1;
     if (maximum_count > UINT32_MAX) return result;
     result.items = arena_push_zero(arena, maximum_count * sizeof(*result.items));
     if (!result.items) return (String_Array){0};
@@ -357,8 +355,8 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
         }
     }
 
-    for (i = 0; i < context->include_directory_count; ++i) {
-        if (join_path(candidate, sizeof(candidate), context->include_directories[i], name) &&
+    for (i = 0; i < context->include_directories.count; ++i) {
+        if (join_path(candidate, sizeof(candidate), context->include_directories.items[i].data, name) &&
 			platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
 			platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
             return true;
@@ -435,10 +433,7 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
     return succeeded;
 }
 
-b32 c_include_scan(const char **inputs, u32 input_count,
-                   const char **include_directories, u32 include_directory_count,
-                   const char *command_line,
-                   C_Include_Scan_Result *result)
+b32 c_include_scan(String_Array inputs, String_Array include_directories, String command_line, C_Include_Scan_Result *result)
 {
     Scan_Context context = {0};
     Scratch scratch;
@@ -448,14 +443,13 @@ b32 c_include_scan(const char **inputs, u32 input_count,
     if (!result) return false;
     memset(result, 0, sizeof(*result));
     context.include_directories = include_directories;
-    context.include_directory_count = include_directory_count;
     context.result = result;
     scratch = begin_scratch();
     context.command_include_directories =
         parse_command_include_directories(scratch.arena, command_line);
 
-    for (i = 0; i < input_count; ++i) {
-        if (!scan_file(&context, inputs[i], 0)) {
+    for (i = 0; i < inputs.count; ++i) {
+        if (!scan_file(&context, inputs.items[i].data, 0)) {
             succeeded = false;
             break;
         }

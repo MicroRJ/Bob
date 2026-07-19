@@ -8,9 +8,6 @@ typedef struct C_Include_Scan_Result {
     b32 unresolved_quoted_include;
 } C_Include_Scan_Result;
 
-b32 c_include_scan(const char **inputs, u32 input_count,
-                   const char **include_directories, u32 include_directory_count,
-                   const char *command_line,
-                   C_Include_Scan_Result *result);
+b32 c_include_scan(String_Array inputs, String_Array include_directories, String command_line, C_Include_Scan_Result *result);
 
 #endif

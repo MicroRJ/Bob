@@ -10,39 +10,6 @@
 #include <string.h>
 #include <limits.h>
 
-static const char **push_string_pointers(Arena *arena, String_Array strings)
-{
-   const char **items;
-   u32 i;
-   if (!strings.count) return NULL;
-   items = arena_push_aligned(arena, strings.count * sizeof(*items), _Alignof(const char *));
-   if (!items) return NULL;
-   for (i = 0; i < strings.count; ++i) items[i] = strings.items[i].data;
-   return items;
-}
-
-static Task *push_task(Arena *arena, const Task_Desc *source)
-{
-   u64 mark = arena_mark(arena);
-   Task *task = arena_push_zero_aligned(arena, sizeof(*task), _Alignof(Task));
-   if (!task) return NULL;
-
-   task->command_line = source->command_line.data;
-   task->inputs = push_string_pointers(arena, source->inputs);
-   task->input_count = source->inputs.count;
-   task->outputs = push_string_pointers(arena, source->outputs);
-   task->output_count = source->outputs.count;
-   task->include_directories = push_string_pointers(arena, source->include_directories);
-   task->include_directory_count = source->include_directories.count;
-
-   if ((task->input_count && !task->inputs) || (task->output_count && !task->outputs) || (task->include_directory_count && !task->include_directories)) {
-      arena_restore(arena, mark);
-      return NULL;
-   }
-
-   return task;
-}
-
 static int run_build(const char *path, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
 {
    Task_Array_Desc loaded = {0};
@@ -109,13 +76,8 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
    for (i = 0; i < task_count; ++i)
    {
       Node_Id node;
-      Task *task = push_task(&task_arena, &loaded.tasks[i]);
+      Task *task = &loaded.tasks[i];
       Graph_Error error;
-      if (!task)
-      {
-         log_error("out of memory while loading task '%s'", loaded.tasks[i].name.data);
-         goto cleanup;
-      }
       {
          Profile_Scope scope = profile_scope_begin("construct graph");
          error = graph_add_node(graph, loaded.tasks[i].name.data, task, &node);
