@@ -1,5 +1,5 @@
 #include "bob.h"
-#include "frontends/frontend.h"
+#include "script.h"
 #include "c_include_scan.h"
 #include "logger.h"
 #include "platform/platform.h"
@@ -751,7 +751,7 @@ static b32 test_elf_descriptor(void)
     Bob_Build build;
     const Bob_Task *task;
 
-    if (!frontend_load_build(STRING_LITERAL("example/tasks.elf"), &build)) {
+    if (!script_load_build(STRING_LITERAL("example/tasks.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -778,7 +778,7 @@ static b32 test_elf_generated_descriptor(void)
 {
     Bob_Build build;
 
-    if (!frontend_load_build(STRING_LITERAL("example/tasks1.elf"), &build)) {
+    if (!script_load_build(STRING_LITERAL("example/tasks1.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -795,7 +795,7 @@ static b32 test_bob_descriptor(void)
 {
     Bob_Build build;
 
-    if (!frontend_load_build(STRING_LITERAL("build.elf"), &build)) {
+    if (!script_load_build(STRING_LITERAL("build.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
         return false;
     }
@@ -805,6 +805,23 @@ static b32 test_bob_descriptor(void)
     CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 11))->name, STRING_LITERAL("compile bob")));
     CHECK(string_equal(bob_get_task(bob_node_at(build.bob, 12))->name, STRING_LITERAL("prepare object directory")));
     bob_destroy(build.bob);
+    return true;
+}
+
+static b32 test_script_functions(void)
+{
+    Arena arena = arena_create(MEGABYTES(16));
+    Script *script = script_load(&arena, STRING_LITERAL("example/functions.elf"));
+    CHECK(script_is_loaded(script));
+    String_Array functions = script_functions(script);
+    CHECK(functions.count == 2);
+    CHECK(script_has_function(script, STRING_LITERAL("build")));
+    CHECK(script_has_function(script, STRING_LITERAL("clean")));
+    CHECK(!script_has_function(script, STRING_LITERAL("missing")));
+    CHECK(script_invoke(script, STRING_LITERAL("build")));
+    CHECK(!script_invoke(script, STRING_LITERAL("missing")));
+    script_destroy(script);
+    arena_destroy(&arena);
     return true;
 }
 
@@ -869,7 +886,7 @@ static int build_tasks_from_file(String path)
     Bob_Build build = {0};
     u32 workers;
     int exit_code;
-    if (!frontend_load_build(path, &build)) {
+    if (!script_load_build(path, &build)) {
         fprintf(stderr, "%s: %s\n", path.data, build.error);
         return 1;
     }
@@ -902,6 +919,7 @@ static int run_all_tests(void)
     run_test("elf build descriptor", test_elf_descriptor);
     run_test("elf generated descriptor", test_elf_generated_descriptor);
     run_test("Bob build descriptor", test_bob_descriptor);
+    run_test("script functions", test_script_functions);
 
     printf("\n%d/%d tests passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;

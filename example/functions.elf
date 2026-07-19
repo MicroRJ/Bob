@@ -1,0 +1,12 @@
+build := fun() {
+	ret 1
+}
+
+clean := fun() {
+	ret 1
+}
+
+ret {
+	build = build,
+	clean = clean,
+}

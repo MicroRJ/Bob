@@ -5,6 +5,78 @@
 #include <stdio.h>
 #include <string.h>
 
+typedef struct Elf_Script
+{
+	elf_State *state;
+	elf_Table *exports;
+}
+Elf_Script;
+
+static b32 is_function(elf_ValueView value)
+{
+	return value.type == ELF_VALUE_TYPE_CFUNCTION || value.type == ELF_VALUE_TYPE_CLOSURE;
+}
+
+b32 elf_script_load(Script *script, String path)
+{
+	Elf_Script *elf = arena_push_zero_aligned(script->arena, sizeof(*elf), _Alignof(Elf_Script));
+	elf->state = elf_create_state();
+	script->context = elf;
+	if (!elf->state) {
+		script_set_error(script, "unable to create elf state");
+		return false;
+	}
+	if (!elf_push_code_file(elf->state, path.data)) {
+		script_set_error(script, "unable to load '%s'", path.data);
+		return false;
+	}
+	elf_push_nil(elf->state);
+	elf_call(elf->state, 1, 1);
+
+	elf_ValueView returned = elf_peek_value(elf->state, 0);
+	if (returned.type != ELF_VALUE_TYPE_TABLE) {
+		script_set_error(script, "script must return a table");
+		return false;
+	}
+	elf->exports = elf_retain_table(returned.as.table);
+	elf_pop_values(elf->state, 1);
+
+	elf_u32 cursor = 0;
+	elf_ValueView key;
+	elf_ValueView value;
+	while (elf_table_next(elf->exports, &cursor, &key, &value)) {
+		if (key.type == ELF_VALUE_TYPE_STRING && is_function(value)) ++script->functions.count;
+	}
+	script->functions.items = arena_push_zero_aligned(script->arena, script->functions.count * sizeof(String), _Alignof(String));
+	cursor = 0;
+	u32 function_index = 0;
+	while (elf_table_next(elf->exports, &cursor, &key, &value))
+	{
+		if (key.type != ELF_VALUE_TYPE_STRING || !is_function(value)) continue;
+		String name = string_from_data((void *)elf_str_data(key.as.string), elf_str_size(key.as.string));
+		script->functions.items[function_index++] = arena_push_string_copy(script->arena, name);
+	}
+	return true;
+}
+
+void elf_script_destroy(Script *script)
+{
+	Elf_Script *elf = script->context;
+	if (elf->exports) elf_release_table(elf->exports);
+	if (elf->state) elf_destroy_state(elf->state);
+	elf->exports = NULL;
+	elf->state = NULL;
+}
+
+b32 elf_script_invoke(Script *script, String name)
+{
+	Elf_Script *elf = script->context;
+	elf_push_field(elf->state, elf->exports, name.data);
+	elf_push_nil(elf->state);
+	elf_call(elf->state, 1, 0);
+	return true;
+}
+
 static elf_ValueView field(elf_State *state, elf_Table *table, const char *name) {
    return elf_get_field(state, table, name);
 }
@@ -75,43 +147,25 @@ static int table_list_add(Table_List *list, elf_Table *table)
    return 1;
 }
 
-b32 elf_load_build(String path, Bob_Build *result)
+b32 elf_script_read_build(Script *script, Bob_Build *result)
 {
    Scratch scratch;
-   elf_State *state;
-   elf_ValueView returned;
    elf_ValueView targets_value;
    elf_ValueView options_value;
-   elf_Table *root = NULL;
+   Elf_Script *elf;
+   elf_State *state;
+   elf_Table *root;
    Table_List task_tables;
    uint32_t i;
    int success = 0;
 
-   if (!path.data || !string_is_terminated(path) || !result) return false;
+   if (!script || !result) return false;
    scratch = begin_scratch();
    task_tables = (Table_List){ .arena = scratch.arena };
    memset(result, 0, sizeof(*result));
-
-   state = elf_create_state();
-   if (!state) {
-      snprintf(result->error, sizeof(result->error), "unable to create elf state");
-      goto cleanup;
-   }
-
-   if (!elf_push_code_file(state, path.data)) {
-      snprintf(result->error, sizeof(result->error), "unable to load '%s'", path.data);
-      goto cleanup;
-   }
-   elf_push_nil(state);
-   elf_call(state, 1, 1);
-
-   returned = elf_peek_value(state, 0);
-   if (returned.type != ELF_VALUE_TYPE_TABLE) {
-      snprintf(result->error, sizeof(result->error), "script must return a table");
-      goto cleanup;
-   }
-   root = elf_retain_table(returned.as.table);
-   elf_pop_values(state, 1);
+   elf = script->context;
+   state = elf->state;
+   root = elf->exports;
    options_value = field(state, root, "options");
    if (options_value.type != ELF_VALUE_TYPE_NIL)
    {
@@ -235,9 +289,8 @@ b32 elf_load_build(String path, Bob_Build *result)
       for (dependency = 0; dependency < elf_table_length(dependencies_value.as.table); ++dependency)
       {
          elf_ValueView dependency_value = elf_get_index(state, dependencies_value.as.table, dependency);
-         uint32_t resolved;
          Bob_Error bob_error;
-         resolved = table_list_find(&task_tables, dependency_value.as.table);
+         u32 resolved = table_list_find(&task_tables, dependency_value.as.table);
          if (resolved == UINT32_MAX) goto cleanup;
          Bob_Node *node = bob_node_at(result->bob, i);
          Bob_Node *dependency_node = bob_node_at(result->bob, resolved);
@@ -253,8 +306,6 @@ b32 elf_load_build(String path, Bob_Build *result)
 
    cleanup:
    end_scratch(scratch);
-   elf_release_table(root);
-   elf_destroy_state(state);
    if (!success)
    {
       char error[sizeof(result->error)];

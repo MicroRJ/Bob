@@ -1,9 +1,9 @@
 
 #include "bob.h"
-#include "frontends/frontend.h"
 #include "logger.h"
 #include "platform/platform.h"
 #include "profiler.h"
+#include "script.h"
 #include "vcvars_cache.h"
 
 #include <stdlib.h>
@@ -11,40 +11,15 @@
 #include <limits.h>
 #include <stdio.h>
 
-static int run_build(String path, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
+static int run_build(Script *script, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
 {
    Bob_Build build = {0};
    int exit_code = 1;
 
-   {
-      Platform_File_Info build_file;
-		if (!platform_file_info(path, &build_file))
-      {
-         Scratch scratch = begin_scratch();
-         String working_directory;
-         if (platform_current_directory(scratch.arena, &working_directory))
-         {
-            log_error("%s: file not found (working directory: %s)", path.data, working_directory.data);
-         }
-         else
-         {
-            log_error("%s: file not found", path.data);
-         }
-         end_scratch(scratch);
-         goto cleanup;
-      }
-   }
-
-   {
-      Profile_Scope scope = profile_scope_begin("load elf build script");
-      b32 loaded_ok = frontend_load_build(path, &build);
-      profile_scope_end(&scope);
-      if (!loaded_ok)
-      {
-         log_error("%s: %s", path.data, build.error);
-         goto cleanup;
-      }
-   }
+	if (!script_read_build(script, &build)) {
+		log_error("%s", build.error);
+		goto cleanup;
+	}
    if (!worker_override && build.options.has_worker_count)
    {
       worker_count = build.options.worker_count;
@@ -64,6 +39,60 @@ static int run_build(String path, u32 worker_count, b32 worker_override, i32 ver
    cleanup:
    bob_destroy(build.bob);
    return exit_code;
+}
+
+static int run_script(String path, String function_name, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
+{
+	Platform_File_Info build_file;
+	if (!platform_file_info(path, &build_file))
+	{
+		Scratch scratch = begin_scratch();
+		String working_directory;
+		if (platform_current_directory(scratch.arena, &working_directory)) log_error("%s: file not found (working directory: %s)", path.data, working_directory.data);
+		else log_error("%s: file not found", path.data);
+		end_scratch(scratch);
+		return 1;
+	}
+
+	Scratch scratch = begin_scratch();
+	Profile_Scope load_scope = profile_scope_begin("load build script");
+	Script *script = script_load(scratch.arena, path);
+	profile_scope_end(&load_scope);
+	if (!script_is_loaded(script)) {
+		log_error("%s: %s", path.data, script_error(script).data);
+		script_destroy(script);
+		end_scratch(scratch);
+		return 1;
+	}
+
+	int exit_code = 1;
+	if (script_has_function(script, function_name)) {
+		exit_code = script_invoke(script, function_name) ? 0 : 1;
+		if (exit_code) log_error("%s: %s", path.data, script_error(script).data);
+	}
+	else if (string_is(function_name, "build")) {
+		exit_code = run_build(script, worker_count, worker_override, verbosity, verbosity_override);
+	}
+	else
+	{
+		String_Array functions = script_functions(script);
+		if (functions.count)
+		{
+			void *start = arena_top(scratch.arena);
+			for (u32 i = 0; i < functions.count; ++i) {
+				if (i) arena_append_text(scratch.arena, ", ");
+				arena_append_str(scratch.arena, functions.items[i]);
+			}
+			String available = arena_string_from(scratch.arena, start);
+			arena_finalize_string(scratch.arena, available);
+			log_error("script has no function '%.*s' (available: %s)", (int)function_name.size, function_name.data, available.data);
+		}
+		else log_error("script has no function '%.*s'", (int)function_name.size, function_name.data);
+	}
+
+	script_destroy(script);
+	end_scratch(scratch);
+	return exit_code;
 }
 
 int main(int argument_count, char **arguments)
@@ -138,7 +167,7 @@ int main(int argument_count, char **arguments)
       else if (arguments[argument_index][0] != '-')
       {
          String argument = string_from_cstring(arguments[argument_index]);
-         if (frontend_supports_path(argument)) {
+         if (script_supports_path(argument)) {
             if (has_build_path) {
                log_error("multiple build files specified: %s", argument.data);
                return 2;
@@ -179,10 +208,6 @@ int main(int argument_count, char **arguments)
 		end_scratch(scratch);
       return 0;
    }
-   if (!string_is(function_name, "build")) {
-      log_error("script function invocation is not implemented yet: %s", function_name.data);
-      return 2;
-   }
    profiler_set_enabled(profile);
    profiler_reset();
    {
@@ -193,7 +218,7 @@ int main(int argument_count, char **arguments)
    {
       int result;
       Profile_Scope scope = profile_scope_begin("build");
-      result = run_build(build_path, worker_count, worker_override, verbosity, verbosity_override);
+      result = run_script(build_path, function_name, worker_count, worker_override, verbosity, verbosity_override);
       profile_scope_end(&scope);
       profiler_print(profile_threads);
       return result;
