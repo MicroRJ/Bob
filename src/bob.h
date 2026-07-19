@@ -62,19 +62,6 @@ struct Bob_Node
    b32            rebuilt;
 };
 
-typedef struct Bob_Worker
-{
-	Bob                    *bob;
-	Platform_Thread        *thread;
-	Bob_Node               *node;
-	String                  command_line;
-	Arena                   output;
-	Platform_Process_Result process;
-	b32                     rebuilt;
-	b32                     awaiting_acknowledgement;
-}
-Bob_Worker;
-
 struct Bob
 {
    Arena               arena;
@@ -87,14 +74,6 @@ struct Bob
    u32                 terminal_count;
    b32                 prepared;
    b32                 failed;
-   Bob_Node          **work;
-   u32                 work_count;
-   Bob_Worker        **completions;
-   u32                 completion_count;
-   Platform_Mutex     *mutex;
-   Platform_Condition *work_available;
-   Platform_Condition *completion_available;
-   b32                 stopping;
 };
 
 typedef struct Bob_Options
