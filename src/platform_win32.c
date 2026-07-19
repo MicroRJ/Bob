@@ -239,87 +239,7 @@ b32 platform_set_environment(String name, String value) {
 	return SetEnvironmentVariableA(name.data, value.data) != 0;
 }
 
-b32 platform_capture_stdout(const char *command_line, Arena *arena, String *output, u32 *exit_code)
-{
-   SECURITY_ATTRIBUTES security = {0};
-   STARTUPINFOA startup = {0};
-   PROCESS_INFORMATION process = {0};
-   HANDLE read_pipe = NULL;
-   HANDLE write_pipe = NULL;
-   Scratch scratch;
-   String mutable_command;
-   u64 mark;
-   b32 success = false;
-
-   if (!command_line || !arena || !output || !exit_code) return false;
-   mark = arena_mark(arena);
-   output->data = NULL;
-   output->size = 0;
-   *exit_code = UINT32_MAX;
-
-   security.nLength = sizeof(security);
-   security.bInheritHandle = TRUE;
-   if (!CreatePipe(&read_pipe, &write_pipe, &security, 0)) {
-      goto escape;
-   }
-   if (!SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) {
-   	goto escape;
-   }
-
-   startup.cb = sizeof(startup);
-   startup.dwFlags = STARTF_USESTDHANDLES;
-   startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-   startup.hStdOutput = write_pipe;
-   startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-
-   scratch = begin_scratch();
-   mutable_command = arena_push_cstring(scratch.arena, command_line);
-   if (
-      !mutable_command.data
-      ||  !CreateProcessA(NULL, mutable_command.data, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &startup, &process)
-   ) {
-      end_scratch(scratch);
-      goto escape;
-   }
-   end_scratch(scratch);
-
-   CloseHandle(write_pipe);
-   write_pipe = NULL;
-   CloseHandle(process.hThread);
-   process.hThread = NULL;
-
-   for (;;)
-   {
-      char *destination = arena_reserve(arena, KILOBYTES(16));
-      DWORD received = 0;
-      if (!destination) { goto escape; }
-      if (!ReadFile(read_pipe, destination, KILOBYTES(16), &received, NULL)) {
-         if (GetLastError() == ERROR_BROKEN_PIPE) { break; }
-         goto escape;
-      }
-      if (received && !arena_push(arena, received)) { goto escape; }
-   }
-
-   if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0) { goto escape; }
-   {
-      DWORD process_exit_code = UINT32_MAX;
-      if (!GetExitCodeProcess(process.hProcess, &process_exit_code)) { goto escape; }
-      *exit_code = process_exit_code;
-   }
-   output->data = (char *)arena->data + mark;
-   output->size = arena->used - mark;
-   success = true;
-
-   escape:
-   if (!success) { arena_restore(arena, mark); }
-   if (process.hThread) { CloseHandle(process.hThread); }
-   if (process.hProcess) { CloseHandle(process.hProcess); }
-   if (read_pipe) { CloseHandle(read_pipe); }
-   if (write_pipe) { CloseHandle(write_pipe); }
-   return success;
-}
-
-b32 platform_run_command(const char *command_line, Arena *arena, Platform_Process_Result *result)
+b32 platform_run_command(String command_line, Arena *arena, Platform_Process_Options options, Platform_Process_Result *result)
 {
 	SECURITY_ATTRIBUTES security = {0};
 	STARTUPINFOA startup = {0};
@@ -331,17 +251,19 @@ b32 platform_run_command(const char *command_line, Arena *arena, Platform_Proces
 	b32 output_ok = true;
 	b32 completed = false;
 
-	if (!command_line || !arena || !result) return false;
+	if (!command_line.data || !arena || !result) return false;
 	mark = arena_mark(arena);
 	memset(result, 0, sizeof(*result));
 	result->exit_code = UINT32_MAX;
 
 	security.nLength = sizeof(security);
 	security.bInheritHandle = TRUE;
+
 	if (!CreatePipe(&read_pipe, &write_pipe, &security, 0)) {
 		result->error_code = GetLastError();
 		goto escape;
 	}
+
 	if (!SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) {
 		result->error_code = GetLastError();
 		goto escape;
@@ -351,24 +273,26 @@ b32 platform_run_command(const char *command_line, Arena *arena, Platform_Proces
 	startup.dwFlags = STARTF_USESTDHANDLES;
 	startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
 	startup.hStdOutput = write_pipe;
-	startup.hStdError = write_pipe;
+	startup.hStdError = options.capture_stderr ? write_pipe : GetStdHandle(STD_ERROR_HANDLE);
 
-	mutable_command = arena_push_cstring(arena, command_line);
+	mutable_command = arena_push_string_copy(arena, command_line);
 	if (!mutable_command.data) {
 		result->error_code = ERROR_NOT_ENOUGH_MEMORY;
 		goto escape;
 	}
-	if (!CreateProcessA(NULL, mutable_command.data, NULL, NULL, TRUE, 0,
-		NULL, NULL, &startup, &process))
+
+	if (!CreateProcessA(NULL, mutable_command.data, NULL, NULL, TRUE, options.hide_window ? CREATE_NO_WINDOW : 0, NULL, NULL, &startup, &process))
 	{
 		result->error_code = GetLastError();
 		goto escape;
 	}
+
 	arena_restore(arena, mark);
 	result->launched = true;
 
 	CloseHandle(write_pipe);
 	write_pipe = NULL;
+
 	CloseHandle(process.hThread);
 	process.hThread = NULL;
 

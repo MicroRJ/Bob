@@ -4,9 +4,9 @@
 #include "base.h"
 
 typedef struct Profile_Scope {
-    void *entry;
-    u64 start;
-    b32 recording;
+	void *entry;
+	u64 start;
+	b32 recording;
 } Profile_Scope;
 
 void profiler_set_enabled(b32 enabled);

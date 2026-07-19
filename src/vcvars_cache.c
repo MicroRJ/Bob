@@ -316,7 +316,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 	String before_block;
 	String after_capture;
 	String cache;
-	u32 exit_code;
+	Platform_Process_Result process;
 	b32 success = false;
 
 	String path;
@@ -341,10 +341,20 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to parse the current environment");
 		goto cleanup;
 	}
-	if (!platform_capture_stdout(command, arena, &after_capture, &exit_code) || exit_code != 0) {
-		log_error("vcvars64 failed with exit code %u", exit_code);
+	if (!platform_run_command(
+		string_from_cstring(command),
+		arena,
+		(Platform_Process_Options){ .hide_window = true },
+		&process
+	)) {
+		log_error("unable to run vcvars64 (error %u)", process.error_code);
 		goto cleanup;
 	}
+	if (process.exit_code != 0) {
+		log_error("vcvars64 failed with exit code %u", process.exit_code);
+		goto cleanup;
+	}
+	after_capture = process.output;
 	if (!parse_environment_table(arena, string_split_lines(arena, after_capture), &after))
 	{
 		log_error("unable to parse the environment produced by vcvars64");

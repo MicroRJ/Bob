@@ -104,7 +104,12 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
 static void run_command(Worker *worker)
 {
    arena_reset(&worker->output);
-	platform_run_command(worker->command_line, &worker->output, &worker->process);
+	platform_run_command(
+		string_from_cstring(worker->command_line),
+		&worker->output,
+		(Platform_Process_Options){ .capture_stderr = true },
+		&worker->process
+	);
 }
 
 static DWORD WINAPI worker_main(void *parameter)

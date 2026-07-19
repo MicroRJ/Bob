@@ -17,6 +17,11 @@ typedef struct Platform_Process_Result {
 	b32 launched;
 } Platform_Process_Result;
 
+typedef struct Platform_Process_Options {
+	b32 capture_stderr;
+	b32 hide_window;
+} Platform_Process_Options;
+
 b32 platform_file_info(String path, Platform_File_Info *info);
 b32 platform_current_directory(Arena *arena, String *result);
 b32 platform_absolute_path(Arena *arena, String path, String *result);
@@ -28,9 +33,8 @@ b32 platform_get_environment(String name, Arena *arena, String *value);
 b32 platform_get_environment_block(Arena *arena, String *block);
 b32 platform_set_environment(String name, String value);
 b32 platform_executable_resolves(String string);
-b32 platform_run_command(const char *command_line, Arena *arena, Platform_Process_Result *result);
+b32 platform_run_command(String command_line, Arena *arena, Platform_Process_Options options, Platform_Process_Result *result);
 b32 platform_error_message(u32 error_code, Arena *arena, String *result);
-b32 platform_capture_stdout(const char *command_line, Arena *arena, String *output, u32 *exit_code);
 u64 platform_performance_counter(void);
 u64 platform_performance_frequency(void);
 void *platform_virtual_reserve(u64 size);
