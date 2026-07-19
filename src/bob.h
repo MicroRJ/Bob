@@ -70,6 +70,7 @@ typedef struct Bob_Worker
 	String                  command_line;
 	Arena                   output;
 	Platform_Process_Result process;
+	b32                     rebuilt;
 	b32                     awaiting_acknowledgement;
 }
 Bob_Worker;

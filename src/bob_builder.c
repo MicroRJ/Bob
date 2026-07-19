@@ -97,12 +97,20 @@ static u32 worker_main(void *data)
 		platform_mutex_unlock(bob->mutex);
 
 		const Bob_Task *task = bob_get_task(node);
+
+		Profile_Scope incremental_check_scope = profile_scope_begin("incremental checks");
+		b32 needs_rebuild = task_needs_rebuild(node, task);
+		profile_scope_end(&incremental_check_scope);
+		worker->rebuilt = needs_rebuild;
 		worker->node = node;
 		worker->command_line = task->command_line;
 
-		Profile_Scope scope = profile_scope_begin("task processes");
-		run_command(worker);
-		profile_scope_end(&scope);
+		if (needs_rebuild)
+		{
+			Profile_Scope scope = profile_scope_begin("task processes");
+			run_command(worker);
+			profile_scope_end(&scope);
+		}
 
 		platform_mutex_lock(bob->mutex);
 		worker->awaiting_acknowledgement = true;
@@ -139,6 +147,15 @@ static void stop_workers(Bob *bob, Bob_Worker *workers, u32 thread_count, u32 ar
 
 static b32 report_completion(Bob_Worker *worker)
 {
+	ASSERT(worker);
+	ASSERT(worker->node);
+
+	worker->node->rebuilt = worker->rebuilt;
+	if (!worker->rebuilt) {
+		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(worker->node));
+		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", bob_get_task(worker->node)->command_line.data);
+		return true;
+	}
 	b32 succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
 	if (worker->process.output.size > 0) logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(worker->node), worker->process.output);
 	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, succeeded ? "succeeded" : "failed", "%s", bob_task_name(worker->node));
@@ -230,34 +247,16 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 	while (!bob_is_finished(bob))
 	{
+		// Push the work
+		platform_mutex_lock(bob->mutex);
 		Bob_Node *node;
 		while (running < worker_count && bob_take_ready(bob, &node))
 		{
-			const Bob_Task *task = bob_get_task(node);
-
-			Profile_Scope scope = profile_scope_begin("incremental checks");
-			b32 needs_rebuild = task_needs_rebuild(node, task);
-			profile_scope_end(&scope);
-
-			if (!needs_rebuild) {
-				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(node));
-				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line.data);
-				if (bob_complete(bob, node, true) != BOB_OK) {
-					internal_error = true;
-					break;
-				}
-				continue;
-			}
-
-			node->rebuilt = true;
-
-			platform_mutex_lock(bob->mutex);
-			bob->work[bob->work_count++] = node;
-			platform_condition_broadcast(bob->work_available);
-			platform_mutex_unlock(bob->mutex);
-
-			++running;
+			bob->work[bob->work_count ++] = node;
+			++ running;
 		}
+		platform_condition_broadcast(bob->work_available);
+		platform_mutex_unlock(bob->mutex);
 
 		if (internal_error || bob_is_finished(bob)) break;
 
@@ -266,35 +265,42 @@ b32 bob_build(Bob *bob, u32 worker_count)
 			break;
 		}
 
-		{
-			Bob_Worker *worker = NULL;
-			b32 succeeded;
-			platform_mutex_lock(bob->mutex);
-			while (!bob->stopping && bob->completion_count == 0) {
-				if (!platform_condition_wait(bob->completion_available, bob->mutex)) {
-					log_fatal("failed waiting for worker completion");
-					request_stop_locked(bob);
-				}
+		// TODO(RJ) we should use another mutex for waiting for work ... no ?
+		// Await completions
+		platform_mutex_lock(bob->mutex);
+		while (!bob->stopping && bob->completion_count == 0) {
+			if (!platform_condition_wait(bob->completion_available, bob->mutex)) {
+				log_fatal("failed waiting for worker completion");
+				request_stop_locked(bob);
 			}
-			if (bob->completion_count > 0) {
-				worker = bob->completions[--bob->completion_count];
-			}
-			platform_mutex_unlock(bob->mutex);
-			if (!worker) {
-				internal_error = true;
-				break;
-			}
-
-			succeeded = report_completion(worker);
-			if (bob_complete(bob, worker->node, succeeded) != BOB_OK) internal_error = true;
-			platform_mutex_lock(bob->mutex);
-			worker->node = NULL;
-			worker->awaiting_acknowledgement = false;
-			platform_condition_broadcast(bob->work_available);
-			platform_mutex_unlock(bob->mutex);
-			--running;
-			if (internal_error) break;
 		}
+
+		Bob_Worker *worker = NULL;
+		if (bob->completion_count > 0) {
+			worker = bob->completions[--bob->completion_count];
+		}
+		platform_mutex_unlock(bob->mutex);
+
+		if (!worker) {
+			internal_error = true;
+			break;
+		}
+
+		// Report completion status
+		b32 succeeded = report_completion(worker);
+		if (bob_complete(bob, worker->node, succeeded) != BOB_OK) {
+			internal_error = true;
+		}
+
+		// Resume worker
+		platform_mutex_lock(bob->mutex);
+		worker->node = NULL;
+		worker->awaiting_acknowledgement = false;
+		platform_condition_broadcast(bob->work_available);
+		platform_mutex_unlock(bob->mutex);
+
+		-- running;
+		if (internal_error) break;
 	}
 
 cleanup:
