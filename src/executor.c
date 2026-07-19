@@ -58,7 +58,7 @@ static String command_executable(Arena *arena, String command_line)
    return arena_push_string_copy(arena, string_slice(command_line, start, end - start));
 }
 
-static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task, const Task_Runtime *runtime)
+static b32 task_needs_rebuild(const Bob *graph, Node_Id node, const Bob_Task *task, const Task_Runtime *runtime)
 {
    u64 oldest_output = UINT64_MAX;
    u64 newest_input = 0;
@@ -91,9 +91,9 @@ static b32 task_needs_rebuild(const Graph *graph, Node_Id node, const Task *task
          newest_input = scan.newest_write_time;
       }
    }
-   for (i = 0; i < graph_node_dependency_count(graph, node); ++i) {
-      Node_Id dependency = graph_node_dependency(graph, node, i);
-      if (dependency == GRAPH_INVALID_TASK || runtime[dependency].rebuilt) return true;
+   for (i = 0; i < bob_dependency_count(graph, node); ++i) {
+      Node_Id dependency = bob_dependency(graph, node, i);
+      if (dependency == BOB_INVALID_TASK || runtime[dependency].rebuilt) return true;
    }
    return newest_input > oldest_output;
 }
@@ -143,25 +143,26 @@ static void stop_workers(Worker *workers, u32 count)
    }
 }
 
-b32 executor_run(Graph *graph, u32 worker_count)
+b32 executor_run(Bob *graph, u32 worker_count)
 {
    Worker *workers;
    HANDLE *done_events;
    Task_Runtime *runtime;
-   Graph_Error prepare_result;
+   Bob_Error prepare_result;
    u32 created = 0;
    u32 running = 0;
    u32 task_count;
+   u64 runtime_size;
    b32 internal_error = false;
    u32 i;
 
    if (!graph || worker_count == 0) {
       return false;
    }
-   task_count = graph_node_count(graph);
+   task_count = bob_task_count(graph);
    for (i = 0; i < task_count; ++i)
    {
-      const Task *task = graph_node_data(graph, (Node_Id)i);
+      const Bob_Task *task = bob_get_task(graph, (Node_Id)i);
       if (!task || !task->command_line.data) {
          return false;
       }
@@ -172,14 +173,14 @@ b32 executor_run(Graph *graph, u32 worker_count)
 
    {
       Profile_Scope scope = profile_scope_begin("prepare graph");
-      prepare_result = graph_prepare(graph);
+      prepare_result = bob_prepare(graph);
       profile_scope_end(&scope);
    }
-   if (prepare_result != GRAPH_OK) {
-      log_error("unable to prepare graph: %s", graph_error_str(prepare_result));
+   if (prepare_result != BOB_OK) {
+      log_error("unable to prepare graph: %s", bob_error_string(prepare_result));
       return false;
    }
-   if (graph_is_finished(graph)) {
+   if (bob_is_finished(graph)) {
       return true;
    }
 
@@ -192,19 +193,24 @@ b32 executor_run(Graph *graph, u32 worker_count)
 
    workers = calloc(worker_count, sizeof(*workers));
    done_events = malloc(worker_count * sizeof(*done_events));
-   runtime = calloc(task_count, sizeof(*runtime));
+   runtime_size = task_count * sizeof(*runtime);
+   runtime = platform_virtual_reserve(runtime_size);
+   if (runtime && !platform_virtual_commit(runtime, runtime_size)) {
+      platform_virtual_free(runtime);
+      runtime = NULL;
+   }
    if (!workers || !done_events || !runtime)
    {
       free(workers);
       free(done_events);
-      free(runtime);
+      platform_virtual_free(runtime);
       return false;
    }
 
    for (i = 0; i < worker_count; ++i)
    {
       Worker *worker = &workers[i];
-      worker->node = GRAPH_INVALID_TASK;
+      worker->node = BOB_INVALID_TASK;
       worker->output = arena_create(MEGABYTES(256));
       worker->start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
       worker->done_event = CreateEventA(NULL, FALSE, FALSE, NULL);
@@ -232,29 +238,29 @@ b32 executor_run(Graph *graph, u32 worker_count)
       stop_workers(workers, created);
       free(done_events);
       free(workers);
-      free(runtime);
+      platform_virtual_free(runtime);
       return false;
    }
 
-   while (!graph_is_finished(graph))
+   while (!bob_is_finished(graph))
    {
       for (i = 0; i < worker_count; ++i)
       {
          Node_Id node;
          Worker *worker = &workers[i];
 
-         while (!worker->busy && graph_take_ready(graph, &node))
+         while (!worker->busy && bob_take_ready(graph, &node))
          {
-            const Task *task = graph_node_data(graph, node);
+            const Bob_Task *task = bob_get_task(graph, node);
             b32 needs_rebuild;
             Profile_Scope scope = profile_scope_begin("incremental checks");
             needs_rebuild = task_needs_rebuild(graph, node, task, runtime);
             profile_scope_end(&scope);
             if (!needs_rebuild)
             {
-				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", graph_node_name(graph, node));
+				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", bob_task_name(graph, node));
 				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line.data);
-               if (graph_complete(graph, node, true) != GRAPH_OK) {
+               if (bob_complete(graph, node, true) != BOB_OK) {
                   internal_error = true;
                   break;
                }
@@ -271,7 +277,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
       }
 
       if (internal_error) { break; }
-      if (graph_is_finished(graph)) { break; }
+      if (bob_is_finished(graph)) { break; }
 
       if (running == 0) {
          internal_error = true;
@@ -294,14 +300,14 @@ b32 executor_run(Graph *graph, u32 worker_count)
 
          succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
 		 if (worker->process.output.size > 0) {
-			logger_log_string_at(2, LOG_LEVEL_INFO, graph_node_name(graph, worker->node),
+			logger_log_string_at(2, LOG_LEVEL_INFO, bob_task_name(graph, worker->node),
 				worker->process.output);
 		 }
 		 logger_log_at(0,
                succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR,
                succeeded ? "succeeded" : "failed",
                "%s",
-               graph_node_name(graph, worker->node)
+               bob_task_name(graph, worker->node)
 		 );
 		 if (succeeded) {
 			logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line.data);
@@ -311,7 +317,7 @@ b32 executor_run(Graph *graph, u32 worker_count)
          {
             Scratch scratch = begin_scratch();
 
-			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node), "%s",
+			logger_log(LOG_LEVEL_ERROR, bob_task_name(graph, worker->node), "%s",
 				worker->process.launched ? "process error" : "failed to start process");
 			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
 
@@ -346,18 +352,18 @@ b32 executor_run(Graph *graph, u32 worker_count)
          }
          else if (worker->process.exit_code != 0)
          {
-			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node),
+			logger_log(LOG_LEVEL_ERROR, bob_task_name(graph, worker->node),
 				"process exited with code %u", worker->process.exit_code);
 			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line.data);
          }
 
-         if (graph_complete(graph, worker->node, succeeded) != GRAPH_OK) {
+         if (bob_complete(graph, worker->node, succeeded) != BOB_OK) {
             internal_error = true;
             break;
          }
 
          worker->busy = false;
-         worker->node = GRAPH_INVALID_TASK;
+         worker->node = BOB_INVALID_TASK;
          --running;
       }
    }
@@ -365,6 +371,6 @@ b32 executor_run(Graph *graph, u32 worker_count)
    stop_workers(workers, worker_count);
    free(done_events);
    free(workers);
-   free(runtime);
-   return !internal_error && !graph_has_failed(graph);
+   platform_virtual_free(runtime);
+   return !internal_error && !bob_has_failed(graph);
 }

@@ -1,4 +1,4 @@
-#include "graph.h"
+#include "bob.h"
 #include "executor.h"
 #include "elf_adapter.h"
 #include "logger.h"
@@ -12,11 +12,7 @@
 
 static int run_build(const char *path, u32 worker_count, b32 worker_override, i32 verbosity, b32 verbosity_override)
 {
-   Task_Array_Desc loaded = {0};
-   Arena task_arena = {0};
-   Graph *graph = NULL;
-   u32 task_count;
-   u32 i;
+   Bob_Build build = {0};
    int exit_code = 1;
 
    {
@@ -38,93 +34,35 @@ static int run_build(const char *path, u32 worker_count, b32 worker_override, i3
       }
    }
 
-   task_arena = arena_create(0);
-   if (!task_arena.data)
-   {
-      log_error("out of memory while loading %s", path);
-      goto cleanup;
-   }
    {
       b32 loaded_ok;
       Profile_Scope scope = profile_scope_begin("load elf build script");
-      loaded_ok = elf_load_task_list(path, &task_arena, &loaded);
+      loaded_ok = elf_load_build(path, &build);
       profile_scope_end(&scope);
       if (!loaded_ok)
       {
-         log_error("%s: %s", path, loaded.error);
+         log_error("%s: %s", path, build.error);
          goto cleanup;
       }
    }
-   if (!worker_override && loaded.has_worker_count)
+   if (!worker_override && build.options.has_worker_count)
    {
-      worker_count = loaded.worker_count;
+      worker_count = build.options.worker_count;
    }
-   if (!verbosity_override && loaded.has_verbosity)
+   if (!verbosity_override && build.options.has_verbosity)
    {
-      verbosity = loaded.verbosity;
+      verbosity = build.options.verbosity;
    }
 	logger_set_verbosity(verbosity);
 
-   task_count = loaded.count;
-   graph = graph_create();
-   if (!graph)
-   {
-      log_error("out of memory while loading %s", path);
-      goto cleanup;
-   }
-
-   for (i = 0; i < task_count; ++i)
-   {
-      Node_Id node;
-      Task *task = &loaded.tasks[i];
-      Graph_Error error;
-      {
-         Profile_Scope scope = profile_scope_begin("construct graph");
-         error = graph_add_node(graph, loaded.tasks[i].name.data, task, &node);
-         profile_scope_end(&scope);
-      }
-      if (error != GRAPH_OK)
-      {
-         log_error("%s: unable to create task '%s': %s", path, loaded.tasks[i].name.data, graph_error_str(error));
-         goto cleanup;
-      }
-   }
-
-   for (i = 0; i < task_count; ++i)
-   {
-      u32 dependency_index;
-      for (dependency_index = 0; dependency_index < loaded.tasks[i].dependency_count; ++dependency_index)
-      {
-         u32 dependency = loaded.tasks[i].dependencies[dependency_index];
-         Graph_Error error;
-
-         if (dependency >= task_count)
-         {
-            log_error("%s: task '%s' has invalid dependency %u", path, loaded.tasks[i].name.data, dependency);
-            goto cleanup;
-         }
-         {
-            Profile_Scope scope = profile_scope_begin("construct graph");
-            error = graph_add_dependency(graph, (Node_Id)i, (Node_Id)dependency);
-            profile_scope_end(&scope);
-         }
-         if (error != GRAPH_OK)
-         {
-            log_error("%s: unable to add dependency to '%s': %s", path, loaded.tasks[i].name.data, graph_error_str(error));
-            goto cleanup;
-         }
-      }
-   }
-
    {
       Profile_Scope scope = profile_scope_begin("executor");
-      exit_code = executor_run(graph, worker_count) ? 0 : 1;
+      exit_code = executor_run(build.bob, worker_count) ? 0 : 1;
       profile_scope_end(&scope);
    }
 
    cleanup:
-   graph_destroy(graph);
-   arena_destroy(&task_arena);
+   bob_destroy(build.bob);
    return exit_code;
 }
 

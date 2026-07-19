@@ -1,4 +1,4 @@
-#include "graph.h"
+#include "bob.h"
 #include "executor.h"
 #include "elf_adapter.h"
 #include "c_include_scan.h"
@@ -24,7 +24,7 @@ static int tests_failed;
         }                                                                       \
     } while (0)
 
-#define CHECK_OK(expression) CHECK((expression) == GRAPH_OK)
+#define CHECK_OK(expression) CHECK((expression) == BOB_OK)
 #define STRING_ARRAY_FROM(array) ((String_Array){ .items = (array), .count = ARRAY_COUNT(array) })
 
 static b32 environment_equals(const char *name, const char *expected)
@@ -71,24 +71,24 @@ static b32 test_high_resolution_timer(void)
     return frequency > 0 && platform_performance_counter() >= before;
 }
 
-static Node_Id add_node(Graph *graph, const char *name)
+static Node_Id add_node(Bob *graph, const char *name)
 {
-    Node_Id node = GRAPH_INVALID_TASK;
-    Graph_Error result = graph_add_node(graph, name, NULL, &node);
-    if (result != GRAPH_OK) {
-        printf("  unable to add node %s: %s\n", name, graph_error_str(result));
+    Node_Id node = BOB_INVALID_TASK;
+    Bob_Error result = bob_add_task(graph, (Bob_Task){ .name = string_from_cstring(name) }, &node);
+    if (result != BOB_OK) {
+        printf("  unable to add node %s: %s\n", name, bob_error_string(result));
         exit(2);
     }
     return node;
 }
 
-static b32 run_tasks(Graph *graph, const Task *tasks, u32 task_count,
+static b32 run_tasks(Bob *graph, const Bob_Task *tasks, u32 task_count,
                      u32 worker_count)
 {
     u32 i;
-    if (graph_node_count(graph) != task_count) return false;
+    if (bob_task_count(graph) != task_count) return false;
     for (i = 0; i < task_count; ++i) {
-        if (graph_set_node_data(graph, (Node_Id)i, &tasks[i]) != GRAPH_OK) {
+        if (bob_set_task(graph, (Node_Id)i, tasks[i]) != BOB_OK) {
             return false;
         }
     }
@@ -253,42 +253,42 @@ cleanup:
 
 static b32 test_empty_graph(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     CHECK(graph != NULL);
-    CHECK_OK(graph_prepare(graph));
-    CHECK(graph_is_finished(graph));
-    graph_destroy(graph);
+    CHECK_OK(bob_prepare(graph));
+    CHECK(bob_is_finished(graph));
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_linear_graph(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id compile = add_node(graph, "compile");
     Node_Id link = add_node(graph, "link");
     Node_Id node;
 
-    CHECK_OK(graph_add_dependency(graph, link, compile));
-    CHECK_OK(graph_prepare(graph));
+    CHECK_OK(bob_add_dependency(graph, link, compile));
+    CHECK_OK(bob_prepare(graph));
 
-    CHECK(graph_take_ready(graph, &node));
+    CHECK(bob_take_ready(graph, &node));
     CHECK(node == compile);
-    CHECK(!graph_take_ready(graph, &node));
-    CHECK_OK(graph_complete(graph, compile, true));
+    CHECK(!bob_take_ready(graph, &node));
+    CHECK_OK(bob_complete(graph, compile, true));
 
-    CHECK(graph_take_ready(graph, &node));
+    CHECK(bob_take_ready(graph, &node));
     CHECK(node == link);
-    CHECK_OK(graph_complete(graph, link, true));
-    CHECK(graph_is_finished(graph));
-    CHECK(!graph_has_failed(graph));
+    CHECK_OK(bob_complete(graph, link, true));
+    CHECK(bob_is_finished(graph));
+    CHECK(!bob_has_failed(graph));
 
-    graph_destroy(graph);
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_parallel_fan_in(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id a = add_node(graph, "a");
     Node_Id b = add_node(graph, "b");
     Node_Id link = add_node(graph, "link");
@@ -296,31 +296,31 @@ static b32 test_parallel_fan_in(void)
     Node_Id second;
     Node_Id node;
 
-    CHECK_OK(graph_add_dependency(graph, link, a));
-    CHECK_OK(graph_add_dependency(graph, link, b));
-    CHECK_OK(graph_prepare(graph));
+    CHECK_OK(bob_add_dependency(graph, link, a));
+    CHECK_OK(bob_add_dependency(graph, link, b));
+    CHECK_OK(bob_prepare(graph));
 
-    CHECK(graph_take_ready(graph, &first));
-    CHECK(graph_take_ready(graph, &second));
+    CHECK(bob_take_ready(graph, &first));
+    CHECK(bob_take_ready(graph, &second));
     CHECK(first != second);
-    CHECK(!graph_take_ready(graph, &node));
+    CHECK(!bob_take_ready(graph, &node));
 
     /* Finishing either node first must not release link early. */
-    CHECK_OK(graph_complete(graph, second, true));
-    CHECK(!graph_take_ready(graph, &node));
-    CHECK_OK(graph_complete(graph, first, true));
-    CHECK(graph_take_ready(graph, &node));
+    CHECK_OK(bob_complete(graph, second, true));
+    CHECK(!bob_take_ready(graph, &node));
+    CHECK_OK(bob_complete(graph, first, true));
+    CHECK(bob_take_ready(graph, &node));
     CHECK(node == link);
 
-    CHECK_OK(graph_complete(graph, link, true));
-    CHECK(graph_is_finished(graph));
-    graph_destroy(graph);
+    CHECK_OK(bob_complete(graph, link, true));
+    CHECK(bob_is_finished(graph));
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_failure_blocks_dependents(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id compile = add_node(graph, "compile");
     Node_Id link = add_node(graph, "link");
     Node_Id package = add_node(graph, "package");
@@ -328,52 +328,52 @@ static b32 test_failure_blocks_dependents(void)
     Node_Id first;
     Node_Id second;
 
-    CHECK_OK(graph_add_dependency(graph, link, compile));
-    CHECK_OK(graph_add_dependency(graph, package, link));
-    CHECK_OK(graph_prepare(graph));
+    CHECK_OK(bob_add_dependency(graph, link, compile));
+    CHECK_OK(bob_add_dependency(graph, package, link));
+    CHECK_OK(bob_prepare(graph));
 
-    CHECK(graph_take_ready(graph, &first));
-    CHECK(graph_take_ready(graph, &second));
+    CHECK(bob_take_ready(graph, &first));
+    CHECK(bob_take_ready(graph, &second));
     CHECK((first == compile && second == independent) ||
           (first == independent && second == compile));
 
-    CHECK_OK(graph_complete(graph, compile, false));
-    CHECK(graph_node_state(graph, link) == GRAPH_TASK_BLOCKED);
-    CHECK(graph_node_state(graph, package) == GRAPH_TASK_BLOCKED);
-    CHECK(!graph_is_finished(graph));
+    CHECK_OK(bob_complete(graph, compile, false));
+    CHECK(bob_task_state(graph, link) == BOB_TASK_BLOCKED);
+    CHECK(bob_task_state(graph, package) == BOB_TASK_BLOCKED);
+    CHECK(!bob_is_finished(graph));
 
-    CHECK_OK(graph_complete(graph, independent, true));
-    CHECK(graph_is_finished(graph));
-    CHECK(graph_has_failed(graph));
-    graph_destroy(graph);
+    CHECK_OK(bob_complete(graph, independent, true));
+    CHECK(bob_is_finished(graph));
+    CHECK(bob_has_failed(graph));
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_cycle_is_rejected(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id a = add_node(graph, "a");
     Node_Id b = add_node(graph, "b");
     Node_Id c = add_node(graph, "c");
 
-    CHECK_OK(graph_add_dependency(graph, a, b));
-    CHECK_OK(graph_add_dependency(graph, b, c));
-    CHECK_OK(graph_add_dependency(graph, c, a));
-    CHECK(graph_prepare(graph) == GRAPH_ERROR_CYCLE);
-    graph_destroy(graph);
+    CHECK_OK(bob_add_dependency(graph, a, b));
+    CHECK_OK(bob_add_dependency(graph, b, c));
+    CHECK_OK(bob_add_dependency(graph, c, a));
+    CHECK(bob_prepare(graph) == BOB_ERROR_CYCLE);
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_invalid_edges_are_rejected(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id a = add_node(graph, "a");
     Node_Id b = add_node(graph, "b");
 
-    CHECK(graph_add_dependency(graph, a, a) == GRAPH_ERROR_SELF_DEPENDENCY);
-    CHECK_OK(graph_add_dependency(graph, a, b));
-    CHECK(graph_add_dependency(graph, a, b) == GRAPH_ERROR_DUPLICATE_DEPENDENCY);
-    graph_destroy(graph);
+    CHECK(bob_add_dependency(graph, a, a) == BOB_ERROR_SELF_DEPENDENCY);
+    CHECK_OK(bob_add_dependency(graph, a, b));
+    CHECK(bob_add_dependency(graph, a, b) == BOB_ERROR_DUPLICATE_DEPENDENCY);
+    bob_destroy(graph);
     return true;
 }
 
@@ -385,11 +385,11 @@ static b32 get_test_executable(char *buffer, u32 buffer_size)
 
 static b32 test_executor_runs_in_parallel(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id a = add_node(graph, "slow a");
     Node_Id b = add_node(graph, "slow b");
     Node_Id link = add_node(graph, "link");
-    Task tasks[3] = {0};
+    Bob_Task tasks[3] = {0};
     char executable[MAX_PATH];
     char command_a[2 * MAX_PATH];
     char command_b[2 * MAX_PATH];
@@ -417,26 +417,26 @@ static b32 test_executor_runs_in_parallel(void)
     tasks[b].command_line = string_from_cstring(command_b);
     tasks[link].command_line = string_from_cstring(command_link);
 
-    CHECK_OK(graph_add_dependency(graph, link, a));
-    CHECK_OK(graph_add_dependency(graph, link, b));
+    CHECK_OK(bob_add_dependency(graph, link, a));
+    CHECK_OK(bob_add_dependency(graph, link, b));
 
     executed = run_tasks(graph, tasks, 3, 2);
     CloseHandle(event_a);
     CloseHandle(event_b);
 
     CHECK(executed);
-    CHECK(graph_is_finished(graph));
-    graph_destroy(graph);
+    CHECK(bob_is_finished(graph));
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_executor_propagates_failure(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id fail = add_node(graph, "fail");
     Node_Id blocked = add_node(graph, "blocked");
     Node_Id independent = add_node(graph, "independent");
-    Task tasks[3] = {0};
+    Bob_Task tasks[3] = {0};
     char executable[MAX_PATH];
     char fail_command[2 * MAX_PATH];
     char blocked_command[2 * MAX_PATH];
@@ -450,28 +450,28 @@ static b32 test_executor_propagates_failure(void)
     tasks[fail].command_line = string_from_cstring(fail_command);
     tasks[blocked].command_line = string_from_cstring(blocked_command);
     tasks[independent].command_line = string_from_cstring(independent_command);
-    CHECK_OK(graph_add_dependency(graph, blocked, fail));
+    CHECK_OK(bob_add_dependency(graph, blocked, fail));
 
     CHECK(!run_tasks(graph, tasks, 3, 2));
-    CHECK(graph_node_state(graph, fail) == GRAPH_TASK_FAILED);
-    CHECK(graph_node_state(graph, blocked) == GRAPH_TASK_BLOCKED);
-    CHECK(graph_node_state(graph, independent) == GRAPH_TASK_SUCCEEDED);
-    CHECK(graph_is_finished(graph));
-    graph_destroy(graph);
+    CHECK(bob_task_state(graph, fail) == BOB_TASK_FAILED);
+    CHECK(bob_task_state(graph, blocked) == BOB_TASK_BLOCKED);
+    CHECK(bob_task_state(graph, independent) == BOB_TASK_SUCCEEDED);
+    CHECK(bob_is_finished(graph));
+    bob_destroy(graph);
     return true;
 }
 
 static b32 test_executor_reports_missing_executable(void)
 {
-    Graph *graph = graph_create();
+    Bob *graph = bob_create();
     Node_Id missing = add_node(graph, "missing executable");
-    Task task = {
+    Bob_Task task = {
         .command_line = STRING_LITERAL("bob_executable_that_does_not_exist_7f31.exe --input x.c")
     };
 
     CHECK(!run_tasks(graph, &task, 1, 1));
-    CHECK(graph_node_state(graph, missing) == GRAPH_TASK_FAILED);
-    graph_destroy(graph);
+    CHECK(bob_task_state(graph, missing) == BOB_TASK_FAILED);
+    bob_destroy(graph);
     return true;
 }
 
@@ -479,27 +479,27 @@ static b32 test_executor_skips_existing_output(void)
 {
     const char *output_path = "build\\incremental_test.out";
     String outputs[] = { string_from_cstring(output_path) };
-    Graph *first_graph;
-    Graph *second_graph;
-    Task task = {0};
+    Bob *first_graph;
+    Bob *second_graph;
+    Bob_Task task = {0};
     Platform_File_Info info;
 
     DeleteFileA(output_path);
     task.command_line = STRING_LITERAL("cmd /c echo built>build\\incremental_test.out");
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    first_graph = graph_create();
+    first_graph = bob_create();
     add_node(first_graph, "create output");
     CHECK(run_tasks(first_graph, &task, 1, 1));
 	CHECK(platform_file_info(string_from_cstring(output_path), &info));
-    graph_destroy(first_graph);
+    bob_destroy(first_graph);
 
     task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
-    second_graph = graph_create();
+    second_graph = bob_create();
     add_node(second_graph, "skip existing output");
     CHECK(run_tasks(second_graph, &task, 1, 1));
-    CHECK(graph_node_state(second_graph, 0) == GRAPH_TASK_SUCCEEDED);
-    graph_destroy(second_graph);
+    CHECK(bob_task_state(second_graph, 0) == BOB_TASK_SUCCEEDED);
+    bob_destroy(second_graph);
 
     CHECK(DeleteFileA(output_path));
     return true;
@@ -552,9 +552,9 @@ static b32 test_newer_input_rebuilds(void)
     const char *output_path = "build\\incremental_test.out";
     String inputs[] = { string_from_cstring(input_path) };
     String outputs[] = { string_from_cstring(output_path) };
-    Task task = {0};
-    Graph *clean_graph;
-    Graph *dirty_graph;
+    Bob_Task task = {0};
+    Bob *clean_graph;
+    Bob *dirty_graph;
 
     CHECK(write_test_file_at_time(input_path, 100000000000000000ULL));
     CHECK(write_test_file_at_time(output_path, 100000000000000100ULL));
@@ -562,17 +562,17 @@ static b32 test_newer_input_rebuilds(void)
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    clean_graph = graph_create();
+    clean_graph = bob_create();
     add_node(clean_graph, "clean timestamps");
     CHECK(run_tasks(clean_graph, &task, 1, 1));
-    graph_destroy(clean_graph);
+    bob_destroy(clean_graph);
 
     CHECK(write_test_file_at_time(input_path, 100000000000000200ULL));
     task.command_line = STRING_LITERAL("cmd /c echo rebuilt>build\\incremental_test.out");
-    dirty_graph = graph_create();
+    dirty_graph = bob_create();
     add_node(dirty_graph, "dirty timestamps");
     CHECK(run_tasks(dirty_graph, &task, 1, 1));
-    graph_destroy(dirty_graph);
+    bob_destroy(dirty_graph);
 
     CHECK(DeleteFileA(input_path));
     CHECK(DeleteFileA(output_path));
@@ -588,8 +588,8 @@ static b32 test_multiple_inputs_and_outputs(void)
     const char *marker = "build\\multi.marker";
     String inputs[] = { string_from_cstring(input_a), string_from_cstring(input_b) };
     String outputs[] = { string_from_cstring(output_a), string_from_cstring(output_b) };
-    Task task = {0};
-    Graph *graph;
+    Bob_Task task = {0};
+    Bob *graph;
     Platform_File_Info info;
 
     DeleteFileA(marker);
@@ -601,27 +601,27 @@ static b32 test_multiple_inputs_and_outputs(void)
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    graph = graph_create();
+    graph = bob_create();
     add_node(graph, "clean multiple files");
     CHECK(run_tasks(graph, &task, 1, 1));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(write_test_file_at_time(input_b, 100000000000000225ULL));
     task.command_line = STRING_LITERAL("cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker");
-    graph = graph_create();
+    graph = bob_create();
     add_node(graph, "newest input wins");
     CHECK(run_tasks(graph, &task, 1, 1));
 	CHECK(platform_file_info(string_from_cstring(marker), &info));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(DeleteFileA(output_b));
     CHECK(DeleteFileA(marker));
-    graph = graph_create();
+    graph = bob_create();
     add_node(graph, "one output missing");
     CHECK(run_tasks(graph, &task, 1, 1));
 	CHECK(platform_file_info(string_from_cstring(output_b), &info));
 	CHECK(platform_file_info(string_from_cstring(marker), &info));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(DeleteFileA(input_a));
     CHECK(DeleteFileA(input_b));
@@ -640,8 +640,8 @@ static b32 test_dependency_rebuild_propagates(void)
     String dependency_inputs[] = { string_from_cstring(dependency_input) };
     String dependency_outputs[] = { string_from_cstring(dependency_output) };
     String parent_outputs[] = { string_from_cstring(parent_output) };
-    Task tasks[2] = {0};
-    Graph *graph;
+    Bob_Task tasks[2] = {0};
+    Bob *graph;
     Node_Id dependency;
     Node_Id parent;
     Platform_File_Info info;
@@ -657,23 +657,23 @@ static b32 test_dependency_rebuild_propagates(void)
     tasks[1].command_line = STRING_LITERAL("bob_parent_that_must_not_run.exe");
     tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
 
-    graph = graph_create();
+    graph = bob_create();
     dependency = add_node(graph, "clean dependency");
     parent = add_node(graph, "clean parent");
-    CHECK_OK(graph_add_dependency(graph, parent, dependency));
+    CHECK_OK(bob_add_dependency(graph, parent, dependency));
     CHECK(run_tasks(graph, tasks, 2, 1));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(write_test_file_at_time(dependency_input, 100000000000000400ULL));
     tasks[0].command_line = STRING_LITERAL("cmd /c echo dependency>build\\dependency.out");
     tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
-    graph = graph_create();
+    graph = bob_create();
     dependency = add_node(graph, "dirty dependency");
     parent = add_node(graph, "propagated parent");
-    CHECK_OK(graph_add_dependency(graph, parent, dependency));
+    CHECK_OK(bob_add_dependency(graph, parent, dependency));
     CHECK(run_tasks(graph, tasks, 2, 1));
 	CHECK(platform_file_info(string_from_cstring(marker), &info));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(DeleteFileA(dependency_input));
     CHECK(DeleteFileA(dependency_output));
@@ -692,8 +692,8 @@ static b32 test_recursive_include_rebuilds(void)
     String inputs[] = { string_from_cstring(source) };
     String outputs[] = { string_from_cstring(output) };
     String include_directories[] = { STRING_LITERAL("build") };
-    Task task = {0};
-    Graph *graph;
+    Bob_Task task = {0};
+    Bob *graph;
     Platform_File_Info info;
     C_Include_Scan_Result scan;
 
@@ -723,20 +723,20 @@ static b32 test_recursive_include_rebuilds(void)
     task.outputs = STRING_ARRAY_FROM(outputs);
     task.include_directories = STRING_ARRAY_FROM(include_directories);
 
-    graph = graph_create();
+    graph = bob_create();
     add_node(graph, "recursive include dirty");
     CHECK(run_tasks(graph, &task, 1, 1));
 	CHECK(platform_file_info(string_from_cstring(marker), &info));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(write_test_file_at_time(output, 100000000000000400ULL));
     CHECK(DeleteFileA(marker));
     task.command_line = STRING_LITERAL("bob_include_scanner_must_not_run.exe");
-    graph = graph_create();
+    graph = bob_create();
     add_node(graph, "recursive include clean");
     CHECK(run_tasks(graph, &task, 1, 1));
 	CHECK(!platform_file_info(string_from_cstring(marker), &info));
-    graph_destroy(graph);
+    bob_destroy(graph);
 
     CHECK(DeleteFileA(source));
     CHECK(DeleteFileA(header_a));
@@ -747,66 +747,62 @@ static b32 test_recursive_include_rebuilds(void)
 
 static b32 test_elf_descriptor(void)
 {
-    Arena arena = arena_create(0);
-    Task_Array_Desc list;
+    Bob_Build build;
+    const Bob_Task *task;
 
-    if (!elf_load_task_list("example/tasks.elf", &arena, &list)) {
-        printf("  elf error: %s\n", list.error);
-        arena_destroy(&arena);
+    if (!elf_load_build("example/tasks.elf", &build)) {
+        printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(list.count == 4);
-    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("run hello.exe")));
-    CHECK(list.tasks[0].dependency_count == 1);
-    CHECK(list.tasks[0].dependencies[0] == 1);
-    CHECK(string_equal(list.tasks[2].name, STRING_LITERAL("compile main")));
-    CHECK(list.tasks[2].inputs.count == 1);
-    CHECK(list.tasks[2].outputs.count == 1);
-    CHECK(list.tasks[2].include_directories.count == 1);
-    CHECK(list.has_worker_count);
-    CHECK(list.worker_count == 2);
-    CHECK(list.has_verbosity);
-    CHECK(list.verbosity == 0);
-    CHECK(list.tasks[1].dependency_count == 2);
-    CHECK(list.tasks[1].dependencies[0] == 2);
-    arena_destroy(&arena);
+    CHECK(bob_task_count(build.bob) == 4);
+    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("run hello.exe")));
+    CHECK(bob_dependency_count(build.bob, 0) == 1);
+    CHECK(bob_dependency(build.bob, 0, 0) == 1);
+    task = bob_get_task(build.bob, 2);
+    CHECK(string_equal(task->name, STRING_LITERAL("compile main")));
+    CHECK(task->inputs.count == 1);
+    CHECK(task->outputs.count == 1);
+    CHECK(task->include_directories.count == 1);
+    CHECK(build.options.has_worker_count);
+    CHECK(build.options.worker_count == 2);
+    CHECK(build.options.has_verbosity);
+    CHECK(build.options.verbosity == 0);
+    CHECK(bob_dependency_count(build.bob, 1) == 2);
+    CHECK(bob_dependency(build.bob, 1, 0) == 2);
+    bob_destroy(build.bob);
     return true;
 }
 
 static b32 test_elf_generated_descriptor(void)
 {
-    Arena arena = arena_create(0);
-    Task_Array_Desc list;
+    Bob_Build build;
 
-    if (!elf_load_task_list("example/tasks1.elf", &arena, &list)) {
-        printf("  elf error: %s\n", list.error);
-        arena_destroy(&arena);
+    if (!elf_load_build("example/tasks1.elf", &build)) {
+        printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(list.count == 33);
-    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("font_test")));
-    CHECK(list.tasks[0].dependency_count == 21);
-    CHECK(list.tasks[6].dependency_count == 6);
-    CHECK(string_equal(list.tasks[27].name, STRING_LITERAL("VS_Rect")));
-    arena_destroy(&arena);
+    CHECK(bob_task_count(build.bob) == 33);
+    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("font_test")));
+    CHECK(bob_dependency_count(build.bob, 0) == 21);
+    CHECK(bob_dependency_count(build.bob, 6) == 6);
+    CHECK(string_equal(bob_get_task(build.bob, 27)->name, STRING_LITERAL("VS_Rect")));
+    bob_destroy(build.bob);
     return true;
 }
 
 static b32 test_bob_descriptor(void)
 {
-    Arena arena = arena_create(0);
-    Task_Array_Desc list;
+    Bob_Build build;
 
-    if (!elf_load_task_list("build.elf", &arena, &list)) {
-        printf("  elf error: %s\n", list.error);
-        arena_destroy(&arena);
+    if (!elf_load_build("build.elf", &build)) {
+        printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(list.count == 6);
-    CHECK(string_equal(list.tasks[0].name, STRING_LITERAL("build formatter")));
-    CHECK(string_equal(list.tasks[1].name, STRING_LITERAL("run hello.exe")));
-    CHECK(string_equal(list.tasks[2].name, STRING_LITERAL("prepare output directory")));
-    arena_destroy(&arena);
+    CHECK(bob_task_count(build.bob) == 6);
+    CHECK(string_equal(bob_get_task(build.bob, 0)->name, STRING_LITERAL("build formatter")));
+    CHECK(string_equal(bob_get_task(build.bob, 1)->name, STRING_LITERAL("run hello.exe")));
+    CHECK(string_equal(bob_get_task(build.bob, 2)->name, STRING_LITERAL("prepare output directory")));
+    bob_destroy(build.bob);
     return true;
 }
 
@@ -825,12 +821,12 @@ static void run_test(const char *name, b32 (*test)(void))
 
 static int build_example(void)
 {
-    Graph *graph;
+    Bob *graph;
     Node_Id compile_main;
     Node_Id compile_message;
     Node_Id link;
     Node_Id run;
-    Task tasks[4] = {0};
+    Bob_Task tasks[4] = {0};
     b32 succeeded;
 
     if (!CreateDirectoryA("build\\example", NULL) &&
@@ -839,7 +835,7 @@ static int build_example(void)
         return 1;
     }
 
-    graph = graph_create();
+    graph = bob_create();
     if (!graph) {
         return 1;
     }
@@ -854,79 +850,30 @@ static int build_example(void)
     tasks[link].command_line = STRING_LITERAL("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
     tasks[run].command_line = STRING_LITERAL("build\\example\\hello.exe");
 
-    if (graph_add_dependency(graph, link, compile_main) != GRAPH_OK ||
-        graph_add_dependency(graph, link, compile_message) != GRAPH_OK ||
-        graph_add_dependency(graph, run, link) != GRAPH_OK) {
-        graph_destroy(graph);
+    if (bob_add_dependency(graph, link, compile_main) != BOB_OK ||
+        bob_add_dependency(graph, link, compile_message) != BOB_OK ||
+        bob_add_dependency(graph, run, link) != BOB_OK) {
+        bob_destroy(graph);
         return 1;
     }
 
     succeeded = run_tasks(graph, tasks, 4, 2);
-    graph_destroy(graph);
+    bob_destroy(graph);
     return succeeded ? 0 : 1;
 }
 
 static int build_tasks_from_elf(const char *path)
 {
-    Arena arena = arena_create(0);
-    Task_Array_Desc loaded = {0};
-    Graph *graph = NULL;
-    Task *tasks = NULL;
-    Node_Id *nodes = NULL;
-    u32 task_count = 0;
-    u32 i;
-    int exit_code = 1;
-
-    if (!elf_load_task_list(path, &arena, &loaded)) {
-        fprintf(stderr, "%s: %s\n", path, loaded.error);
-        goto cleanup;
+    Bob_Build build = {0};
+    u32 workers;
+    int exit_code;
+    if (!elf_load_build(path, &build)) {
+        fprintf(stderr, "%s: %s\n", path, build.error);
+        return 1;
     }
-
-    task_count = loaded.count;
-    graph = graph_create();
-    tasks = arena_push_zero_aligned(&arena, task_count * sizeof(*tasks),
-                                    _Alignof(Task));
-    nodes = arena_push_aligned(&arena, task_count * sizeof(*nodes),
-                               _Alignof(Node_Id));
-    if (!graph || !tasks || !nodes) {
-        fprintf(stderr, "out of memory while loading tasks\n");
-        goto cleanup;
-    }
-
-    for (i = 0; i < task_count; ++i) {
-        if (graph_add_node(graph, loaded.tasks[i].name.data, &tasks[i],
-                           &nodes[i]) != GRAPH_OK) {
-            fprintf(stderr, "%s: unable to create task '%s'\n",
-                    path, loaded.tasks[i].name.data);
-            goto cleanup;
-        }
-        tasks[nodes[i]] = loaded.tasks[i];
-    }
-
-    for (i = 0; i < task_count; ++i) {
-        u32 dependency_index;
-
-        for (dependency_index = 0; dependency_index < loaded.tasks[i].dependency_count;
-             ++dependency_index) {
-            u32 dependency = loaded.tasks[i].dependencies[dependency_index];
-            if (dependency >= task_count) {
-                fprintf(stderr, "%s: task '%s' has invalid dependency %u\n",
-                        path, loaded.tasks[i].name.data, dependency);
-                goto cleanup;
-            }
-            if (graph_add_dependency(graph, nodes[i], nodes[dependency]) != GRAPH_OK) {
-                fprintf(stderr, "%s: unable to add dependency %u to '%s'\n",
-                        path, dependency, loaded.tasks[i].name.data);
-                goto cleanup;
-            }
-        }
-    }
-
-    exit_code = run_tasks(graph, tasks, task_count, 4) ? 0 : 1;
-
-cleanup:
-    graph_destroy(graph);
-    arena_destroy(&arena);
+    workers = build.options.has_worker_count ? build.options.worker_count : 4;
+    exit_code = executor_run(build.bob, workers) ? 0 : 1;
+    bob_destroy(build.bob);
     return exit_code;
 }
 

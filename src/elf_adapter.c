@@ -75,9 +75,8 @@ static int table_list_add(Table_List *list, elf_Table *table)
    return 1;
 }
 
-int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
+b32 elf_load_build(const char *path, Bob_Build *result)
 {
-   u64 arena_start;
    Scratch scratch;
    elf_State *state;
    elf_ValueView returned;
@@ -88,8 +87,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
    uint32_t i;
    int success = 0;
 
-   if (!path || !arena || !result) return 0;
-   arena_start = arena_mark(arena);
+   if (!path || !result) return false;
    scratch = begin_scratch();
    task_tables = (Table_List){ .arena = scratch.arena };
    memset(result, 0, sizeof(*result));
@@ -137,8 +135,8 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
             snprintf(result->error, sizeof(result->error), "options.workers must be a positive integer");
             goto cleanup;
          }
-         result->worker_count = (uint32_t)integer;
-         result->has_worker_count = 1;
+         result->options.worker_count = (uint32_t)integer;
+         result->options.has_worker_count = true;
       }
       verbosity_value = field(state, options_value.as.table, "verbosity");
       if (verbosity_value.type != ELF_VALUE_TYPE_NIL)
@@ -152,8 +150,8 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
             snprintf(result->error, sizeof(result->error), "options.verbosity must be a non-negative integer");
             goto cleanup;
          }
-         result->verbosity = (int32_t)integer;
-         result->has_verbosity = 1;
+         result->options.verbosity = (int32_t)integer;
+         result->options.has_verbosity = true;
       }
    }
    targets_value = field(state, root, "targets");
@@ -198,68 +196,54 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
       }
    }
 
-   result->count = task_tables.count;
-   result->tasks = arena_push_zero_aligned(arena, result->count * sizeof(*result->tasks), _Alignof(Task));
-   if (result->count && !result->tasks) {
+   result->bob = bob_create();
+   if (!result->bob) {
       snprintf(result->error, sizeof(result->error), "out of memory");
       goto cleanup;
    }
 
-   for (i = 0; i < result->count; ++i)
+   for (i = 0; i < task_tables.count; ++i)
    {
-      Task *output = &result->tasks[i];
+      Bob_Task task = {0};
       elf_Table *description = task_tables.items[i];
-      output->name = copy_string_value(arena, field(state, description, "name"));
-      output->command_line = copy_string_value(arena, field(state, description, "command_line"));
-      if (!output->name.data || !output->command_line.data)
+      Node_Id node;
+      Bob_Error bob_error;
+      task.name = copy_string_value(scratch.arena, field(state, description, "name"));
+      task.command_line = copy_string_value(scratch.arena, field(state, description, "command_line"));
+      if (!task.name.data || !task.command_line.data)
       {
-         snprintf(result->error, sizeof(result->error),
-         "task %u requires string fields 'name' and 'command_line'", i);
+         snprintf(result->error, sizeof(result->error), "task %u requires string fields 'name' and 'command_line'", i);
          goto cleanup;
       }
 
-      if (!copy_string_array(state, arena, field(state, description, "inputs"), "inputs", output->name, &output->inputs, result->error, sizeof(result->error))) goto cleanup;
-
-      if (!copy_string_array(state, arena, field(state, description, "outputs"), "outputs", output->name, &output->outputs, result->error, sizeof(result->error))) goto cleanup;
-
-      if (!copy_string_array(state, arena, field(state, description, "include_dirs"), "include_dirs", output->name, &output->include_directories, result->error, sizeof(result->error))) goto cleanup;
-
+      if (!copy_string_array(state, scratch.arena, field(state, description, "inputs"), "inputs", task.name, &task.inputs, result->error, sizeof(result->error))) goto cleanup;
+      if (!copy_string_array(state, scratch.arena, field(state, description, "outputs"), "outputs", task.name, &task.outputs, result->error, sizeof(result->error))) goto cleanup;
+      if (!copy_string_array(state, scratch.arena, field(state, description, "include_dirs"), "include_dirs", task.name, &task.include_directories, result->error, sizeof(result->error))) goto cleanup;
+      bob_error = bob_add_task(result->bob, task, &node);
+      if (bob_error != BOB_OK) {
+         snprintf(result->error, sizeof(result->error), "unable to add task '%s': %s", task.name.data, bob_error_string(bob_error));
+         goto cleanup;
+      }
    }
 
-   for (i = 0; i < result->count; ++i)
+   for (i = 0; i < task_tables.count; ++i)
    {
-      Task *output = &result->tasks[i];
       elf_ValueView dependencies_value = field(state, task_tables.items[i], "dependencies");
       uint32_t dependency;
 
       if (dependencies_value.type == ELF_VALUE_TYPE_NIL) { continue; }
-      if (dependencies_value.type != ELF_VALUE_TYPE_TABLE) {
-         snprintf(result->error, sizeof(result->error), "dependencies for '%s' must be a table", output->name.data);
-         goto cleanup;
-      }
-
-      output->dependency_count = elf_table_length(dependencies_value.as.table);
-      output->dependencies = arena_push_zero_aligned(arena, output->dependency_count * sizeof(*output->dependencies), _Alignof(uint32_t));
-      if (output->dependency_count && !output->dependencies) {
-         snprintf(result->error, sizeof(result->error), "out of memory");
-         goto cleanup;
-      }
-      for (dependency = 0; dependency < output->dependency_count; ++dependency)
+      for (dependency = 0; dependency < elf_table_length(dependencies_value.as.table); ++dependency)
       {
          elf_ValueView dependency_value = elf_get_index(state, dependencies_value.as.table, dependency);
-         elf_Table *dependency_table;
          uint32_t resolved;
-
-         if (dependency_value.type != ELF_VALUE_TYPE_TABLE)
-         {
-            snprintf(result->error, sizeof(result->error),
-            "dependencies for '%s' must contain task tables", output->name.data);
+         Bob_Error bob_error;
+         resolved = table_list_find(&task_tables, dependency_value.as.table);
+         if (resolved == UINT32_MAX) goto cleanup;
+         bob_error = bob_add_dependency(result->bob, i, resolved);
+         if (bob_error != BOB_OK) {
+            snprintf(result->error, sizeof(result->error), "unable to add dependency to '%s': %s", bob_task_name(result->bob, i), bob_error_string(bob_error));
             goto cleanup;
          }
-         dependency_table = dependency_value.as.table;
-         resolved = table_list_find(&task_tables, dependency_table);
-         if (resolved == UINT32_MAX) goto cleanup;
-         output->dependencies[dependency] = resolved;
       }
    }
 
@@ -273,7 +257,7 @@ int elf_load_task_list(const char *path, Arena *arena, Task_Array_Desc *result)
    {
       char error[sizeof(result->error)];
       memcpy(error, result->error, sizeof(error));
-      arena_restore(arena, arena_start);
+      bob_destroy(result->bob);
       memset(result, 0, sizeof(*result));
       memcpy(result->error, error, sizeof(error));
    }

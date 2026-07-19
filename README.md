@@ -1,6 +1,6 @@
 ###    Are you frustrated with your build system?
 
-		  Bob Builds, Bob is Simple. It's just Bob.
+                    Bob, Builds.
 
 			     - For the C Programmer -
 
