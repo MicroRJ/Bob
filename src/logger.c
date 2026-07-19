@@ -41,11 +41,7 @@ void logger_set_verbosity(i32 verbosity) {
 	logger.verbosity = verbosity;
 }
 
-i32 logger_get_verbosity(void) {
-	return logger.verbosity;
-}
-
-b32 logger_has_verbosity(i32 verbosity) {
+static b32 logger_has_verbosity(i32 verbosity) {
 	return logger.verbosity >= verbosity;
 }
 
@@ -85,4 +81,62 @@ void logger_log(Log_Level level, const char *tag, const char *format, ...)
    va_start(arguments, format);
    logger_logv(level, tag, format, arguments);
    va_end(arguments);
+}
+
+void logger_log_at(i32 verbosity, Log_Level level, const char *tag, const char *format, ...)
+{
+	va_list arguments;
+	if (!logger_has_verbosity(verbosity)) return;
+	va_start(arguments, format);
+	logger_logv(level, tag, format, arguments);
+	va_end(arguments);
+}
+
+static void logger_append_output(Arena *arena, String input)
+{
+	u64 start = 0;
+	for (u64 i = 0; i + 1 < input.size; ++i) {
+		if (input.data[i] == '\r' && input.data[i + 1] == '\n') {
+			arena_append_str(arena, string_slice(input, start, i - start));
+			start = i + 1;
+		}
+	}
+	arena_append_str(arena, string_slice(input, start, input.size - start));
+}
+
+void logger_log_string(Log_Level level, const char *tag, String input)
+{
+	Scratch scratch;
+	char *start;
+	String message;
+	FILE *stream;
+	b32 colors;
+
+	if (level < logger.minimum_level) return;
+	stream = level >= LOG_LEVEL_WARNING ? stderr : stdout;
+	platform_output_lock();
+	scratch = begin_scratch();
+	start = arena_top(scratch.arena);
+	colors = logger.colors &&
+		platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
+	if (colors) arena_append_text(scratch.arena, level_color(level));
+	arena_appendf(scratch.arena, "[%s]", tag);
+	if (colors) arena_append_text(scratch.arena, "\x1b[0m");
+	arena_append_char(scratch.arena, ' ');
+	logger_append_output(scratch.arena, input);
+	if (input.size == 0 || input.data[input.size - 1] != '\n') {
+		arena_append_char(scratch.arena, '\n');
+	}
+	message = arena_string_from(scratch.arena, start);
+	arena_finalize_string(scratch.arena, message);
+	fwrite(message.data, 1, (size_t)message.size, stream);
+	fflush(stream);
+	end_scratch(scratch);
+	platform_output_unlock();
+}
+
+void logger_log_string_at(i32 verbosity, Log_Level level, const char *tag, String message)
+{
+	if (!logger_has_verbosity(verbosity)) return;
+	logger_log_string(level, tag, message);
 }

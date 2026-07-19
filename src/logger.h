@@ -17,10 +17,11 @@ void logger_init(void);
 void logger_set_minimum_level(Log_Level level);
 void logger_set_colors(b32 enabled);
 void logger_set_verbosity(i32 verbosity);
-i32 logger_get_verbosity(void);
-b32 logger_has_verbosity(i32 verbosity);
 void logger_logv(Log_Level level, const char *tag, const char *format, va_list arguments);
 void logger_log(Log_Level level, const char *tag, const char *format, ...);
+void logger_log_string(Log_Level level, const char *tag, String message);
+void logger_log_at(i32 verbosity, Log_Level level, const char *tag, const char *format, ...);
+void logger_log_string_at(i32 verbosity, Log_Level level, const char *tag, String message);
 
 #define log_trace(...)   logger_log(LOG_LEVEL_TRACE,   "trace",   __VA_ARGS__)
 #define log_info(...)    logger_log(LOG_LEVEL_INFO,    "info",    __VA_ARGS__)

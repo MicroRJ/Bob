@@ -7,7 +7,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -258,13 +257,8 @@ b32 executor_run(Graph *graph, u32 worker_count)
             profile_scope_end(&scope);
             if (!needs_rebuild)
             {
-               if (logger_has_verbosity(0))
-               {
-                  logger_log(LOG_LEVEL_INFO, "up-to-date", "%s", graph_node_name(graph, node));
-                  if (logger_has_verbosity(1)) {
-                     printf("  command: %s\n", task->command_line);
-                  }
-               }
+				logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s", graph_node_name(graph, node));
+				logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", task->command_line);
                if (graph_complete(graph, node, true) != GRAPH_OK) {
                   internal_error = true;
                   break;
@@ -303,46 +297,36 @@ b32 executor_run(Graph *graph, u32 worker_count)
          worker_index = wait_result - WAIT_OBJECT_0;
          worker = &workers[worker_index];
 
-         if (logger_has_verbosity(2) && worker->process.output.size > 0)
-         {
-            printf("[%s]\n", graph_node_name(graph, worker->node));
-            fwrite(worker->process.output.data, 1, (size_t)worker->process.output.size, stdout);
-            if (worker->process.output.data[worker->process.output.size - 1] != '\n') {
-               putchar('\n');
-            }
-         }
          succeeded = worker->process.error_code == 0 && worker->process.exit_code == 0;
-         if (logger_has_verbosity(0))
-         {
-            logger_log(
+		 if (worker->process.output.size > 0) {
+			logger_log_string_at(2, LOG_LEVEL_INFO, graph_node_name(graph, worker->node),
+				worker->process.output);
+		 }
+		 logger_log_at(0,
                succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR,
                succeeded ? "succeeded" : "failed",
                "%s",
                graph_node_name(graph, worker->node)
-            );
-            if (logger_has_verbosity(1) && succeeded) {
-               printf("  command: %s\n  exit code: 0\n", worker->command_line);
-            }
-         }
+		 );
+		 if (succeeded) {
+			logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", worker->command_line);
+			logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
+		 }
          if (worker->process.error_code != 0)
          {
             Scratch scratch = begin_scratch();
 
-            fprintf(
-               stderr,
-               "[%s] %s\n  command: %s\n  "
-               ,
-               graph_node_name(graph, worker->node),
-               worker->process.launched ? "process error" : "failed to start process",
-               worker->command_line
-            );
+			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node), "%s",
+				worker->process.launched ? "process error" : "failed to start process");
+			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line);
 
             {
 				String message;
 				if (platform_error_message(worker->process.error_code, scratch.arena, &message)) {
-					fprintf(stderr, "error %u: %s\n", worker->process.error_code, message.data);
+					logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s",
+						worker->process.error_code, message.data);
 				} else {
-					fprintf(stderr, "error %u\n", worker->process.error_code);
+					logger_log(LOG_LEVEL_ERROR, "os", "error %u", worker->process.error_code);
 				}
 			}
 
@@ -350,36 +334,26 @@ b32 executor_run(Graph *graph, u32 worker_count)
             if (executable.data)
             {
                b32 executable_resolves = platform_executable_resolves(executable);
-               fprintf(
-                  stderr,
-                  "  executable: %s (%s)\n",
-                  executable.data
-                  ,
-                  executable_resolves ? "found" : "not found in current directory or PATH"
-               );
+				logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data,
+					executable_resolves ? "found" : "not found in current directory or PATH");
             }
             else {
-               fprintf(stderr, "  executable: unable to parse from command\n");
+				logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
             }
 
             String working_directory;
             b32 has_working_directory = platform_current_directory(scratch.arena, &working_directory);
 
             if (has_working_directory) {
-               fprintf(stderr, "  working directory: %s\n", working_directory.data);
+				logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
             }
             end_scratch(scratch);
          }
          else if (worker->process.exit_code != 0)
          {
-            fprintf(
-               stderr,
-               "[%s] process exited with code %u\n  command: %s\n"
-               ,
-               graph_node_name(graph, worker->node),
-               worker->process.exit_code,
-               worker->command_line
-            );
+			logger_log(LOG_LEVEL_ERROR, graph_node_name(graph, worker->node),
+				"process exited with code %u", worker->process.exit_code);
+			logger_log(LOG_LEVEL_ERROR, "command", "%s", worker->command_line);
          }
 
          if (graph_complete(graph, worker->node, succeeded) != GRAPH_OK) {

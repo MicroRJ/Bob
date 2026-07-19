@@ -24,8 +24,10 @@ b32 platform_file_info(String path, Platform_File_Info *info)
    WIN32_FILE_ATTRIBUTE_DATA attributes;
    ULARGE_INTEGER write_time;
 
-	if (!string_is_terminated(path) || !info ||
-		!GetFileAttributesExA(path.data, GetFileExInfoStandard, &attributes)) {
+	if (!string_is_terminated(path) || !info) {
+		return false;
+	}
+	if (!GetFileAttributesExA(path.data, GetFileExInfoStandard, &attributes)) {
       return false;
    }
 
