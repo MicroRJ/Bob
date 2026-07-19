@@ -311,6 +311,36 @@ String_Array string_split_block(Arena *arena, String string)
 	return result;
 }
 
+b32 string_split_first(String string, char separator, String *left, String *right)
+{
+	if (!left || !right) return false;
+	for (u64 i = 0; i < string.size; ++i) {
+		if (string.data[i] == separator) {
+			*left = string_slice(string, 0, i);
+			*right = string_slice(string, i + 1, string.size - i - 1);
+			return true;
+		}
+	}
+	*left = (String){0};
+	*right = (String){0};
+	return false;
+}
+
+static b32 ascii_is_whitespace(char character)
+{
+	return character == ' ' || character == '\t' || character == '\r' ||
+		character == '\n' || character == '\v' || character == '\f';
+}
+
+String string_trim_whitespace(String string)
+{
+	u64 start = 0;
+	u64 end = string.size;
+	while (start < end && ascii_is_whitespace(string.data[start])) ++start;
+	while (end > start && ascii_is_whitespace(string.data[end - 1])) --end;
+	return string_slice(string, start, end - start);
+}
+
 String arena_push_string_copy(Arena *arena, String string)
 {
 	char *data = arena_push(arena, string.size + 1);

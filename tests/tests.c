@@ -148,6 +148,17 @@ static b32 test_arena_and_strings(void)
 		CHECK(string_equal(entries.items[0], STRING_LITERAL("one")));
 		CHECK(string_equal(entries.items[1], STRING_LITERAL("two")));
 	}
+	{
+		String left;
+		String right;
+		CHECK(string_split_first(STRING_LITERAL("NAME=a=b"), '=', &left, &right));
+		CHECK(string_equal(left, STRING_LITERAL("NAME")));
+		CHECK(string_equal(right, STRING_LITERAL("a=b")));
+		CHECK(!string_split_first(STRING_LITERAL("NAME"), '=', &left, &right));
+		CHECK(string_equal(
+			string_trim_whitespace(STRING_LITERAL(" \t value \r\n")),
+			STRING_LITERAL("value")));
+	}
 
     CHECK(arena_push(&arena, 1) != NULL);
     aligned = arena_push_zero_aligned(&arena, 32, 32);

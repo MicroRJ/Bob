@@ -39,71 +39,31 @@ typedef i32 b32;
 #define GIGABYTES(value) ((u64)(value) << 30)
 
 typedef struct Arena {
-    u64 capacity;
-    u64 committed;
-    u64 used;
-    u8 *data;
+	u64 capacity;
+	u64 committed;
+	u64 used;
+	u8 *data;
 } Arena;
 
 typedef struct Scratch {
-    Arena *arena;
-    u64 restore_used;
+	Arena *arena;
+	u64 restore_used;
 } Scratch;
 
 typedef struct String {
-    union {
-        char *data;
-        char *text;
-    };
-    u64 size;
+	union {
+		char *data;
+		char *text;
+	};
+	u64 size;
 } String;
 
 typedef struct String_Array {
-    String *items;
-    u32 count;
+	String *items;
+	u32 count;
 } String_Array;
 
 #define STRING_LITERAL(text) ((String){ .data = (char *)(text), .size = sizeof(text) - 1 })
-
-/* Keep source-level names terse while avoiding collisions with embedded libraries. */
-#define global_scratch_arena bob_global_scratch_arena
-#define arena_create bob_arena_create
-#define arena_destroy bob_arena_destroy
-#define arena_reset bob_arena_reset
-#define arena_mark bob_arena_mark
-#define arena_restore bob_arena_restore
-#define arena_top bob_arena_top
-#define arena_reserve bob_arena_reserve
-#define arena_reserve_aligned bob_arena_reserve_aligned
-#define arena_push bob_arena_push
-#define arena_push_aligned bob_arena_push_aligned
-#define arena_push_zero bob_arena_push_zero
-#define arena_push_zero_aligned bob_arena_push_zero_aligned
-#define arena_push_copy bob_arena_push_copy
-#define arena_push_copy_aligned bob_arena_push_copy_aligned
-#define arena_push_data bob_arena_push_data
-#define arena_append_text bob_arena_append_text
-#define arena_append_str bob_arena_append_str
-#define arena_append_char bob_arena_append_char
-#define arena_push_repeat bob_arena_push_repeat
-#define arena_appendfv bob_arena_appendfv
-#define arena_appendf bob_arena_appendf
-#define arena_string_from bob_arena_string_from
-#define arena_finalize_string bob_arena_finalize_string
-#define get_scratch bob_get_scratch
-#define end_scratch bob_end_scratch
-#define destroy_global_scratch bob_destroy_global_scratch
-#define string_from_data bob_string_from_data
-#define string_from_range bob_string_from_range
-#define string_from_cstring bob_string_from_cstring
-#define string_is_terminated bob_string_is_terminated
-#define string_equal bob_string_equal
-#define string_slice bob_string_slice
-#define string_split bob_string_split
-#define string_split_lines bob_string_split_lines
-#define string_split_block bob_string_split_block
-#define arena_push_string_copy bob_arena_push_string_copy
-#define arena_push_cstring bob_arena_push_cstring
 
 extern THREAD_LOCAL Arena global_scratch_arena;
 
@@ -144,6 +104,8 @@ String string_slice(String string, u64 offset, u64 size);
 String_Array string_split(Arena *arena, String string, char separator);
 String_Array string_split_lines(Arena *arena, String string);
 String_Array string_split_block(Arena *arena, String string);
+b32 string_split_first(String string, char separator, String *left, String *right);
+String string_trim_whitespace(String string);
 String arena_push_string_copy(Arena *arena, String string);
 String arena_push_cstring(Arena *arena, const char *text);
 b32 string_equal_insensitive(String left, String right);

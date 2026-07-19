@@ -44,15 +44,12 @@ typedef struct Env_Diff_Table
 
 static b32 parse_var(String line, Env_Entry *entry)
 {
-	u64 separator;
-	if (line.size && line.data[line.size - 1] == '\r') { --line.size; }
+	String name;
+	String value;
 	if (line.size == 0 || line.data[0] == '=') return false;
-	for (separator = 0; separator < line.size; ++separator) {
-		if (line.data[separator] == '=') { break; }
-	}
-	if (separator == 0 || separator == line.size) return false;
-	entry->name = string_slice(line, 0, separator);
-	entry->value = string_slice(line, separator + 1, line.size - separator - 1);
+	if (!string_split_first(line, '=', &name, &value) || name.size == 0) return false;
+	entry->name = name;
+	entry->value = value;
 	return true;
 }
 
