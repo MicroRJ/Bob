@@ -22,6 +22,11 @@ typedef struct Platform_Process_Options {
 	b32 hide_window;
 } Platform_Process_Options;
 
+typedef struct Platform_Thread Platform_Thread;
+typedef struct Platform_Mutex Platform_Mutex;
+typedef struct Platform_Condition Platform_Condition;
+typedef u32 Platform_Thread_Function(void *data);
+
 b32 platform_file_info(String path, Platform_File_Info *info);
 b32 platform_current_directory(Arena *arena, String *result);
 b32 platform_absolute_path(Arena *arena, String path, String *result);
@@ -44,5 +49,17 @@ void platform_enable_console_colors(void);
 b32 platform_console_supports_colors(b32 error_stream);
 void platform_output_lock(void);
 void platform_output_unlock(void);
+Platform_Thread *platform_thread_create(Platform_Thread_Function *function, void *data);
+b32 platform_thread_join(Platform_Thread *thread);
+void platform_thread_destroy(Platform_Thread *thread);
+Platform_Mutex *platform_mutex_create(void);
+void platform_mutex_destroy(Platform_Mutex *mutex);
+void platform_mutex_lock(Platform_Mutex *mutex);
+void platform_mutex_unlock(Platform_Mutex *mutex);
+Platform_Condition *platform_condition_create(void);
+void platform_condition_destroy(Platform_Condition *condition);
+b32 platform_condition_wait(Platform_Condition *condition, Platform_Mutex *mutex);
+void platform_condition_signal(Platform_Condition *condition);
+void platform_condition_broadcast(Platform_Condition *condition);
 
 #endif

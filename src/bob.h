@@ -5,6 +5,9 @@
 
 typedef u32 Node_Id;
 
+typedef struct Platform_Mutex Platform_Mutex;
+typedef struct Platform_Condition Platform_Condition;
+
 #define BOB_INVALID_TASK UINT32_MAX
 
 typedef enum Bob_Error
@@ -52,13 +55,19 @@ Bob_Id_Array;
 
 typedef struct Bob_Node
 {
-   Bob_Task       task;
    Bob_Id_Array   dependencies;
    Bob_Id_Array   dependents;
    u32            unfinished_dependencies;
+   Bob_Task       task;
    Bob_Task_State state;
 }
 Bob_Node;
+
+typedef struct Bob_Task_Runtime
+{
+   b32 rebuilt;
+}
+Bob_Task_Runtime;
 
 typedef struct Bob
 {
@@ -72,6 +81,15 @@ typedef struct Bob
    u32       terminal_count;
    b32       prepared;
    b32       failed;
+   Bob_Task_Runtime *runtime;
+   Node_Id          *work;
+   u32               work_count;
+   u32              *completions;
+   u32               completion_count;
+   Platform_Mutex   *mutex;
+   Platform_Condition *work_available;
+   Platform_Condition *completion_available;
+   b32               stopping;
 }
 Bob;
 
@@ -94,11 +112,13 @@ Bob_Build;
 
 Bob *bob_create(void);
 void bob_destroy(Bob *bob);
+Bob_Error bob_prepare(Bob *bob);
+b32 bob_build(Bob *bob, u32 worker_count);
+
+b32 bob_take_ready(Bob *bob, Node_Id *node_out);
 Bob_Error bob_add_task(Bob *bob, Bob_Task task, Node_Id *node_out);
 Bob_Error bob_set_task(Bob *bob, Node_Id node, Bob_Task task);
 Bob_Error bob_add_dependency(Bob *bob, Node_Id node, Node_Id dependency);
-Bob_Error bob_prepare(Bob *bob);
-b32 bob_take_ready(Bob *bob, Node_Id *node_out);
 Bob_Error bob_complete(Bob *bob, Node_Id node, b32 succeeded);
 b32 bob_is_finished(const Bob *bob);
 b32 bob_has_failed(const Bob *bob);
@@ -109,6 +129,5 @@ const Bob_Task *bob_get_task(const Bob *bob, Node_Id node);
 u32 bob_dependency_count(const Bob *bob, Node_Id node);
 Node_Id bob_dependency(const Bob *bob, Node_Id node, u32 index);
 const char *bob_error_string(Bob_Error result);
-b32 bob_build(Bob *bob, u32 worker_count);
 
 #endif
