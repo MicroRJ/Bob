@@ -1,20 +1,18 @@
-## Bob, the Builder
+## Bob
 						 (UNRELEASED)
 
-Frustrated With Build Systems? Here's Bob, the Builder.
+Are you frustrated with build systems?
 
-It works by running an 'elf' script, which is a real programming language
-and not a crappy DSL.
+Here's Bob, he Builds.
 
-If none is given it looks for build.elf.
-
-The script returns a table of tasks.
-
-Then Bob does the rest.
-
-It's Simple - It's For C - It's Bob, the Builder.
+He is Simple - It's For the C Programmer - It's just Bob.
 
 ```elf
+
+options := {
+	workers = 4
+	verbosity = 0
+}
 
 compile := {
 	name = "compile"
@@ -31,32 +29,44 @@ link := {
 	dependencies = {compile}
 }
 
+tasks := {compile, link}
+
 ret {
-	tasks = {compile, link}
+	options = options
+	tasks = tasks
 }
 
 ```
 
-I've used some build systems in the past, from scripts, to large production
-tools. Now granted, am not all too familiar with them, mostly from the outset
-I despised them.
+It works by running an 'elf' script. Looks for 'build.elf' by default.
+
+The script returns a table with tasks, and options.
+
+Then Bob builds it.
+
+
+## Rant
+
+I despise build systems, especially the "good" ones.
 
 They all have problems, and little to no redeeming qualities.
 
 A) They use an ugly, crappy, inconsistent DSL with no power.
 B) They are bloated, hard to understand and obscure.
-C) If it's a build script, I have to do everything myself, and what C developer wants to use Python.
+C) If it's just some random script, I have to do everything myself, and what C developer
+wants to use Python.
 
-Bob, is Simple.
+Bob is Simple.
 
-It has a normal, C like programming freaking language.
-Similar in spirit to Lua but actually straightforward.
+It uses a normal, minimal, general purpose, C like programming
+freaking language.
 
 All the script does is return a table of tasks.
-You can generate the table however you want.
 
-Bob, takes the table, loads the tasks, builds a graph and executes it.
+Generate the table however you want.
 
-That's ... Freaking ... It ...
+Bob, takes the table, loads the tasks, builds a graph and, builds it.
 
-It's Bob, the Builder.
+That's [clap] Freaking [clap] It [clap]
+
+It's just Bob.
