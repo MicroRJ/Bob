@@ -5,6 +5,7 @@
 #include "profiler.h"
 #include "script.h"
 #include "vcvars_cache.h"
+#include "elf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -153,6 +154,7 @@ int main(int argument_count, char **arguments)
       else if (strcmp(arguments[argument_index], "--version") == 0)
       {
          printf("bob %s\n", BOB_VERSION);
+			printf("elf %s\n", elf_version());
          return 0;
       }
       else if (arguments[argument_index][0] != '-')
