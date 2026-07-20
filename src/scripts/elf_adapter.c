@@ -188,6 +188,32 @@ ELF_FUNCTION(l_fs_list)
 	}
 
 	Scratch scratch = begin_different_scratch(script->arena);
+	value = elf_get_field(S, table, "patterns");
+	if (value.type != ELF_VALUE_TYPE_NIL)
+	{
+		if (options.pattern.data) {
+			end_scratch(scratch);
+			binding_error(S, script, "bob.fs.list accepts either 'pattern' or 'patterns', not both");
+			return 1;
+		}
+		if (value.type != ELF_VALUE_TYPE_TABLE) {
+			end_scratch(scratch);
+			binding_error(S, script, "bob.fs.list option 'patterns' must be a table of strings");
+			return 1;
+		}
+		options.has_patterns = true;
+		options.patterns.count = elf_table_length(value.as.table);
+		options.patterns.items = arena_push_zero_aligned(scratch.arena, options.patterns.count * sizeof(String), _Alignof(String));
+		for (u32 index = 0; index < options.patterns.count; ++index)
+		{
+			options.patterns.items[index] = value_string(elf_get_index(S, value.as.table, index));
+			if (!options.patterns.items[index].data) {
+				end_scratch(scratch);
+				binding_error(S, script, "bob.fs.list option 'patterns' must contain only strings");
+				return 1;
+			}
+		}
+	}
 	String_Array paths;
 	if (!script_list_paths(scratch.arena, options, &paths))
 	{

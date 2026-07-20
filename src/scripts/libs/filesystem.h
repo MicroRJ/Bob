@@ -14,9 +14,11 @@ typedef struct Script_List_Paths_Options
 {
 	String root;
 	String pattern;
+	String_Array patterns;
 	Script_Path_Kind kind;
 	b32 recursive;
 	b32 relative;
+	b32 has_patterns;
 } Script_List_Paths_Options;
 
 b32 script_list_paths(Arena *arena, Script_List_Paths_Options options, String_Array *result);

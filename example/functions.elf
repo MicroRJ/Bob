@@ -7,10 +7,10 @@ elf.assert(bob.fs.is_directory("src/scripts"), "bob.fs.is_directory did not reco
 
 library_sources := bob.fs.list({
 	root = "src/scripts/libs",
-	pattern = "*.c",
+	patterns = { "*.c", "*.h" },
 	relative = true,
 })
-elf.assert(library_sources:length() == 3, "bob.fs.list returned the wrong number of sources")
+elf.assert(library_sources:length() == 6, "bob.fs.list returned the wrong number of sources")
 elf.assert(library_sources[0] == "filesystem.c", "bob.fs.list is not sorted")
 
 recursive_sources := bob.fs.list({

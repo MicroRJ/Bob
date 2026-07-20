@@ -48,6 +48,15 @@ static b32 kind_matches(Script_Path_Kind kind, b32 is_directory)
 	return !is_directory;
 }
 
+static b32 pattern_matches(Script_List_Paths_Options options, String path)
+{
+	if (!options.has_patterns) return glob_match(path, options.pattern);
+	for (u32 index = 0; index < options.patterns.count; ++index) {
+		if (glob_match(path, options.patterns.items[index])) return true;
+	}
+	return false;
+}
+
 static b32 list_directory(List_Context *context, String relative)
 {
 	String directory = relative.size ? script_path_join(context->arena, context->options.root, relative) : context->options.root;
@@ -58,7 +67,7 @@ static b32 list_directory(List_Context *context, String relative)
 	{
 		Platform_Directory_Entry entry = entries.items[index];
 		String entry_relative = relative.size ? script_path_join(context->arena, relative, entry.name) : arena_push_string_copy(context->arena, entry.name);
-		if (kind_matches(context->options.kind, entry.is_directory) && glob_match(entry_relative, context->options.pattern))
+		if (kind_matches(context->options.kind, entry.is_directory) && pattern_matches(context->options, entry_relative))
 		{
 			Path_Node *node = arena_push_zero_aligned(context->arena, sizeof(*node), _Alignof(Path_Node));
 			node->path = context->options.relative ? entry_relative : script_path_join(context->arena, context->options.root, entry_relative);
@@ -86,7 +95,7 @@ static int compare_paths(const void *left, const void *right)
 b32 script_list_paths(Arena *arena, Script_List_Paths_Options options, String_Array *result)
 {
 	if (!options.root.size) options.root = STRING_LITERAL(".");
-	if (!options.pattern.size) options.pattern = STRING_LITERAL("*");
+	if (!options.has_patterns && !options.pattern.size) options.pattern = STRING_LITERAL("*");
 	Scratch scratch = begin_different_scratch(arena);
 	List_Context context = { .arena = scratch.arena, .options = options };
 	if (!list_directory(&context, (String){0})) {
