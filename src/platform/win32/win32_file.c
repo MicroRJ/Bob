@@ -22,6 +22,7 @@ b32 platform_file_info(String path, Platform_File_Info *info)
 	write_time.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
 	info->write_time = write_time.QuadPart;
 	info->is_directory = (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	info->is_symbolic_link = (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 	return true;
 }
 
@@ -208,9 +209,77 @@ b32 platform_write_entire_file(String path, const void *data, size_t size)
 	return true;
 }
 
+b32 platform_copy_file(String source, String destination, b32 overwrite)
+{
+	if (!string_is_terminated(source) || !string_is_terminated(destination)) return false;
+	return CopyFileA(source.data, destination.data, !overwrite) != 0;
+}
+
+b32 platform_move_file(String source, String destination, b32 overwrite)
+{
+	if (!string_is_terminated(source) || !string_is_terminated(destination)) return false;
+	DWORD flags = MOVEFILE_COPY_ALLOWED;
+	if (overwrite) flags |= MOVEFILE_REPLACE_EXISTING;
+	return MoveFileExA(source.data, destination.data, flags) != 0;
+}
+
+b32 platform_remove_file(String path)
+{
+	if (!string_is_terminated(path)) return false;
+	if (DeleteFileA(path.data)) return true;
+	DWORD error = GetLastError();
+	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
+b32 platform_remove_directory(String path)
+{
+	if (!string_is_terminated(path)) return false;
+	if (RemoveDirectoryA(path.data)) return true;
+	DWORD error = GetLastError();
+	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
 b32 platform_create_directory(String path)
 {
 	if (!string_is_terminated(path)) return false;
 	if (CreateDirectoryA(path.data, NULL)) return true;
 	return GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+static b32 create_directory_prefix(Arena *arena, String path, u64 size)
+{
+	u64 mark = arena_mark(arena);
+	String prefix = arena_push_string_copy(arena, string_slice(path, 0, size));
+	b32 result = platform_create_directory(prefix);
+	arena_restore(arena, mark);
+	return result;
+}
+
+b32 platform_create_directories(String path)
+{
+	if (!string_is_terminated(path)) return false;
+	Scratch scratch = begin_scratch();
+	u64 root = 0;
+	if (path.size >= 2 && path.data[1] == ':') root = 2;
+	else if (path.size && (path.data[0] == '/' || path.data[0] == '\\')) root = 1;
+	if (path.size >= 2 && (path.data[0] == '/' || path.data[0] == '\\') && (path.data[1] == '/' || path.data[1] == '\\'))
+	{
+		root = 2;
+		u32 components = 0;
+		while (root < path.size && components < 2) {
+			if (path.data[root] == '/' || path.data[root] == '\\') ++components;
+			++root;
+		}
+	}
+	for (u64 index = root; index < path.size; ++index)
+	{
+		if (path.data[index] != '/' && path.data[index] != '\\') continue;
+		if (index > root && !create_directory_prefix(scratch.arena, path, index)) {
+			end_scratch(scratch);
+			return false;
+		}
+	}
+	b32 result = platform_create_directory(path);
+	end_scratch(scratch);
+	return result;
 }

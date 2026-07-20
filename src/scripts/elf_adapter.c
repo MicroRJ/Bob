@@ -24,7 +24,16 @@ static ELF_FUNCTION(l_fs_list);
 static ELF_FUNCTION(l_fs_exists);
 static ELF_FUNCTION(l_fs_is_file);
 static ELF_FUNCTION(l_fs_is_directory);
+static ELF_FUNCTION(l_fs_copy_file);
+static ELF_FUNCTION(l_fs_move_file);
+static ELF_FUNCTION(l_fs_remove);
+static ELF_FUNCTION(l_fs_create_directory);
+static ELF_FUNCTION(l_fs_write_file);
 static ELF_FUNCTION(l_path_join);
+static ELF_FUNCTION(l_env_get);
+static ELF_FUNCTION(l_env_has);
+static ELF_FUNCTION(l_env_set);
+static ELF_FUNCTION(l_env_unset);
 
 ELF_FUNCTION(l_bob_build)
 {
@@ -55,15 +64,33 @@ ELF_FUNCTION(l_bob_build)
 	return 1;
 }
 
+ELF_FUNCTION(l_bob_version)
+{
+	(void)nargs;
+	(void)nrets;
+	elf_push_cstr(S, BOB_VERSION);
+	return 1;
+}
+
 static const elf_Binding bob_bindings[] =
 {
 	{ "build",            l_bob_build },
+	{ "_version",         l_bob_version },
 	{ "_strings_expand",  l_strings_expand },
 	{ "_fs_list",         l_fs_list },
 	{ "_fs_exists",       l_fs_exists },
 	{ "_fs_is_file",      l_fs_is_file },
 	{ "_fs_is_directory", l_fs_is_directory },
+	{ "_fs_copy_file",    l_fs_copy_file },
+	{ "_fs_move_file",    l_fs_move_file },
+	{ "_fs_remove",       l_fs_remove },
+	{ "_fs_create_directory", l_fs_create_directory },
+	{ "_fs_write_file",    l_fs_write_file },
 	{ "_path_join",       l_path_join },
+	{ "_env_get",         l_env_get },
+	{ "_env_has",         l_env_has },
+	{ "_env_set",         l_env_set },
+	{ "_env_unset",       l_env_unset },
 };
 
 ELF_FUNCTION(l_strings_expand)
@@ -309,15 +336,305 @@ ELF_FUNCTION(l_path_join)
 	return 1;
 }
 
+static int transfer_file(elf_State *state, int nargs, b32 move)
+{
+	Script *script = elf_get_user_data(state);
+	if (nargs < 2) {
+		binding_error(state, script, move ? "bob.fs.move_file expects arguments" : "bob.fs.copy_file expects arguments");
+		return 1;
+	}
+	String source = {0};
+	String destination = {0};
+	b32 overwrite = true;
+	if (elf_arg_type(state, 1) == ELF_VALUE_TYPE_TABLE)
+	{
+		if (nargs != 2) {
+			binding_error(state, script, move ? "bob.fs.move_file options must be passed in one table" : "bob.fs.copy_file options must be passed in one table");
+			return 1;
+		}
+		elf_Table *table = elf_arg_table(state, 1);
+		source = value_string(elf_get_field(state, table, "from"));
+		destination = value_string(elf_get_field(state, table, "to"));
+		elf_ValueView value = elf_get_field(state, table, "overwrite");
+		if (value.type != ELF_VALUE_TYPE_NIL) {
+			if (value.type != ELF_VALUE_TYPE_INTEGER) {
+				binding_error(state, script, "filesystem option 'overwrite' must be a boolean");
+				return 1;
+			}
+			overwrite = value.as.integer != 0;
+		}
+	}
+	else
+	{
+		if ((nargs != 3 && nargs != 4) || elf_arg_type(state, 1) != ELF_VALUE_TYPE_STRING || elf_arg_type(state, 2) != ELF_VALUE_TYPE_STRING || (nargs == 4 && elf_arg_type(state, 3) != ELF_VALUE_TYPE_INTEGER))
+		{
+			binding_error(state, script, move ? "bob.fs.move_file expects (from, to, overwrite?)" : "bob.fs.copy_file expects (from, to, overwrite?)");
+			return 1;
+		}
+		elf_String *source_value = elf_arg_str(state, 1);
+		elf_String *destination_value = elf_arg_str(state, 2);
+		source = string_from_data((void *)elf_str_data(source_value), elf_str_size(source_value));
+		destination = string_from_data((void *)elf_str_data(destination_value), elf_str_size(destination_value));
+		if (nargs == 4) overwrite = elf_arg_int(state, 3) != 0;
+	}
+	if (!source.data || !destination.data) {
+		binding_error(state, script, move ? "bob.fs.move_file requires 'from' and 'to' strings" : "bob.fs.copy_file requires 'from' and 'to' strings");
+		return 1;
+	}
+	Scratch scratch = begin_different_scratch(script->arena);
+	source = arena_push_string_copy(scratch.arena, source);
+	destination = arena_push_string_copy(scratch.arena, destination);
+	b32 result = move ? platform_move_file(source, destination, overwrite) : platform_copy_file(source, destination, overwrite);
+	elf_push_int(state, result);
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_fs_copy_file)
+{
+	(void)nrets;
+	return transfer_file(S, nargs, false);
+}
+
+ELF_FUNCTION(l_fs_move_file)
+{
+	(void)nrets;
+	return transfer_file(S, nargs, true);
+}
+
+ELF_FUNCTION(l_fs_remove)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	String path = {0};
+	b32 recursive = false;
+	if (nargs < 2) {
+		binding_error(S, script, "bob.fs.remove expects arguments");
+		return 1;
+	}
+	if (elf_arg_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	{
+		if (nargs != 2) {
+			binding_error(S, script, "bob.fs.remove options must be passed in one table");
+			return 1;
+		}
+		elf_Table *table = elf_arg_table(S, 1);
+		path = value_string(elf_get_field(S, table, "path"));
+		elf_ValueView value = elf_get_field(S, table, "recursive");
+		if (value.type != ELF_VALUE_TYPE_NIL) {
+			if (value.type != ELF_VALUE_TYPE_INTEGER) {
+				binding_error(S, script, "bob.fs.remove option 'recursive' must be a boolean");
+				return 1;
+			}
+			recursive = value.as.integer != 0;
+		}
+	}
+	else
+	{
+		if ((nargs != 2 && nargs != 3) || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_arg_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
+		{
+			binding_error(S, script, "bob.fs.remove expects (path, recursive?)");
+			return 1;
+		}
+		elf_String *path_value = elf_arg_str(S, 1);
+		path = string_from_data((void *)elf_str_data(path_value), elf_str_size(path_value));
+		if (nargs == 3) recursive = elf_arg_int(S, 2) != 0;
+	}
+	if (!path.data) {
+		binding_error(S, script, "bob.fs.remove requires a path string");
+		return 1;
+	}
+	Scratch scratch = begin_different_scratch(script->arena);
+	path = arena_push_string_copy(scratch.arena, path);
+	elf_push_int(S, script_remove_path(scratch.arena, path, recursive));
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_fs_create_directory)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	String path = {0};
+	b32 recursive = false;
+	if (nargs < 2) {
+		binding_error(S, script, "bob.fs.create_directory expects arguments");
+		return 1;
+	}
+	if (elf_arg_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	{
+		if (nargs != 2) {
+			binding_error(S, script, "bob.fs.create_directory options must be passed in one table");
+			return 1;
+		}
+		elf_Table *table = elf_arg_table(S, 1);
+		path = value_string(elf_get_field(S, table, "path"));
+		elf_ValueView value = elf_get_field(S, table, "recursive");
+		if (value.type != ELF_VALUE_TYPE_NIL) {
+			if (value.type != ELF_VALUE_TYPE_INTEGER) {
+				binding_error(S, script, "bob.fs.create_directory option 'recursive' must be a boolean");
+				return 1;
+			}
+			recursive = value.as.integer != 0;
+		}
+	}
+	else
+	{
+		if ((nargs != 2 && nargs != 3) || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_arg_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
+		{
+			binding_error(S, script, "bob.fs.create_directory expects (path, recursive?)");
+			return 1;
+		}
+		elf_String *path_value = elf_arg_str(S, 1);
+		path = string_from_data((void *)elf_str_data(path_value), elf_str_size(path_value));
+		if (nargs == 3) recursive = elf_arg_int(S, 2) != 0;
+	}
+	if (!path.data) {
+		binding_error(S, script, "bob.fs.create_directory requires a path string");
+		return 1;
+	}
+	Scratch scratch = begin_different_scratch(script->arena);
+	path = arena_push_string_copy(scratch.arena, path);
+	b32 result = recursive ? platform_create_directories(path) : platform_create_directory(path);
+	elf_push_int(S, result);
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_fs_write_file)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	String path = {0};
+	String contents = {0};
+	if (nargs < 2) {
+		binding_error(S, script, "bob.fs.write_file expects arguments");
+		return 1;
+	}
+	if (elf_arg_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	{
+		if (nargs != 2) {
+			binding_error(S, script, "bob.fs.write_file options must be passed in one table");
+			return 1;
+		}
+		elf_Table *table = elf_arg_table(S, 1);
+		path = value_string(elf_get_field(S, table, "path"));
+		contents = value_string(elf_get_field(S, table, "contents"));
+	}
+	else
+	{
+		if (nargs != 3 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_arg_type(S, 2) != ELF_VALUE_TYPE_STRING)
+		{
+			binding_error(S, script, "bob.fs.write_file expects (path, contents)");
+			return 1;
+		}
+		elf_String *path_value = elf_arg_str(S, 1);
+		elf_String *contents_value = elf_arg_str(S, 2);
+		path = string_from_data((void *)elf_str_data(path_value), elf_str_size(path_value));
+		contents = string_from_data((void *)elf_str_data(contents_value), elf_str_size(contents_value));
+	}
+	if (!path.data || !contents.data) {
+		binding_error(S, script, "bob.fs.write_file requires string fields 'path' and 'contents'");
+		return 1;
+	}
+	Scratch scratch = begin_different_scratch(script->arena);
+	path = arena_push_string_copy(scratch.arena, path);
+	elf_push_int(S, platform_write_entire_file(path, contents.data, (size_t)contents.size));
+	end_scratch(scratch);
+	return 1;
+}
+
+static int push_environment(elf_State *state, int nargs, b32 has_only)
+{
+	Script *script = elf_get_user_data(state);
+	if (nargs != 2 || elf_arg_type(state, 1) != ELF_VALUE_TYPE_STRING) {
+		binding_error(state, script, has_only ? "bob.env.has expects a variable name" : "bob.env.get expects a variable name");
+		return 1;
+	}
+	elf_String *name_value = elf_arg_str(state, 1);
+	Scratch scratch = begin_different_scratch(script->arena);
+	String name = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(name_value), elf_str_size(name_value)));
+	String value;
+	b32 read = platform_get_environment(name, scratch.arena, &value);
+	if (!read) {
+		end_scratch(scratch);
+		binding_error(state, script, "unable to read environment variable");
+		return 1;
+	}
+	if (has_only) elf_push_int(state, value.data != NULL);
+	else if (value.data) elf_push_str(state, value.data, (int)value.size);
+	else elf_push_nil(state);
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_env_get)
+{
+	(void)nrets;
+	return push_environment(S, nargs, false);
+}
+
+ELF_FUNCTION(l_env_has)
+{
+	(void)nrets;
+	return push_environment(S, nargs, true);
+}
+
+ELF_FUNCTION(l_env_set)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 3 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_arg_type(S, 2) != ELF_VALUE_TYPE_STRING) {
+		binding_error(S, script, "bob.env.set expects a variable name and value");
+		return 1;
+	}
+	elf_String *name_value = elf_arg_str(S, 1);
+	elf_String *environment_value = elf_arg_str(S, 2);
+	Scratch scratch = begin_different_scratch(script->arena);
+	String name = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(name_value), elf_str_size(name_value)));
+	String value = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(environment_value), elf_str_size(environment_value)));
+	elf_push_int(S, platform_set_environment(name, value));
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_env_unset)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 2 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING) {
+		binding_error(S, script, "bob.env.unset expects a variable name");
+		return 1;
+	}
+	elf_String *name_value = elf_arg_str(S, 1);
+	Scratch scratch = begin_different_scratch(script->arena);
+	String name = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(name_value), elf_str_size(name_value)));
+	elf_push_int(S, platform_set_environment(name, (String){0}));
+	end_scratch(scratch);
+	return 1;
+}
+
 static const char bob_library_source[] =
+	"bob.version = bob._version()\n"
 	"bob.strings = { expand = bob._strings_expand }\n"
 	"bob.fs = {\n"
 	"  list = fun(options) { ret bob._fs_list(options):lines() },\n"
 	"  exists = bob._fs_exists,\n"
 	"  is_file = bob._fs_is_file,\n"
 	"  is_directory = bob._fs_is_directory,\n"
+	"  copy_file = bob._fs_copy_file,\n"
+	"  move_file = bob._fs_move_file,\n"
+	"  remove = bob._fs_remove,\n"
+	"  create_directory = bob._fs_create_directory,\n"
+	"  write_file = bob._fs_write_file,\n"
 	"}\n"
-	"bob.path = { join = bob._path_join }\n";
+	"bob.path = { join = bob._path_join }\n"
+	"bob.env = {\n"
+	"  get = bob._env_get,\n"
+	"  has = bob._env_has,\n"
+	"  set = bob._env_set,\n"
+	"  unset = bob._env_unset,\n"
+	"}\n";
 
 static b32 is_function(elf_ValueView value)
 {

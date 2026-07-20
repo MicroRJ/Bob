@@ -41,7 +41,7 @@ prepare := {
 
 build_elf := {
 	name = "build Elf library",
-	command_line = "cmd /c \"cd /d elf && ..\\selfhost\\bob.exe build.elf lib\"",
+	command_line = "cmd /c \"cd /d elf && ..\\blessed\\bob.exe build.elf lib\"",
 	inputs = {},
 	outputs = {},
 	include_dirs = {},
@@ -146,6 +146,17 @@ entries.test = fun() {
 		options = options,
 	})
 }
+
+entries.bless = fun() {
+	elf.assert(bob.fs.exists("build/bob.exe"), "build/bob.exe does not exist; build Bob before blessing it")
+	archive_directory := f"blessed/archive/${bob.version}"
+	archive := bob.path.join(archive_directory, "bob.exe")
+	elf.assert(bob.fs.create_directory(archive_directory, true), "could not create the blessed archive directory")
+	elf.assert(bob.fs.copy_file("build/bob.exe", archive, true), "could not archive the new blessed Bob")
+	elf.assert(bob.fs.copy_file("build/bob.exe", "blessed/bob.exe", true), "could not update blessed/bob.exe; run bless using build/bob.exe")
+	elf.printl(f"Blessed Bob ${bob.version}; archived at ${archive}")
+}
+
 // NOTE(RJ) _DO_NOT_ actually remove this or the tests will fail
 entries.pet = fun() {
 	elf.printl("*purr*")

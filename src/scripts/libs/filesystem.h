@@ -22,5 +22,6 @@ typedef struct Script_List_Paths_Options
 } Script_List_Paths_Options;
 
 b32 script_list_paths(Arena *arena, Script_List_Paths_Options options, String_Array *result);
+b32 script_remove_path(Arena *arena, String path, b32 recursive);
 
 #endif

@@ -43,7 +43,33 @@ clean := fun() {
 	ret 1
 }
 
+environment := fun() {
+	name := "BOB_SCRIPT_ENV_TEST"
+	elf.assert(bob.env.unset(name), "bob.env.unset failed")
+	elf.assert(bob.env.has(name) == false, "bob.env.has found an unset variable")
+	elf.assert(bob.env.set(name, "value"), "bob.env.set failed")
+	elf.assert(bob.env.get(name) == "value", "bob.env.get returned the wrong value")
+	ret bob.env.unset(name)
+}
+
+filesystem := fun() {
+	root := "build/script_fs_test"
+	elf.assert(bob.fs.remove({ path = root, recursive = true }), "initial bob.fs.remove failed")
+	elf.assert(bob.fs.create_directory(root), "positional bob.fs.create_directory failed")
+	nested := bob.path.join(root, "nested/deep")
+	elf.assert(bob.fs.create_directory({ path = nested, recursive = true }), "named bob.fs.create_directory failed")
+	copy := bob.path.join(nested, "copy.h")
+	moved := bob.path.join(nested, "moved.h")
+	elf.assert(bob.fs.copy_file("src/base.h", copy), "positional bob.fs.copy_file failed")
+	elf.assert(bob.fs.move_file({ from = copy, to = moved }), "named bob.fs.move_file failed")
+	elf.assert(bob.fs.exists(copy) == false && bob.fs.is_file(moved), "bob.fs.move_file produced the wrong files")
+	elf.assert(bob.fs.remove(moved), "positional bob.fs.remove could not remove a file")
+	ret bob.fs.remove({ path = root, recursive = true })
+}
+
 ret {
 	build = build,
 	clean = clean,
+	environment = environment,
+	filesystem = filesystem,
 }

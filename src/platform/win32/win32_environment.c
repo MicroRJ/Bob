@@ -15,7 +15,10 @@ b32 platform_get_environment(String name, Arena *arena, String *value)
 	required = GetEnvironmentVariableA(name.data, NULL, 0);
 	if (required == 0) {
 		DWORD error = GetLastError();
-		return error == ERROR_SUCCESS || error == ERROR_ENVVAR_NOT_FOUND;
+		if (error == ERROR_ENVVAR_NOT_FOUND) return true;
+		if (error != ERROR_SUCCESS) return false;
+		*value = arena_push_string_copy(arena, (String){0});
+		return true;
 	}
 	data = arena_reserve(arena, required);
 	if (!data) return false;

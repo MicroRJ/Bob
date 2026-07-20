@@ -111,3 +111,28 @@ b32 script_list_paths(Arena *arena, Script_List_Paths_Options options, String_Ar
 	end_scratch(scratch);
 	return true;
 }
+
+b32 script_remove_path(Arena *arena, String path, b32 recursive)
+{
+	Platform_File_Info info;
+	if (!platform_file_info(path, &info)) {
+		if (platform_remove_file(path)) return true;
+		return platform_remove_directory(path);
+	}
+	if (!info.is_directory) return platform_remove_file(path);
+	if (!recursive || info.is_symbolic_link) return platform_remove_directory(path);
+
+	u64 mark = arena_mark(arena);
+	Platform_Directory_Entries entries;
+	if (!platform_list_directory(arena, path, &entries)) return false;
+	for (u32 index = 0; index < entries.count; ++index)
+	{
+		String child = script_path_join(arena, path, entries.items[index].name);
+		if (!script_remove_path(arena, child, true)) {
+			arena_restore(arena, mark);
+			return false;
+		}
+	}
+	arena_restore(arena, mark);
+	return platform_remove_directory(path);
+}

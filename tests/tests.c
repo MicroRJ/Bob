@@ -838,6 +838,7 @@ static b32 test_bob_script(void)
     CHECK(script_is_loaded(script));
     CHECK(script_has_function(script, STRING_LITERAL("build")));
     CHECK(script_has_function(script, STRING_LITERAL("test")));
+    CHECK(script_has_function(script, STRING_LITERAL("bless")));
     script_destroy(script);
     arena_destroy(&arena);
     return true;
@@ -897,11 +898,15 @@ static b32 test_script_functions(void)
     Script *script = script_load(&arena, STRING_LITERAL("example/functions.elf"));
     CHECK(script_is_loaded(script));
     String_Array functions = script_functions(script);
-    CHECK(functions.count == 2);
+    CHECK(functions.count == 4);
     CHECK(script_has_function(script, STRING_LITERAL("build")));
     CHECK(script_has_function(script, STRING_LITERAL("clean")));
+	CHECK(script_has_function(script, STRING_LITERAL("environment")));
+	CHECK(script_has_function(script, STRING_LITERAL("filesystem")));
     CHECK(!script_has_function(script, STRING_LITERAL("missing")));
     CHECK(script_invoke(script, STRING_LITERAL("build")));
+	CHECK(script_invoke(script, STRING_LITERAL("environment")));
+	CHECK(script_invoke(script, STRING_LITERAL("filesystem")));
     CHECK(!script_invoke(script, STRING_LITERAL("missing")));
     script_destroy(script);
     arena_destroy(&arena);

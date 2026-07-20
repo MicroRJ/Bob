@@ -8,6 +8,7 @@
 typedef struct Platform_File_Info {
    u64 write_time;
    b32 is_directory;
+   b32 is_symbolic_link;
 } Platform_File_Info;
 
 typedef struct Platform_Directory_Entry {
@@ -44,7 +45,12 @@ b32 platform_current_directory(Arena *arena, String *result);
 b32 platform_absolute_path(Arena *arena, String path, String *result);
 b32 platform_read_entire_file(Arena *arena, String path, String *result);
 b32 platform_write_entire_file(String path, const void *data, size_t size);
+b32 platform_copy_file(String source, String destination, b32 overwrite);
+b32 platform_move_file(String source, String destination, b32 overwrite);
+b32 platform_remove_file(String path);
+b32 platform_remove_directory(String path);
 b32 platform_create_directory(String path);
+b32 platform_create_directories(String path);
 b32 platform_local_app_data(Arena *arena, String *result);
 b32 platform_get_environment(String name, Arena *arena, String *value);
 b32 platform_get_environment_block(Arena *arena, String *block);
