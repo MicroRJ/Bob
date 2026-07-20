@@ -1,4 +1,5 @@
 #include "c_include_scan.h"
+#include "compiler_command.h"
 #include "platform/platform.h"
 
 #include <stdio.h>
@@ -25,64 +26,6 @@ typedef struct Parsed_Include_Array {
 } Parsed_Include_Array;
 
 static char *copy_string(const char *string);
-
-static b32 next_command_argument(const char **cursor_in_out, char *argument,
-                                 size_t argument_size)
-{
-    const char *cursor = *cursor_in_out;
-    size_t count = 0;
-    b32 quoted = false;
-
-    while (*cursor == ' ' || *cursor == '\t') ++cursor;
-    if (!*cursor) {
-        *cursor_in_out = cursor;
-        return false;
-    }
-    while (*cursor && (quoted || (*cursor != ' ' && *cursor != '\t'))) {
-        if (*cursor == '"') {
-            quoted = !quoted;
-            ++cursor;
-            continue;
-        }
-        if (count + 1 >= argument_size) return false;
-        argument[count++] = *cursor++;
-    }
-    argument[count] = 0;
-    *cursor_in_out = cursor;
-    return true;
-}
-
-static String_Array parse_command_include_directories(Arena *arena, String command_line)
-{
-    String_Array result = {0};
-    const char *cursor = command_line.data;
-    char argument[KILOBYTES(32)];
-    size_t maximum_count;
-
-    if (!command_line.data) return result;
-    maximum_count = command_line.size / 2 + 1;
-    if (maximum_count > UINT32_MAX) return result;
-    result.items = arena_push_zero(arena, maximum_count * sizeof(*result.items));
-    if (!result.items) return (String_Array){0};
-
-    while (next_command_argument(&cursor, argument, sizeof(argument))) {
-        const char *directory = NULL;
-        if (strcmp(argument, "/I") == 0 || strcmp(argument, "-I") == 0 ||
-            strcmp(argument, "-isystem") == 0) {
-            if (!next_command_argument(&cursor, argument, sizeof(argument))) break;
-            directory = argument;
-        } else if ((argument[0] == '/' || argument[0] == '-') &&
-                   argument[1] == 'I' && argument[2]) {
-            directory = argument + 2;
-        }
-        if (directory && *directory) {
-            result.items[result.count] = arena_push_cstring(arena, directory);
-            if (!result.items[result.count].data) return (String_Array){0};
-            ++result.count;
-        }
-    }
-    return result;
-}
 
 static b32 ascii_equal_ignore_case(const char *a, const char *b)
 {
@@ -445,8 +388,12 @@ b32 c_include_scan(String_Array inputs, String_Array include_directories, String
     context.include_directories = include_directories;
     context.result = result;
     scratch = begin_scratch();
-    context.command_include_directories =
-        parse_command_include_directories(scratch.arena, command_line);
+    Compiler_Command compiler_command;
+    if (!compiler_command_parse(scratch.arena, command_line, &compiler_command)) {
+        end_scratch(scratch);
+        return false;
+    }
+    context.command_include_directories = compiler_command.include_directories;
 
     for (i = 0; i < inputs.count; ++i) {
         if (!scan_file(&context, inputs.items[i].data, 0)) {

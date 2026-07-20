@@ -9,7 +9,7 @@ typedef struct Script_Backend
 	b32 (*load)(Script *script, String path);
 	void (*destroy)(Script *script);
 	b32 (*invoke)(Script *script, String name);
-	b32 (*read_build)(Script *script, Bob_Build *result);
+	b32 (*read_build)(Script *script, Script_Build *result);
 }
 Script_Backend;
 

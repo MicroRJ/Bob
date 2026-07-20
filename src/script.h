@@ -15,13 +15,13 @@ typedef struct Script_Options
 }
 Script_Options;
 
-typedef struct Bob_Build
+typedef struct Script_Build
 {
 	Bob *bob;
 	Script_Options options;
 	char error[256];
 }
-Bob_Build;
+Script_Build;
 
 static inline Script_Options script_options_resolve(Script_Options script, Cmd_Options command_line)
 {
@@ -50,7 +50,7 @@ void script_set_command_line_options(Script *script, Cmd_Options options);
 b32 script_invoke(Script *script, String name);
 
 // Compatibility with scripts that return { targets, options }.
-b32 script_read_build(Script *script, Bob_Build *result);
-b32 script_load_build(String path, Bob_Build *result);
+b32 script_read_build(Script *script, Script_Build *result);
+b32 script_load_build(String path, Script_Build *result);
 
 #endif

@@ -107,15 +107,15 @@ b32 script_invoke(Script *script, String name)
 	return result && !script->failed;
 }
 
-b32 script_read_build(Script *script, Bob_Build *result)
+b32 script_read_build(Script *script, Script_Build *result)
 {
 	if (!script_is_loaded(script)) return false;
 	return script->backend->read_build(script, result);
 }
 
-b32 script_load_build(String path, Bob_Build *result)
+b32 script_load_build(String path, Script_Build *result)
 {
-	*result = (Bob_Build){0};
+	*result = (Script_Build){0};
 	Scratch scratch = begin_scratch();
 	Script *script = script_load(scratch.arena, path);
 	b32 success = false;

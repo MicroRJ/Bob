@@ -1,6 +1,7 @@
 #include "bob.h"
 #include "script.h"
 #include "c_include_scan.h"
+#include "compiler_command.h"
 #include "logger.h"
 #include "platform/platform.h"
 #include "vcvars_cache.h"
@@ -768,7 +769,7 @@ static b32 test_recursive_include_rebuilds(void)
 
 static b32 test_elf_descriptor(void)
 {
-    Bob_Build build;
+    Script_Build build;
     const Bob_Task *task;
 
     if (!script_load_build(STRING_LITERAL("example/tasks.elf"), &build)) {
@@ -796,7 +797,7 @@ static b32 test_elf_descriptor(void)
 
 static b32 test_elf_generated_descriptor(void)
 {
-    Bob_Build build;
+    Script_Build build;
 
     if (!script_load_build(STRING_LITERAL("example/tasks1.elf"), &build)) {
         printf("  elf error: %s\n", build.error);
@@ -853,6 +854,21 @@ static b32 test_option_resolution(void)
 	CHECK(merged.verbosity == 3);
 	CHECK(merged.has_worker_count);
 	CHECK(merged.has_verbosity);
+	return true;
+}
+
+static b32 test_compiler_command(void)
+{
+	Arena arena = arena_create(KILOBYTES(64));
+	Compiler_Command command;
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("clang-cl /Ione /I \"two words\" -Ithree -I four -isystem system"), &command));
+	CHECK(command.include_directories.count == 5);
+	CHECK(string_equal(command.include_directories.items[0], STRING_LITERAL("one")));
+	CHECK(string_equal(command.include_directories.items[1], STRING_LITERAL("two words")));
+	CHECK(string_equal(command.include_directories.items[2], STRING_LITERAL("three")));
+	CHECK(string_equal(command.include_directories.items[3], STRING_LITERAL("four")));
+	CHECK(string_equal(command.include_directories.items[4], STRING_LITERAL("system")));
+	arena_destroy(&arena);
 	return true;
 }
 
@@ -932,7 +948,7 @@ static int build_example(void)
 
 static int build_tasks_from_file(String path)
 {
-    Bob_Build build = {0};
+    Script_Build build = {0};
     u32 workers;
     int exit_code;
     if (!script_load_build(path, &build)) {
@@ -949,6 +965,7 @@ static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
     run_test("option resolution", test_option_resolution);
+    run_test("compiler command", test_compiler_command);
     run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
     run_test("high resolution timer", test_high_resolution_timer);

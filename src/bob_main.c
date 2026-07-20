@@ -13,7 +13,7 @@
 
 static int run_build(Script *script, Cmd_Options command_line_options)
 {
-   Bob_Build build = {0};
+   Script_Build build = {0};
    int exit_code = 1;
 
 	if (!script_read_build(script, &build)) {

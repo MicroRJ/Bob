@@ -4,11 +4,12 @@ core_sources := {
 	{ name = "profiler",     path = "src/profiler.c" },
 	{ name = "bob_core",     path = "src/lib/bob_core.c" },
 	{ name = "bob_node",     path = "src/lib/bob_node.c" },
+	{ name = "compiler_command", path = "src/lib/compiler_command.c" },
 	{ name = "include_scan", path = "src/lib/c_include_scan.c" },
 	{ name = "vcvars_cache", path = "src/lib/vcvars_cache.c" },
 	{ name = "script",       path = "src/script.c" },
 	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
-	{ name = "platform",     path = "src/platform/platform_win32.c" },
+	{ name = "platform",     path = "src/platform/win32/platform_win32.c" },
 }
 
 cc := "clang-cl"
@@ -16,6 +17,7 @@ cc := "clang-cl"
 include_dirs := {
 	"src",
 	"src/lib",
+	"src/platform",
 	"elf/include",
 }
 

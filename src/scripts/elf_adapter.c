@@ -14,7 +14,7 @@ typedef struct Elf_Script
 }
 Elf_Script;
 
-static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result);
+static b32 read_build_table(Script *script, elf_Table *root, Script_Build *result);
 
 ELF_FUNCTION(l_bob_build)
 {
@@ -22,7 +22,7 @@ ELF_FUNCTION(l_bob_build)
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
 	elf_Table *arguments = elf_arg_table(S, 1);
-	Bob_Build build = {0};
+	Script_Build build = {0};
 	if (!read_build_table(script, arguments, &build))
 	{
 		script_set_error(script, "%s", build.error);
@@ -187,7 +187,7 @@ static int table_list_add(Table_List *list, elf_Table *table)
    return 1;
 }
 
-static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result)
+static b32 read_build_table(Script *script, elf_Table *root, Script_Build *result)
 {
    Scratch scratch;
    elf_ValueView targets_value;
@@ -363,7 +363,7 @@ static b32 read_build_table(Script *script, elf_Table *root, Bob_Build *result)
    return success;
 }
 
-b32 elf_script_read_build(Script *script, Bob_Build *result)
+b32 elf_script_read_build(Script *script, Script_Build *result)
 {
 	Elf_Script *elf = script->context;
 	return read_build_table(script, elf->exports, result);
