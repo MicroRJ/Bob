@@ -3,7 +3,10 @@
 
 #include "elf.h"
 #include "logger.h"
+#include "platform/platform.h"
 #include "profiler.h"
+#include "scripts/libs/filesystem.h"
+#include "scripts/libs/path.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +19,12 @@ typedef struct Elf_Script
 Elf_Script;
 
 static b32 read_build_table(Script *script, elf_Table *root, Script_Build *result);
+static ELF_FUNCTION(l_strings_expand);
+static ELF_FUNCTION(l_fs_list);
+static ELF_FUNCTION(l_fs_exists);
+static ELF_FUNCTION(l_fs_is_file);
+static ELF_FUNCTION(l_fs_is_directory);
+static ELF_FUNCTION(l_path_join);
 
 ELF_FUNCTION(l_bob_build)
 {
@@ -48,7 +57,13 @@ ELF_FUNCTION(l_bob_build)
 
 static const elf_Binding bob_bindings[] =
 {
-	{ "build", l_bob_build },
+	{ "build",            l_bob_build },
+	{ "_strings_expand",  l_strings_expand },
+	{ "_fs_list",         l_fs_list },
+	{ "_fs_exists",       l_fs_exists },
+	{ "_fs_is_file",      l_fs_is_file },
+	{ "_fs_is_directory", l_fs_is_directory },
+	{ "_path_join",       l_path_join },
 };
 
 ELF_FUNCTION(l_strings_expand)
@@ -98,10 +113,185 @@ ELF_FUNCTION(l_strings_expand)
 	return 1;
 }
 
-static const elf_Binding string_bindings[] =
+static b32 binding_error(elf_State *state, Script *script, const char *message)
 {
-	{ "expand", l_strings_expand },
-};
+	script_set_error(script, "%s", message);
+	script->failed = true;
+	elf_push_nil(state);
+	return false;
+}
+
+static String value_string(elf_ValueView value)
+{
+	if (value.type != ELF_VALUE_TYPE_STRING) return (String){0};
+	return string_from_data((void *)elf_str_data(value.as.string), elf_str_size(value.as.string));
+}
+
+ELF_FUNCTION(l_fs_list)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 2 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_TABLE) {
+		binding_error(S, script, "bob.fs.list expects an options table");
+		return 1;
+	}
+
+	elf_Table *table = elf_arg_table(S, 1);
+	Script_List_Paths_Options options = {0};
+	elf_ValueView value = elf_get_field(S, table, "root");
+	if (value.type != ELF_VALUE_TYPE_NIL) {
+		options.root = value_string(value);
+		if (!options.root.data) {
+			binding_error(S, script, "bob.fs.list option 'root' must be a string");
+			return 1;
+		}
+	}
+	value = elf_get_field(S, table, "pattern");
+	if (value.type != ELF_VALUE_TYPE_NIL) {
+		options.pattern = value_string(value);
+		if (!options.pattern.data) {
+			binding_error(S, script, "bob.fs.list option 'pattern' must be a string");
+			return 1;
+		}
+	}
+	value = elf_get_field(S, table, "recursive");
+	if (value.type != ELF_VALUE_TYPE_NIL) {
+		if (value.type != ELF_VALUE_TYPE_INTEGER) {
+			binding_error(S, script, "bob.fs.list option 'recursive' must be a boolean");
+			return 1;
+		}
+		options.recursive = value.as.integer != 0;
+	}
+	value = elf_get_field(S, table, "relative");
+	if (value.type != ELF_VALUE_TYPE_NIL) {
+		if (value.type != ELF_VALUE_TYPE_INTEGER) {
+			binding_error(S, script, "bob.fs.list option 'relative' must be a boolean");
+			return 1;
+		}
+		options.relative = value.as.integer != 0;
+	}
+	value = elf_get_field(S, table, "kind");
+	if (value.type != ELF_VALUE_TYPE_NIL)
+	{
+		String kind = value_string(value);
+		if (!kind.data) {
+			binding_error(S, script, "bob.fs.list option 'kind' must be a string");
+			return 1;
+		}
+		if (string_is(kind, "files")) options.kind = SCRIPT_PATH_FILES;
+		else if (string_is(kind, "directories")) options.kind = SCRIPT_PATH_DIRECTORIES;
+		else if (string_is(kind, "all")) options.kind = SCRIPT_PATH_ALL;
+		else {
+			binding_error(S, script, "bob.fs.list option 'kind' must be 'files', 'directories', or 'all'");
+			return 1;
+		}
+	}
+
+	Scratch scratch = begin_different_scratch(script->arena);
+	String_Array paths;
+	if (!script_list_paths(scratch.arena, options, &paths))
+	{
+		end_scratch(scratch);
+		binding_error(S, script, "bob.fs.list could not read the root directory");
+		return 1;
+	}
+	void *start = arena_top(scratch.arena);
+	for (u32 index = 0; index < paths.count; ++index) {
+		if (index) arena_append_char(scratch.arena, '\n');
+		arena_append_str(scratch.arena, paths.items[index]);
+	}
+	String joined = arena_string_from(scratch.arena, start);
+	elf_push_str(S, joined.data, (int)joined.size);
+	end_scratch(scratch);
+	return 1;
+}
+
+static int push_path_kind(elf_State *state, b32 files, b32 directories)
+{
+	Script *script = elf_get_user_data(state);
+	if (elf_arg_type(state, 1) != ELF_VALUE_TYPE_STRING) {
+		binding_error(state, script, "filesystem query expects a path string");
+		return 1;
+	}
+	elf_String *value = elf_arg_str(state, 1);
+	Scratch scratch = begin_different_scratch(script->arena);
+	String path = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(value), elf_str_size(value)));
+	Platform_File_Info info;
+	b32 found = platform_file_info(path, &info);
+	b32 result = found && ((files && !info.is_directory) || (directories && info.is_directory));
+	elf_push_int(state, result);
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_fs_exists)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 2 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING) {
+		binding_error(S, script, "bob.fs.exists expects a path string");
+		return 1;
+	}
+	elf_String *value = elf_arg_str(S, 1);
+	Scratch scratch = begin_different_scratch(script->arena);
+	String path = arena_push_string_copy(scratch.arena, string_from_data((void *)elf_str_data(value), elf_str_size(value)));
+	Platform_File_Info info;
+	elf_push_int(S, platform_file_info(path, &info));
+	end_scratch(scratch);
+	return 1;
+}
+
+ELF_FUNCTION(l_fs_is_file)
+{
+	(void)nrets;
+	if (nargs != 2) {
+		Script *script = elf_get_user_data(S);
+		binding_error(S, script, "bob.fs.is_file expects a path string");
+		return 1;
+	}
+	return push_path_kind(S, true, false);
+}
+
+ELF_FUNCTION(l_fs_is_directory)
+{
+	(void)nrets;
+	if (nargs != 2) {
+		Script *script = elf_get_user_data(S);
+		binding_error(S, script, "bob.fs.is_directory expects a path string");
+		return 1;
+	}
+	return push_path_kind(S, false, true);
+}
+
+ELF_FUNCTION(l_path_join)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 3 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_arg_type(S, 2) != ELF_VALUE_TYPE_STRING)
+	{
+		binding_error(S, script, "bob.path.join expects two path strings");
+		return 1;
+	}
+	elf_String *left_value = elf_arg_str(S, 1);
+	elf_String *right_value = elf_arg_str(S, 2);
+	String left = string_from_data((void *)elf_str_data(left_value), elf_str_size(left_value));
+	String right = string_from_data((void *)elf_str_data(right_value), elf_str_size(right_value));
+	Scratch scratch = begin_different_scratch(script->arena);
+	String result = script_path_join(scratch.arena, left, right);
+	elf_push_str(S, result.data, (int)result.size);
+	end_scratch(scratch);
+	return 1;
+}
+
+static const char bob_library_source[] =
+	"bob.strings = { expand = bob._strings_expand }\n"
+	"bob.fs = {\n"
+	"  list = fun(options) { ret bob._fs_list(options):lines() },\n"
+	"  exists = bob._fs_exists,\n"
+	"  is_file = bob._fs_is_file,\n"
+	"  is_directory = bob._fs_is_directory,\n"
+	"}\n"
+	"bob.path = { join = bob._path_join }\n";
 
 static b32 is_function(elf_ValueView value)
 {
@@ -119,7 +309,13 @@ b32 elf_script_load(Script *script, String path)
 	}
 	elf_set_user_data(elf->state, script);
 	elf_register_library(elf->state, "bob", bob_bindings, ARRAY_COUNT(bob_bindings));
-	elf_register_library(elf->state, "strings", string_bindings, ARRAY_COUNT(string_bindings));
+	elf_StrSlice library_source = { (char *)bob_library_source, sizeof(bob_library_source) - 1 };
+	if (!elf_push_code_source(elf->state, "bob libraries", library_source)) {
+		script_set_error(script, "unable to load Bob script libraries");
+		return false;
+	}
+	elf_push_nil(elf->state);
+	elf_call(elf->state, 1, 0);
 	if (!elf_push_code_file(elf->state, path.data)) {
 		script_set_error(script, "unable to load '%s'", path.data);
 		return false;

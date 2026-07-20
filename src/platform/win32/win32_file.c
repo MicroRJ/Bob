@@ -25,6 +25,64 @@ b32 platform_file_info(String path, Platform_File_Info *info)
 	return true;
 }
 
+b32 platform_list_directory(Arena *arena, String path, Platform_Directory_Entries *result)
+{
+	typedef struct Entry_Node Entry_Node;
+	struct Entry_Node
+	{
+		Entry_Node *next;
+		String name;
+		b32 is_directory;
+		b32 is_symbolic_link;
+	};
+
+	if (!arena || !result) return false;
+	*result = (Platform_Directory_Entries){0};
+	Scratch scratch = begin_different_scratch(arena);
+	void *start = arena_top(scratch.arena);
+	arena_append_str(scratch.arena, path);
+	if (path.size && path.data[path.size - 1] != '/' && path.data[path.size - 1] != '\\') arena_append_char(scratch.arena, '\\');
+	arena_append_char(scratch.arena, '*');
+	String search = arena_string_from(scratch.arena, start);
+	arena_finalize_string(scratch.arena, search);
+
+	WIN32_FIND_DATAA data;
+	HANDLE find = FindFirstFileA(search.data, &data);
+	if (find == INVALID_HANDLE_VALUE) {
+		end_scratch(scratch);
+		return false;
+	}
+
+	Entry_Node *first = NULL;
+	Entry_Node *last = NULL;
+	do
+	{
+		if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) continue;
+		Entry_Node *node = arena_push_zero_aligned(scratch.arena, sizeof(*node), _Alignof(Entry_Node));
+		node->name = arena_push_cstring(scratch.arena, data.cFileName);
+		node->is_directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+		node->is_symbolic_link = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+		if (last) last->next = node;
+		else first = node;
+		last = node;
+		++result->count;
+	}
+	while (FindNextFileA(find, &data));
+	FindClose(find);
+
+	result->items = arena_push_zero_aligned(arena, result->count * sizeof(*result->items), _Alignof(Platform_Directory_Entry));
+	u32 index = 0;
+	for (Entry_Node *node = first; node; node = node->next)
+	{
+		result->items[index].name = arena_push_string_copy(arena, node->name);
+		result->items[index].is_directory = node->is_directory;
+		result->items[index].is_symbolic_link = node->is_symbolic_link;
+		++index;
+	}
+	end_scratch(scratch);
+	return true;
+}
+
 b32 platform_current_directory(Arena *arena, String *result)
 {
 	u64 mark;

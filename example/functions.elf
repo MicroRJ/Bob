@@ -1,5 +1,33 @@
-expanded := strings.expand({ "src", "vendor" }, "'/I'.(' ')*")
-elf.assert(expanded == "/Isrc /Ivendor", "strings.expand produced the wrong result")
+expanded := bob.strings.expand({ "src", "vendor" }, "'/I'.(' ')*")
+elf.assert(expanded == "/Isrc /Ivendor", "bob.strings.expand produced the wrong result")
+elf.assert(bob.path.join("src\\scripts", "libs") == "src/scripts/libs", "bob.path.join produced the wrong result")
+elf.assert(bob.fs.exists("src/base.c"), "bob.fs.exists did not find src/base.c")
+elf.assert(bob.fs.is_file("src/base.c"), "bob.fs.is_file did not recognize src/base.c")
+elf.assert(bob.fs.is_directory("src/scripts"), "bob.fs.is_directory did not recognize src/scripts")
+
+library_sources := bob.fs.list({
+	root = "src/scripts/libs",
+	pattern = "*.c",
+	relative = true,
+})
+elf.assert(library_sources:length() == 3, "bob.fs.list returned the wrong number of sources")
+elf.assert(library_sources[0] == "filesystem.c", "bob.fs.list is not sorted")
+
+recursive_sources := bob.fs.list({
+	root = "src/scripts",
+	pattern = "*.c",
+	recursive = true,
+	relative = true,
+})
+elf.assert(recursive_sources:length() == 4, "bob.fs.list recursion returned the wrong number of sources")
+elf.assert(recursive_sources[0] == "elf_adapter.c", "bob.fs.list recursive results are not sorted")
+
+directories := bob.fs.list({
+	root = "src/scripts",
+	kind = "directories",
+	relative = true,
+})
+elf.assert(directories:length() == 1 && directories[0] == "libs", "bob.fs.list directory filtering failed")
 
 build := fun() {
 	ret bob.build({

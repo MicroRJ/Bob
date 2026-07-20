@@ -3,7 +3,7 @@
     [
         {
             "path": ".",
-            "folder_exclude_patterns": ["build/", ".git/"]
+            "folder_exclude_patterns": ["build/", ".git/", ".elf/"]
         }
     ]
 }

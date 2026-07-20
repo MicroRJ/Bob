@@ -9,6 +9,8 @@ core_sources := {
 	{ name = "vcvars_cache", path = "src/lib/vcvars_cache.c" },
 	{ name = "script",       path = "src/script.c" },
 	{ name = "script_string", path = "src/scripts/libs/string.c" },
+	{ name = "script_path",   path = "src/scripts/libs/path.c" },
+	{ name = "script_fs",     path = "src/scripts/libs/filesystem.c" },
 	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
 	{ name = "platform",     path = "src/platform/win32/platform_win32.c" },
 }
@@ -26,7 +28,7 @@ compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
 
 
 
-include_options := strings.expand(include_dirs, "' /I'.")
+include_options := bob.strings.expand(include_dirs, "' /I'.")
 
 prepare := {
 	name = "prepare object directory",
@@ -84,7 +86,7 @@ bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
 	"elf/build/elf.lib",
 })
-common_object_options := strings.expand(common_objects, "' '.")
+common_object_options := bob.strings.expand(common_objects, "' '.")
 
 build_bob := {
 	name = "link Bob",

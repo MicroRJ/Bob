@@ -10,6 +10,17 @@ typedef struct Platform_File_Info {
    b32 is_directory;
 } Platform_File_Info;
 
+typedef struct Platform_Directory_Entry {
+	String name;
+	b32 is_directory;
+	b32 is_symbolic_link;
+} Platform_Directory_Entry;
+
+typedef struct Platform_Directory_Entries {
+	Platform_Directory_Entry *items;
+	u32 count;
+} Platform_Directory_Entries;
+
 typedef struct Platform_Process_Result {
 	String output;
 	u32 exit_code;
@@ -28,6 +39,7 @@ typedef struct Platform_Condition Platform_Condition;
 typedef u32 Platform_Thread_Function(void *data);
 
 b32 platform_file_info(String path, Platform_File_Info *info);
+b32 platform_list_directory(Arena *arena, String path, Platform_Directory_Entries *result);
 b32 platform_current_directory(Arena *arena, String *result);
 b32 platform_absolute_path(Arena *arena, String path, String *result);
 b32 platform_read_entire_file(Arena *arena, String path, String *result);
