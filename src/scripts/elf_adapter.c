@@ -63,35 +63,6 @@ ELF_FUNCTION(l_bob_build)
 	return 1;
 }
 
-ELF_FUNCTION(l_bob_version)
-{
-	(void)nargs;
-	(void)nrets;
-	elf_push_cstr(S, BOB_VERSION);
-	return 1;
-}
-
-static const elf_Binding bob_bindings[] =
-{
-	{ "build",            l_bob_build },
-	{ "_version",         l_bob_version },
-	{ "_strings_expand",  l_strings_expand },
-	{ "_fs_list",         l_fs_list },
-	{ "_fs_exists",       l_fs_exists },
-	{ "_fs_is_file",      l_fs_is_file },
-	{ "_fs_is_directory", l_fs_is_directory },
-	{ "_fs_copy_file",    l_fs_copy_file },
-	{ "_fs_move_file",    l_fs_move_file },
-	{ "_fs_remove",       l_fs_remove },
-	{ "_fs_create_directory", l_fs_create_directory },
-	{ "_fs_write_file",    l_fs_write_file },
-	{ "_path_join",       l_path_join },
-	{ "_env_get",         l_env_get },
-	{ "_env_has",         l_env_has },
-	{ "_env_set",         l_env_set },
-	{ "_env_unset",       l_env_unset },
-};
-
 ELF_FUNCTION(l_strings_expand)
 {
 	(void)nrets;
@@ -635,27 +606,60 @@ ELF_FUNCTION(l_env_unset)
 	return 1;
 }
 
-static const char bob_library_source[] =
-	"bob.version = bob._version()\n"
-	"bob.strings = { expand = bob._strings_expand }\n"
-	"bob.fs = {\n"
-	"  list = bob._fs_list,\n"
-	"  exists = bob._fs_exists,\n"
-	"  is_file = bob._fs_is_file,\n"
-	"  is_directory = bob._fs_is_directory,\n"
-	"  copy_file = bob._fs_copy_file,\n"
-	"  move_file = bob._fs_move_file,\n"
-	"  remove = bob._fs_remove,\n"
-	"  create_directory = bob._fs_create_directory,\n"
-	"  write_file = bob._fs_write_file,\n"
-	"}\n"
-	"bob.path = { join = bob._path_join }\n"
-	"bob.env = {\n"
-	"  get = bob._env_get,\n"
-	"  has = bob._env_has,\n"
-	"  set = bob._env_set,\n"
-	"  unset = bob._env_unset,\n"
-	"}\n";
+static b32 set_function(elf_State *state, elf_i32 table, const char *name, elf_Function function)
+{
+	elf_push_fun(state, function);
+	return elf_stack_set_field(state, table, name);
+}
+
+static b32 register_bob_library(elf_State *state)
+{
+	elf_i32 checkpoint = elf_stack_get_top(state);
+	elf_stack_new_table(state);
+	elf_i32 bob = elf_stack_abs_index(state, -1);
+
+	if (!set_function(state, bob, "build", l_bob_build)) goto error;
+	elf_push_cstr(state, BOB_VERSION);
+	if (!elf_stack_set_field(state, bob, "version")) goto error;
+
+	elf_stack_new_table(state);
+	elf_i32 strings = elf_stack_abs_index(state, -1);
+	if (!set_function(state, strings, "expand", l_strings_expand)) goto error;
+	if (!elf_stack_set_field(state, bob, "strings")) goto error;
+
+	elf_stack_new_table(state);
+	elf_i32 fs = elf_stack_abs_index(state, -1);
+	if (!set_function(state, fs, "list", l_fs_list)) goto error;
+	if (!set_function(state, fs, "exists", l_fs_exists)) goto error;
+	if (!set_function(state, fs, "is_file", l_fs_is_file)) goto error;
+	if (!set_function(state, fs, "is_directory", l_fs_is_directory)) goto error;
+	if (!set_function(state, fs, "copy_file", l_fs_copy_file)) goto error;
+	if (!set_function(state, fs, "move_file", l_fs_move_file)) goto error;
+	if (!set_function(state, fs, "remove", l_fs_remove)) goto error;
+	if (!set_function(state, fs, "create_directory", l_fs_create_directory)) goto error;
+	if (!set_function(state, fs, "write_file", l_fs_write_file)) goto error;
+	if (!elf_stack_set_field(state, bob, "fs")) goto error;
+
+	elf_stack_new_table(state);
+	elf_i32 path = elf_stack_abs_index(state, -1);
+	if (!set_function(state, path, "join", l_path_join)) goto error;
+	if (!elf_stack_set_field(state, bob, "path")) goto error;
+
+	elf_stack_new_table(state);
+	elf_i32 env = elf_stack_abs_index(state, -1);
+	if (!set_function(state, env, "get", l_env_get)) goto error;
+	if (!set_function(state, env, "has", l_env_has)) goto error;
+	if (!set_function(state, env, "set", l_env_set)) goto error;
+	if (!set_function(state, env, "unset", l_env_unset)) goto error;
+	if (!elf_stack_set_field(state, bob, "env")) goto error;
+
+	if (!elf_stack_set_global(state, "bob")) goto error;
+	return true;
+
+error:
+	elf_stack_set_top(state, checkpoint);
+	return false;
+}
 
 b32 elf_script_load(Script *script, String path)
 {
@@ -667,14 +671,10 @@ b32 elf_script_load(Script *script, String path)
 		return false;
 	}
 	elf_set_user_data(elf->state, script);
-	elf_register_library(elf->state, "bob", bob_bindings, ARRAY_COUNT(bob_bindings));
-	elf_StrSlice library_source = { (char *)bob_library_source, sizeof(bob_library_source) - 1 };
-	if (!elf_push_code_source(elf->state, "bob libraries", library_source)) {
-		script_set_error(script, "unable to load Bob script libraries");
+	if (!register_bob_library(elf->state)) {
+		script_set_error(script, "unable to register Bob script libraries");
 		return false;
 	}
-	elf_push_nil(elf->state);
-	elf_call(elf->state, 1, 0);
 	if (!elf_push_code_file(elf->state, path.data)) {
 		script_set_error(script, "unable to load '%s'", path.data);
 		return false;
