@@ -1,5 +1,6 @@
 #include "bob.h"
 #include "script.h"
+#include "scripts/libs/string.h"
 #include "c_include_scan.h"
 #include "compiler_command.h"
 #include "logger.h"
@@ -26,6 +27,24 @@ static int tests_failed;
 
 #define CHECK_OK(expression) CHECK((expression) == BOB_OK)
 #define STRING_ARRAY_FROM(array) ((String_Array){ .items = (array), .count = ARRAY_COUNT(array) })
+
+static b32 test_script_string_expand(void)
+{
+	Scratch scratch = begin_scratch();
+	String values[] = { STRING_LITERAL("src"), STRING_LITERAL("vendor") };
+	String result;
+	const char *error;
+
+	CHECK(script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("'/I'.(' ')*"), &result, &error));
+	CHECK(string_equal(result, STRING_LITERAL("/Isrc /Ivendor")));
+	CHECK(script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("' '."), &result, &error));
+	CHECK(string_equal(result, STRING_LITERAL(" src vendor")));
+	CHECK(!script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("('broken'"), &result, &error));
+	CHECK(error != NULL);
+
+	end_scratch(scratch);
+	return true;
+}
 
 static b32 environment_equals(const char *name, const char *expected)
 {
@@ -964,6 +983,7 @@ static int build_tasks_from_file(String path)
 static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
+	run_test("script string expansion", test_script_string_expand);
     run_test("option resolution", test_option_resolution);
     run_test("compiler command", test_compiler_command);
     run_test("thread-local scratch", test_thread_local_scratch);

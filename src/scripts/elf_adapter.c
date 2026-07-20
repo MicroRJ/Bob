@@ -1,4 +1,5 @@
 #include "elf_adapter.h"
+#include "scripts/libs/string.h"
 
 #include "elf.h"
 #include "logger.h"
@@ -50,6 +51,58 @@ static const elf_Binding bob_bindings[] =
 	{ "build", l_bob_build },
 };
 
+ELF_FUNCTION(l_strings_expand)
+{
+	(void)nrets;
+	Script *script = elf_get_user_data(S);
+	if (nargs != 3 || elf_arg_type(S, 1) != ELF_VALUE_TYPE_TABLE || elf_arg_type(S, 2) != ELF_VALUE_TYPE_STRING)
+	{
+		script_set_error(script, "strings.expand expects a table of strings and a rule string");
+		script->failed = true;
+		elf_push_nil(S);
+		return 1;
+	}
+
+	Scratch scratch = begin_different_scratch(script->arena);
+	elf_Table *table = elf_arg_table(S, 1);
+	String_Array strings = { .count = elf_table_length(table) };
+	strings.items = arena_push_zero_aligned(scratch.arena, strings.count * sizeof(String), _Alignof(String));
+	for (u32 index = 0; index < strings.count; ++index)
+	{
+		elf_ValueView value = elf_get_index(S, table, index);
+		if (value.type != ELF_VALUE_TYPE_STRING)
+		{
+			script_set_error(script, "strings.expand expects a table containing only strings");
+			script->failed = true;
+			elf_push_nil(S);
+			end_scratch(scratch);
+			return 1;
+		}
+		strings.items[index] = string_from_data((void *)elf_str_data(value.as.string), elf_str_size(value.as.string));
+	}
+
+	elf_String *rule_value = elf_arg_str(S, 2);
+	String rule = string_from_data((void *)elf_str_data(rule_value), elf_str_size(rule_value));
+	String result;
+	const char *error;
+	if (!script_strings_expand(scratch.arena, strings, rule, &result, &error))
+	{
+		script_set_error(script, "invalid strings.expand rule: %s", error);
+		script->failed = true;
+		elf_push_nil(S);
+	}
+	else {
+		elf_push_str(S, result.data, (int)result.size);
+	}
+	end_scratch(scratch);
+	return 1;
+}
+
+static const elf_Binding string_bindings[] =
+{
+	{ "expand", l_strings_expand },
+};
+
 static b32 is_function(elf_ValueView value)
 {
 	return value.type == ELF_VALUE_TYPE_CFUNCTION || value.type == ELF_VALUE_TYPE_CLOSURE;
@@ -66,12 +119,17 @@ b32 elf_script_load(Script *script, String path)
 	}
 	elf_set_user_data(elf->state, script);
 	elf_register_library(elf->state, "bob", bob_bindings, ARRAY_COUNT(bob_bindings));
+	elf_register_library(elf->state, "strings", string_bindings, ARRAY_COUNT(string_bindings));
 	if (!elf_push_code_file(elf->state, path.data)) {
 		script_set_error(script, "unable to load '%s'", path.data);
 		return false;
 	}
 	elf_push_nil(elf->state);
 	elf_call(elf->state, 1, 1);
+	if (script->failed) {
+		elf_pop_values(elf->state, 1);
+		return false;
+	}
 
 	elf_ValueView returned = elf_peek_value(elf->state, 0);
 	if (returned.type != ELF_VALUE_TYPE_TABLE) {

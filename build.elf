@@ -8,6 +8,7 @@ core_sources := {
 	{ name = "include_scan", path = "src/lib/c_include_scan.c" },
 	{ name = "vcvars_cache", path = "src/lib/vcvars_cache.c" },
 	{ name = "script",       path = "src/script.c" },
+	{ name = "script_string", path = "src/scripts/libs/string.c" },
 	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
 	{ name = "platform",     path = "src/platform/win32/platform_win32.c" },
 }
@@ -21,19 +22,11 @@ include_dirs := {
 	"elf/include",
 }
 
-
-join := fun(values) {
-	result := ""
-	for value := values[0 ... values:length()] ? { result += " " + value }
-	ret result
-}
-
-include_options := ""
-for directory := include_dirs[0 ... include_dirs:length()] ? {
-	include_options += " /I" + directory
-}
-
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
+
+
+
+include_options := strings.expand(include_dirs, "' /I'.")
 
 prepare := {
 	name = "prepare object directory",
@@ -55,11 +48,11 @@ build_elf := {
 }
 
 compile_source := fun(options) {
-	object := "build/obj/" + options.name + ".obj"
-	pdb := "build/obj/" + options.name + ".pdb"
+	object := f"build/obj/${options.name}.obj"
+	pdb := f"build/obj/${options.name}.pdb"
 	task := {
-		name = "compile " + options.name,
-		command_line = cc + compile_options + include_options + " /c " + options.source + " /Fo" + object + " /Fd" + pdb,
+		name = f"compile ${options.name}",
+		command_line = f"${cc}${compile_options}${include_options} /c ${options.source} /Fo${object} /Fd${pdb}",
 		inputs = { options.source },
 		outputs = { object },
 		include_dirs = include_dirs,
@@ -70,7 +63,7 @@ compile_source := fun(options) {
 
 common_tasks := {}
 common_objects := {}
-for source := core_sources[0 ... core_sources:length()] ? {
+for source := core_sources[...] ? {
 	compiled := compile_source({
 		name = source.name,
 		source = source.path,
@@ -91,11 +84,11 @@ bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
 	"elf/build/elf.lib",
 })
+common_object_options := strings.expand(common_objects, "' '.")
 
 build_bob := {
 	name = "link Bob",
-	command_line = cc + " /nologo" + join(common_objects) + " " + bob_compiled.object +
-		" elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${bob_compiled.object} elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
 	inputs = bob_inputs,
 	outputs = { "build/bob.exe" },
 	include_dirs = {},
@@ -115,8 +108,7 @@ test_inputs := common_objects:clone():extend({
 
 build_tests := {
 	name = "link tests",
-	command_line = cc + " /nologo" + join(common_objects) + " " + tests_compiled.object +
-		" elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${tests_compiled.object} elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
 	inputs = test_inputs,
 	outputs = { "build/tests.exe" },
 	include_dirs = {},
@@ -139,9 +131,6 @@ options := {
 
 entries := {}
 
-entries.ls = fun() {
-}
-
 entries.build = fun() {
 	ret bob.build({
 		targets = { build_bob },
@@ -155,9 +144,7 @@ entries.test = fun() {
 		options = options,
 	})
 }
-
-
-
+// NOTE(RJ) _DO_NOT_ actually remove this or the tests will fail
 entries.pet = fun() {
 	elf.printl("*purr*")
 }

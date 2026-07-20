@@ -1,3 +1,6 @@
+expanded := strings.expand({ "src", "vendor" }, "'/I'.(' ')*")
+elf.assert(expanded == "/Isrc /Ivendor", "strings.expand produced the wrong result")
+
 build := fun() {
 	ret bob.build({
 		targets = {},
