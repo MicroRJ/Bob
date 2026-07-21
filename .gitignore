@@ -15,4 +15,4 @@ build/
 *.log
 
 # Experiments
-tools/
+laboratory/

@@ -22,6 +22,28 @@ include_dirs := {
 	"src/lib",
 	"src/platform",
 	"elf/include",
+	"elf/batteries",
+}
+
+elf_include_dirs := {
+	"elf/src",
+	"elf/src/base",
+	"elf/src/api",
+	"elf/src/core",
+	"elf/src/diagnostics",
+	"elf/src/core/libs",
+	"elf/src/core/value",
+	"elf/src/core/table",
+	"elf/src/core/atom",
+	"elf/src/platform",
+	"elf/src/compiler",
+	"elf/src/compiler/frontend",
+	"elf/src/compiler/middle",
+	"elf/src/compiler/backend",
+	"elf/batteries",
+	"elf/batteries/internal",
+	"elf/include",
+	"elf/stb",
 }
 
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
@@ -73,6 +95,19 @@ for source := core_sources[...] ? {
 	common_tasks:add(compiled.task)
 	common_objects:add(compiled.object)
 }
+
+elf_include_options := bob.strings.expand(elf_include_dirs, "' /I'.")
+elf_batteries_object := "build/obj/elf_batteries.obj"
+elf_batteries_task := {
+	name = "compile Elf batteries",
+	command_line = f"${cc} /nologo /std:c11 /Zi /Od /D_DEBUG /DPLATFORM_DESKTOP -Wno-macro-redefined${elf_include_options} /c elf/batteries/batteries.c /Fo${elf_batteries_object} /Fdbuild/obj/elf_batteries.pdb",
+	inputs = { "elf/batteries/batteries.c" },
+	outputs = { elf_batteries_object },
+	include_dirs = elf_include_dirs,
+	dependencies = { prepare, build_elf },
+}
+common_tasks:add(elf_batteries_task)
+common_objects:add(elf_batteries_object)
 
 bob_compiled := compile_source({
 	name = "bob",
@@ -154,7 +189,8 @@ entries.bless = fun() {
 	elf.assert(bob.fs.create_directory(archive_directory, true), "could not create the blessed archive directory")
 	elf.assert(bob.fs.copy_file("build/bob.exe", archive, true), "could not archive the new blessed Bob")
 	elf.assert(bob.fs.copy_file("build/bob.exe", "blessed/bob.exe", true), "could not update blessed/bob.exe; run bless using build/bob.exe")
-	elf.printl(f"Blessed Bob ${bob.version}; archived at ${archive}")
+	elf.printl(f"\x1b[1;33mBob ${bob.version} has been blessed. Go forth and compile.\x1b[0m")
+	elf.printl(f"\x1b[2;36mThe sacred binary rests at ${archive}\x1b[0m")
 }
 
 // NOTE(RJ) _DO_NOT_ actually remove this or the tests will fail

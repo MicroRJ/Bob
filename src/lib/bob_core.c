@@ -205,7 +205,7 @@ static void report_completion(const Completion *completion)
 		String executable;
 		String working_directory;
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "%s", completion->process.launched ? "process error" : "failed to start process");
-		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
+		logger_log_at(1, LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 		{
 			String message;
 			if (platform_error_message(completion->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", completion->process.error_code, message.data);
@@ -218,7 +218,7 @@ static void report_completion(const Completion *completion)
 		end_scratch(scratch);
 	} else if (completion->process.exit_code != 0) {
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "process exited with code %u", completion->process.exit_code);
-		logger_log(LOG_LEVEL_ERROR, "command", "%s", command_line.data);
+		logger_log_at(1, LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 	}
 }
 

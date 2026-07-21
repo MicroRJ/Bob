@@ -1,4 +1,5 @@
 #include "elf_adapter.h"
+#include "elf_batteries.h"
 #include "scripts/libs/string.h"
 
 #include "elf.h"
@@ -67,7 +68,7 @@ ELF_FUNCTION(l_strings_expand)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 3 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_TABLE || elf_stack_type(S, 2) != ELF_VALUE_TYPE_STRING)
+	if (nargs != 3 || elf_type(S, 1) != ELF_VALUE_TYPE_TABLE || elf_type(S, 2) != ELF_VALUE_TYPE_STRING)
 	{
 		script_set_error(script, "strings.expand expects a table of strings and a rule string");
 		script->failed = true;
@@ -77,14 +78,14 @@ ELF_FUNCTION(l_strings_expand)
 
 	Scratch scratch = begin_different_scratch(script->arena);
 	elf_u32 length = 0;
-	elf_stack_length(S, 1, &length);
+	elf_length(S, 1, &length);
 	String_Array strings = { .count = length };
 	strings.items = arena_push_zero_aligned(scratch.arena, strings.count * sizeof(String), _Alignof(String));
 	for (u32 index = 0; index < strings.count; ++index)
 	{
 		elf_StrSlice value;
-		elf_stack_get_index(S, 1, index);
-		if (!elf_stack_to_str(S, -1, &value))
+		elf_get_index(S, 1, index);
+		if (!elf_to_str(S, -1, &value))
 		{
 			script_set_error(script, "strings.expand expects a table containing only strings");
 			script->failed = true;
@@ -93,11 +94,11 @@ ELF_FUNCTION(l_strings_expand)
 			return 1;
 		}
 		strings.items[index] = string_from_data(value.data, value.size);
-		elf_stack_pop(S, 1);
+		elf_pop(S, 1);
 	}
 
 	elf_StrSlice rule_value;
-	elf_stack_to_str(S, 2, &rule_value);
+	elf_to_str(S, 2, &rule_value);
 	String rule = string_from_data(rule_value.data, rule_value.size);
 	String result;
 	const char *error;
@@ -125,24 +126,24 @@ static b32 binding_error(elf_State *state, Script *script, const char *message)
 static String stack_string(elf_State *state, elf_i32 index)
 {
 	elf_StrSlice value;
-	if (!elf_stack_to_str(state, index, &value)) return (String){0};
+	if (!elf_to_str(state, index, &value)) return (String){0};
 	return string_from_data(value.data, value.size);
 }
 
 static String stack_string_field(elf_State *state, elf_i32 table, const char *field)
 {
-	if (!elf_stack_get_field(state, table, field)) return (String){0};
+	if (!elf_get_field(state, table, field)) return (String){0};
 	String result = stack_string(state, -1);
-	elf_stack_pop(state, 1);
+	elf_pop(state, 1);
 	return result;
 }
 
 static b32 stack_integer_field(elf_State *state, elf_i32 table, const char *field, elf_Integer *value, b32 *present)
 {
-	if (!elf_stack_get_field(state, table, field)) return false;
-	*present = !elf_stack_is_nil(state, -1);
-	b32 result = !*present || elf_stack_to_int(state, -1, value);
-	elf_stack_pop(state, 1);
+	if (!elf_get_field(state, table, field)) return false;
+	*present = !elf_is_nil(state, -1);
+	b32 result = !*present || elf_to_int(state, -1, value);
+	elf_pop(state, 1);
 	return result;
 }
 
@@ -150,52 +151,52 @@ ELF_FUNCTION(l_fs_list)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 2 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_TABLE) {
+	if (nargs != 2 || elf_type(S, 1) != ELF_VALUE_TYPE_TABLE) {
 		binding_error(S, script, "bob.fs.list expects an options table");
 		return 1;
 	}
 
 	Script_List_Paths_Options options = {0};
-	elf_stack_get_field(S, 1, "root");
-	if (!elf_stack_is_nil(S, -1)) {
+	elf_get_field(S, 1, "root");
+	if (!elf_is_nil(S, -1)) {
 		options.root = stack_string(S, -1);
 		if (!options.root.data) {
 			binding_error(S, script, "bob.fs.list option 'root' must be a string");
 			return 1;
 		}
 	}
-	elf_stack_pop(S, 1);
-	elf_stack_get_field(S, 1, "pattern");
-	if (!elf_stack_is_nil(S, -1)) {
+	elf_pop(S, 1);
+	elf_get_field(S, 1, "pattern");
+	if (!elf_is_nil(S, -1)) {
 		options.pattern = stack_string(S, -1);
 		if (!options.pattern.data) {
 			binding_error(S, script, "bob.fs.list option 'pattern' must be a string");
 			return 1;
 		}
 	}
-	elf_stack_pop(S, 1);
-	elf_stack_get_field(S, 1, "recursive");
-	if (!elf_stack_is_nil(S, -1)) {
+	elf_pop(S, 1);
+	elf_get_field(S, 1, "recursive");
+	if (!elf_is_nil(S, -1)) {
 		elf_Integer value;
-		if (!elf_stack_to_int(S, -1, &value)) {
+		if (!elf_to_int(S, -1, &value)) {
 			binding_error(S, script, "bob.fs.list option 'recursive' must be a boolean");
 			return 1;
 		}
 		options.recursive = value != 0;
 	}
-	elf_stack_pop(S, 1);
-	elf_stack_get_field(S, 1, "relative");
-	if (!elf_stack_is_nil(S, -1)) {
+	elf_pop(S, 1);
+	elf_get_field(S, 1, "relative");
+	if (!elf_is_nil(S, -1)) {
 		elf_Integer value;
-		if (!elf_stack_to_int(S, -1, &value)) {
+		if (!elf_to_int(S, -1, &value)) {
 			binding_error(S, script, "bob.fs.list option 'relative' must be a boolean");
 			return 1;
 		}
 		options.relative = value != 0;
 	}
-	elf_stack_pop(S, 1);
-	elf_stack_get_field(S, 1, "kind");
-	if (!elf_stack_is_nil(S, -1))
+	elf_pop(S, 1);
+	elf_get_field(S, 1, "kind");
+	if (!elf_is_nil(S, -1))
 	{
 		String kind = stack_string(S, -1);
 		if (!kind.data) {
@@ -210,39 +211,39 @@ ELF_FUNCTION(l_fs_list)
 			return 1;
 		}
 	}
-	elf_stack_pop(S, 1);
+	elf_pop(S, 1);
 
 	Scratch scratch = begin_different_scratch(script->arena);
-	elf_stack_get_field(S, 1, "patterns");
-	if (!elf_stack_is_nil(S, -1))
+	elf_get_field(S, 1, "patterns");
+	if (!elf_is_nil(S, -1))
 	{
 		if (options.pattern.data) {
 			end_scratch(scratch);
 			binding_error(S, script, "bob.fs.list accepts either 'pattern' or 'patterns', not both");
 			return 1;
 		}
-		if (elf_stack_type(S, -1) != ELF_VALUE_TYPE_TABLE) {
+		if (elf_type(S, -1) != ELF_VALUE_TYPE_TABLE) {
 			end_scratch(scratch);
 			binding_error(S, script, "bob.fs.list option 'patterns' must be a table of strings");
 			return 1;
 		}
 		options.has_patterns = true;
-		elf_stack_length(S, -1, &options.patterns.count);
+		elf_length(S, -1, &options.patterns.count);
 		options.patterns.items = arena_push_zero_aligned(scratch.arena, options.patterns.count * sizeof(String), _Alignof(String));
-		elf_i32 patterns = elf_stack_abs_index(S, -1);
+		elf_i32 patterns = elf_abs_index(S, -1);
 		for (u32 index = 0; index < options.patterns.count; ++index)
 		{
-			elf_stack_get_index(S, patterns, index);
+			elf_get_index(S, patterns, index);
 			options.patterns.items[index] = stack_string(S, -1);
 			if (!options.patterns.items[index].data) {
 				end_scratch(scratch);
 				binding_error(S, script, "bob.fs.list option 'patterns' must contain only strings");
 				return 1;
 			}
-			elf_stack_pop(S, 1);
+			elf_pop(S, 1);
 		}
 	}
-	elf_stack_pop(S, 1);
+	elf_pop(S, 1);
 	String_Array paths;
 	if (!script_list_paths(scratch.arena, options, &paths))
 	{
@@ -250,11 +251,11 @@ ELF_FUNCTION(l_fs_list)
 		binding_error(S, script, "bob.fs.list could not read the root directory");
 		return 1;
 	}
-	elf_stack_new_table(S);
-	elf_i32 result = elf_stack_abs_index(S, -1);
+	elf_new_table(S);
+	elf_i32 result = elf_abs_index(S, -1);
 	for (u32 index = 0; index < paths.count; ++index) {
 		elf_push_str(S, paths.items[index].data, (int)paths.items[index].size);
-		elf_stack_add(S, result);
+		elf_append(S, result);
 	}
 	end_scratch(scratch);
 	return 1;
@@ -263,7 +264,7 @@ ELF_FUNCTION(l_fs_list)
 static int push_path_kind(elf_State *state, b32 files, b32 directories)
 {
 	Script *script = elf_get_user_data(state);
-	if (elf_stack_type(state, 1) != ELF_VALUE_TYPE_STRING) {
+	if (elf_type(state, 1) != ELF_VALUE_TYPE_STRING) {
 		binding_error(state, script, "filesystem query expects a path string");
 		return 1;
 	}
@@ -281,7 +282,7 @@ ELF_FUNCTION(l_fs_exists)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 2 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING) {
+	if (nargs != 2 || elf_type(S, 1) != ELF_VALUE_TYPE_STRING) {
 		binding_error(S, script, "bob.fs.exists expects a path string");
 		return 1;
 	}
@@ -319,7 +320,7 @@ ELF_FUNCTION(l_path_join)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 3 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_stack_type(S, 2) != ELF_VALUE_TYPE_STRING)
+	if (nargs != 3 || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_type(S, 2) != ELF_VALUE_TYPE_STRING)
 	{
 		binding_error(S, script, "bob.path.join expects two path strings");
 		return 1;
@@ -343,7 +344,7 @@ static int transfer_file(elf_State *state, int nargs, b32 move)
 	String source = {0};
 	String destination = {0};
 	b32 overwrite = true;
-	if (elf_stack_type(state, 1) == ELF_VALUE_TYPE_TABLE)
+	if (elf_type(state, 1) == ELF_VALUE_TYPE_TABLE)
 	{
 		if (nargs != 2) {
 			binding_error(state, script, move ? "bob.fs.move_file options must be passed in one table" : "bob.fs.copy_file options must be passed in one table");
@@ -361,7 +362,7 @@ static int transfer_file(elf_State *state, int nargs, b32 move)
 	}
 	else
 	{
-		if ((nargs != 3 && nargs != 4) || elf_stack_type(state, 1) != ELF_VALUE_TYPE_STRING || elf_stack_type(state, 2) != ELF_VALUE_TYPE_STRING || (nargs == 4 && elf_stack_type(state, 3) != ELF_VALUE_TYPE_INTEGER))
+		if ((nargs != 3 && nargs != 4) || elf_type(state, 1) != ELF_VALUE_TYPE_STRING || elf_type(state, 2) != ELF_VALUE_TYPE_STRING || (nargs == 4 && elf_type(state, 3) != ELF_VALUE_TYPE_INTEGER))
 		{
 			binding_error(state, script, move ? "bob.fs.move_file expects (from, to, overwrite?)" : "bob.fs.copy_file expects (from, to, overwrite?)");
 			return 1;
@@ -370,7 +371,7 @@ static int transfer_file(elf_State *state, int nargs, b32 move)
 		destination = stack_string(state, 2);
 		if (nargs == 4) {
 			elf_Integer value;
-			elf_stack_to_int(state, 3, &value);
+			elf_to_int(state, 3, &value);
 			overwrite = value != 0;
 		}
 	}
@@ -409,7 +410,7 @@ ELF_FUNCTION(l_fs_remove)
 		binding_error(S, script, "bob.fs.remove expects arguments");
 		return 1;
 	}
-	if (elf_stack_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	if (elf_type(S, 1) == ELF_VALUE_TYPE_TABLE)
 	{
 		if (nargs != 2) {
 			binding_error(S, script, "bob.fs.remove options must be passed in one table");
@@ -426,7 +427,7 @@ ELF_FUNCTION(l_fs_remove)
 	}
 	else
 	{
-		if ((nargs != 2 && nargs != 3) || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_stack_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
+		if ((nargs != 2 && nargs != 3) || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
 		{
 			binding_error(S, script, "bob.fs.remove expects (path, recursive?)");
 			return 1;
@@ -434,7 +435,7 @@ ELF_FUNCTION(l_fs_remove)
 		path = stack_string(S, 1);
 		if (nargs == 3) {
 			elf_Integer value;
-			elf_stack_to_int(S, 2, &value);
+			elf_to_int(S, 2, &value);
 			recursive = value != 0;
 		}
 	}
@@ -459,7 +460,7 @@ ELF_FUNCTION(l_fs_create_directory)
 		binding_error(S, script, "bob.fs.create_directory expects arguments");
 		return 1;
 	}
-	if (elf_stack_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	if (elf_type(S, 1) == ELF_VALUE_TYPE_TABLE)
 	{
 		if (nargs != 2) {
 			binding_error(S, script, "bob.fs.create_directory options must be passed in one table");
@@ -476,7 +477,7 @@ ELF_FUNCTION(l_fs_create_directory)
 	}
 	else
 	{
-		if ((nargs != 2 && nargs != 3) || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_stack_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
+		if ((nargs != 2 && nargs != 3) || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
 		{
 			binding_error(S, script, "bob.fs.create_directory expects (path, recursive?)");
 			return 1;
@@ -484,7 +485,7 @@ ELF_FUNCTION(l_fs_create_directory)
 		path = stack_string(S, 1);
 		if (nargs == 3) {
 			elf_Integer value;
-			elf_stack_to_int(S, 2, &value);
+			elf_to_int(S, 2, &value);
 			recursive = value != 0;
 		}
 	}
@@ -510,7 +511,7 @@ ELF_FUNCTION(l_fs_write_file)
 		binding_error(S, script, "bob.fs.write_file expects arguments");
 		return 1;
 	}
-	if (elf_stack_type(S, 1) == ELF_VALUE_TYPE_TABLE)
+	if (elf_type(S, 1) == ELF_VALUE_TYPE_TABLE)
 	{
 		if (nargs != 2) {
 			binding_error(S, script, "bob.fs.write_file options must be passed in one table");
@@ -521,7 +522,7 @@ ELF_FUNCTION(l_fs_write_file)
 	}
 	else
 	{
-		if (nargs != 3 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_stack_type(S, 2) != ELF_VALUE_TYPE_STRING)
+		if (nargs != 3 || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_type(S, 2) != ELF_VALUE_TYPE_STRING)
 		{
 			binding_error(S, script, "bob.fs.write_file expects (path, contents)");
 			return 1;
@@ -543,7 +544,7 @@ ELF_FUNCTION(l_fs_write_file)
 static int push_environment(elf_State *state, int nargs, b32 has_only)
 {
 	Script *script = elf_get_user_data(state);
-	if (nargs != 2 || elf_stack_type(state, 1) != ELF_VALUE_TYPE_STRING) {
+	if (nargs != 2 || elf_type(state, 1) != ELF_VALUE_TYPE_STRING) {
 		binding_error(state, script, has_only ? "bob.env.has expects a variable name" : "bob.env.get expects a variable name");
 		return 1;
 	}
@@ -579,7 +580,7 @@ ELF_FUNCTION(l_env_set)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 3 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_stack_type(S, 2) != ELF_VALUE_TYPE_STRING) {
+	if (nargs != 3 || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || elf_type(S, 2) != ELF_VALUE_TYPE_STRING) {
 		binding_error(S, script, "bob.env.set expects a variable name and value");
 		return 1;
 	}
@@ -595,7 +596,7 @@ ELF_FUNCTION(l_env_unset)
 {
 	(void)nrets;
 	Script *script = elf_get_user_data(S);
-	if (nargs != 2 || elf_stack_type(S, 1) != ELF_VALUE_TYPE_STRING) {
+	if (nargs != 2 || elf_type(S, 1) != ELF_VALUE_TYPE_STRING) {
 		binding_error(S, script, "bob.env.unset expects a variable name");
 		return 1;
 	}
@@ -609,26 +610,26 @@ ELF_FUNCTION(l_env_unset)
 static b32 set_function(elf_State *state, elf_i32 table, const char *name, elf_Function function)
 {
 	elf_push_fun(state, function);
-	return elf_stack_set_field(state, table, name);
+	return elf_set_field(state, table, name);
 }
 
 static b32 register_bob_library(elf_State *state)
 {
-	elf_i32 checkpoint = elf_stack_get_top(state);
-	elf_stack_new_table(state);
-	elf_i32 bob = elf_stack_abs_index(state, -1);
+	elf_i32 checkpoint = elf_get_top(state);
+	elf_new_table(state);
+	elf_i32 bob = elf_abs_index(state, -1);
 
 	if (!set_function(state, bob, "build", l_bob_build)) goto error;
 	elf_push_cstr(state, BOB_VERSION);
-	if (!elf_stack_set_field(state, bob, "version")) goto error;
+	if (!elf_set_field(state, bob, "version")) goto error;
 
-	elf_stack_new_table(state);
-	elf_i32 strings = elf_stack_abs_index(state, -1);
+	elf_new_table(state);
+	elf_i32 strings = elf_abs_index(state, -1);
 	if (!set_function(state, strings, "expand", l_strings_expand)) goto error;
-	if (!elf_stack_set_field(state, bob, "strings")) goto error;
+	if (!elf_set_field(state, bob, "strings")) goto error;
 
-	elf_stack_new_table(state);
-	elf_i32 fs = elf_stack_abs_index(state, -1);
+	elf_new_table(state);
+	elf_i32 fs = elf_abs_index(state, -1);
 	if (!set_function(state, fs, "list", l_fs_list)) goto error;
 	if (!set_function(state, fs, "exists", l_fs_exists)) goto error;
 	if (!set_function(state, fs, "is_file", l_fs_is_file)) goto error;
@@ -638,26 +639,26 @@ static b32 register_bob_library(elf_State *state)
 	if (!set_function(state, fs, "remove", l_fs_remove)) goto error;
 	if (!set_function(state, fs, "create_directory", l_fs_create_directory)) goto error;
 	if (!set_function(state, fs, "write_file", l_fs_write_file)) goto error;
-	if (!elf_stack_set_field(state, bob, "fs")) goto error;
+	if (!elf_set_field(state, bob, "fs")) goto error;
 
-	elf_stack_new_table(state);
-	elf_i32 path = elf_stack_abs_index(state, -1);
+	elf_new_table(state);
+	elf_i32 path = elf_abs_index(state, -1);
 	if (!set_function(state, path, "join", l_path_join)) goto error;
-	if (!elf_stack_set_field(state, bob, "path")) goto error;
+	if (!elf_set_field(state, bob, "path")) goto error;
 
-	elf_stack_new_table(state);
-	elf_i32 env = elf_stack_abs_index(state, -1);
+	elf_new_table(state);
+	elf_i32 env = elf_abs_index(state, -1);
 	if (!set_function(state, env, "get", l_env_get)) goto error;
 	if (!set_function(state, env, "has", l_env_has)) goto error;
 	if (!set_function(state, env, "set", l_env_set)) goto error;
 	if (!set_function(state, env, "unset", l_env_unset)) goto error;
-	if (!elf_stack_set_field(state, bob, "env")) goto error;
+	if (!elf_set_field(state, bob, "env")) goto error;
 
-	if (!elf_stack_set_global(state, "bob")) goto error;
+	if (!elf_set_global(state, "bob")) goto error;
 	return true;
 
 error:
-	elf_stack_set_top(state, checkpoint);
+	elf_set_top(state, checkpoint);
 	return false;
 }
 
@@ -671,61 +672,72 @@ b32 elf_script_load(Script *script, String path)
 		return false;
 	}
 	elf_set_user_data(elf->state, script);
+	elf_open_batteries(elf->state);
 	if (!register_bob_library(elf->state)) {
 		script_set_error(script, "unable to register Bob script libraries");
 		return false;
 	}
-	if (!elf_push_code_file(elf->state, path.data)) {
+	String source;
+	if (!platform_read_entire_file(script->arena, path, &source)) {
+		script_set_error(script, "unable to read '%s'", path.data);
+		return false;
+	}
+	if (source.size > UINT32_MAX) {
+		script_set_error(script, "script is too large: '%s'", path.data);
+		return false;
+	}
+	if (!elf_push_code_source(elf->state, path.data,
+	                          (elf_StrSlice){ source.data, (elf_u32)source.size })) {
 		script_set_error(script, "unable to load '%s'", path.data);
 		return false;
 	}
 	elf_push_nil(elf->state);
 	elf_call(elf->state, 1, 1);
 	if (script->failed) {
-		elf_stack_pop(elf->state, 1);
+		elf_pop(elf->state, 1);
 		return false;
 	}
 
-	if (elf_stack_type(elf->state, -1) != ELF_VALUE_TYPE_TABLE) {
+	if (elf_type(elf->state, -1) != ELF_VALUE_TYPE_TABLE) {
 		script_set_error(script, "script must return a table");
 		return false;
 	}
-	elf->exports = elf_stack_create_ref(elf->state, -1);
-	elf_stack_pop(elf->state, 1);
+	elf->exports = elf_create_ref(elf->state, -1);
+	elf_pop(elf->state, 1);
 	if (elf->exports == ELF_NO_REF) {
 		script_set_error(script, "unable to retain script exports");
 		return false;
 	}
 
-	elf_i32 checkpoint = elf_stack_get_top(elf->state);
+	elf_i32 checkpoint = elf_get_top(elf->state);
 	elf_push_ref(elf->state, elf->exports);
-	elf_i32 exports = elf_stack_abs_index(elf->state, -1);
+	elf_i32 exports = elf_abs_index(elf->state, -1);
 	elf_u32 cursor = 0;
-	while (elf_stack_next(elf->state, exports, &cursor)) {
+	while (elf_next(elf->state, exports, &cursor)) {
 		elf_StrSlice name;
-		if (elf_stack_to_str(elf->state, -2, &name) && elf_stack_is_callable(elf->state, -1)) ++script->functions.count;
-		elf_stack_pop(elf->state, 2);
+		if (elf_to_str(elf->state, -2, &name) && elf_is_callable(elf->state, -1)) ++script->functions.count;
+		elf_pop(elf->state, 2);
 	}
 	script->functions.items = arena_push_zero_aligned(script->arena, script->functions.count * sizeof(String), _Alignof(String));
 	cursor = 0;
 	u32 function_index = 0;
-	while (elf_stack_next(elf->state, exports, &cursor))
+	while (elf_next(elf->state, exports, &cursor))
 	{
 		elf_StrSlice slice;
-		if (elf_stack_to_str(elf->state, -2, &slice) && elf_stack_is_callable(elf->state, -1)) {
+		if (elf_to_str(elf->state, -2, &slice) && elf_is_callable(elf->state, -1)) {
 			String name = string_from_data(slice.data, slice.size);
 			script->functions.items[function_index++] = arena_push_string_copy(script->arena, name);
 		}
-		elf_stack_pop(elf->state, 2);
+		elf_pop(elf->state, 2);
 	}
-	elf_stack_set_top(elf->state, checkpoint);
+	elf_set_top(elf->state, checkpoint);
 	return true;
 }
 
 void elf_script_destroy(Script *script)
 {
 	Elf_Script *elf = script->context;
-	if (elf->exports != ELF_NO_REF) elf_stack_release_ref(elf->state, elf->exports);
+	if (elf->exports != ELF_NO_REF) elf_release_ref(elf->state, elf->exports);
 	if (elf->state) elf_destroy_state(elf->state);
 	elf->exports = ELF_NO_REF;
 	elf->state = NULL;
@@ -734,16 +746,16 @@ void elf_script_destroy(Script *script)
 b32 elf_script_invoke(Script *script, String name)
 {
 	Elf_Script *elf = script->context;
-	elf_i32 checkpoint = elf_stack_get_top(elf->state);
+	elf_i32 checkpoint = elf_get_top(elf->state);
 	if (!elf_push_ref(elf->state, elf->exports)) return false;
-	elf_i32 exports = elf_stack_abs_index(elf->state, -1);
-	if (!elf_stack_get_field(elf->state, exports, name.data) || !elf_stack_is_callable(elf->state, -1)) {
-		elf_stack_set_top(elf->state, checkpoint);
+	elf_i32 exports = elf_abs_index(elf->state, -1);
+	if (!elf_get_field(elf->state, exports, name.data) || !elf_is_callable(elf->state, -1)) {
+		elf_set_top(elf->state, checkpoint);
 		return false;
 	}
 	elf_push_nil(elf->state);
 	elf_call(elf->state, 1, 0);
-	elf_stack_set_top(elf->state, checkpoint);
+	elf_set_top(elf->state, checkpoint);
 	return true;
 }
 
@@ -755,34 +767,34 @@ static String copy_stack_string(Arena *arena, elf_State *state, elf_i32 index)
 
 static b32 copy_string_array_field(elf_State *state, Arena *arena, elf_i32 table, const char *field_name, String task_name, String_Array *result, char *error, size_t error_size)
 {
-	elf_i32 checkpoint = elf_stack_get_top(state);
+	elf_i32 checkpoint = elf_get_top(state);
 	*result = (String_Array){0};
-	if (!elf_stack_get_field(state, table, field_name)) return false;
-	if (elf_stack_is_nil(state, -1)) {
-		elf_stack_set_top(state, checkpoint);
+	if (!elf_get_field(state, table, field_name)) return false;
+	if (elf_is_nil(state, -1)) {
+		elf_set_top(state, checkpoint);
 		return true;
 	}
-	elf_i32 array = elf_stack_abs_index(state, -1);
+	elf_i32 array = elf_abs_index(state, -1);
 	elf_u32 count = 0;
-	if (!elf_stack_length(state, array, &count)) {
+	if (!elf_length(state, array, &count)) {
 		snprintf(error, error_size, "%s for '%s' must be a table", field_name, task_name.data);
-		elf_stack_set_top(state, checkpoint);
+		elf_set_top(state, checkpoint);
 		return false;
 	}
 	result->count = count;
 	result->items = arena_push_zero_aligned(arena, count * sizeof(*result->items), _Alignof(String));
 	for (elf_u32 i = 0; i < count; ++i)
 	{
-		elf_stack_get_index(state, array, i);
+		elf_get_index(state, array, i);
 		result->items[i] = copy_stack_string(arena, state, -1);
-		elf_stack_pop(state, 1);
+		elf_pop(state, 1);
 		if (!result->items[i].data) {
 			snprintf(error, error_size, "%s for '%s' must contain strings", field_name, task_name.data);
-			elf_stack_set_top(state, checkpoint);
+			elf_set_top(state, checkpoint);
 			return false;
 		}
 	}
-	elf_stack_set_top(state, checkpoint);
+	elf_set_top(state, checkpoint);
 	return true;
 }
 
@@ -796,12 +808,12 @@ Ref_List;
 
 static u32 ref_list_find(Ref_List *list, elf_State *state, elf_i32 value)
 {
-	elf_i32 absolute = elf_stack_abs_index(state, value);
+	elf_i32 absolute = elf_abs_index(state, value);
 	for (u32 i = 0; i < list->count; ++i)
 	{
 		if (!elf_push_ref(state, list->items[i])) continue;
-		b32 equal = elf_stack_equal(state, absolute, -1);
-		elf_stack_pop(state, 1);
+		b32 equal = elf_equal(state, absolute, -1);
+		elf_pop(state, 1);
 		if (equal) return i;
 	}
 	return UINT32_MAX;
@@ -810,7 +822,7 @@ static u32 ref_list_find(Ref_List *list, elf_State *state, elf_i32 value)
 static b32 ref_list_add(Ref_List *list, elf_State *state, elf_i32 value)
 {
 	if (ref_list_find(list, state, value) != UINT32_MAX) return true;
-	elf_Ref reference = elf_stack_create_ref(state, value);
+	elf_Ref reference = elf_create_ref(state, value);
 	if (reference == ELF_NO_REF) return false;
 	elf_Ref *item = arena_push_aligned(list->arena, sizeof(*item), _Alignof(elf_Ref));
 	if (!list->items) list->items = item;
@@ -824,18 +836,18 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 	if (!script || !result) return false;
 	Elf_Script *elf = script->context;
 	elf_State *state = elf->state;
-	elf_i32 checkpoint = elf_stack_get_top(state);
-	root = elf_stack_abs_index(state, root);
+	elf_i32 checkpoint = elf_get_top(state);
+	root = elf_abs_index(state, root);
 	Scratch scratch = begin_scratch();
 	Ref_List task_tables = { .arena = scratch.arena };
 	b32 success = false;
 	memset(result, 0, sizeof(*result));
 
-	elf_stack_get_field(state, root, "options");
-	if (!elf_stack_is_nil(state, -1))
+	elf_get_field(state, root, "options");
+	if (!elf_is_nil(state, -1))
 	{
-		elf_i32 options = elf_stack_abs_index(state, -1);
-		if (elf_stack_type(state, options) != ELF_VALUE_TYPE_TABLE) {
+		elf_i32 options = elf_abs_index(state, -1);
+		if (elf_type(state, options) != ELF_VALUE_TYPE_TABLE) {
 			snprintf(result->error, sizeof(result->error), "returned 'options' field must be a table");
 			goto cleanup;
 		}
@@ -858,19 +870,19 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			result->options.has_verbosity = true;
 		}
 	}
-	elf_stack_pop(state, 1);
+	elf_pop(state, 1);
 
-	elf_stack_get_field(state, root, "targets");
-	elf_i32 targets = elf_stack_abs_index(state, -1);
+	elf_get_field(state, root, "targets");
+	elf_i32 targets = elf_abs_index(state, -1);
 	elf_u32 target_count = 0;
-	if (!elf_stack_length(state, targets, &target_count)) {
+	if (!elf_length(state, targets, &target_count)) {
 		snprintf(result->error, sizeof(result->error), "returned table requires a 'targets' table");
 		goto cleanup;
 	}
 	for (elf_u32 i = 0; i < target_count; ++i)
 	{
-		elf_stack_get_index(state, targets, i);
-		if (elf_stack_type(state, -1) != ELF_VALUE_TYPE_TABLE) {
+		elf_get_index(state, targets, i);
+		if (elf_type(state, -1) != ELF_VALUE_TYPE_TABLE) {
 			snprintf(result->error, sizeof(result->error), "target %u must be a task table", i);
 			goto cleanup;
 		}
@@ -878,30 +890,30 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			snprintf(result->error, sizeof(result->error), "unable to retain target %u", i);
 			goto cleanup;
 		}
-		elf_stack_pop(state, 1);
+		elf_pop(state, 1);
 	}
-	elf_stack_pop(state, 1);
+	elf_pop(state, 1);
 
 	for (u32 i = 0; i < task_tables.count; ++i)
 	{
-		elf_i32 task_checkpoint = elf_stack_get_top(state);
+		elf_i32 task_checkpoint = elf_get_top(state);
 		elf_push_ref(state, task_tables.items[i]);
-		elf_i32 task = elf_stack_abs_index(state, -1);
-		elf_stack_get_field(state, task, "dependencies");
-		if (elf_stack_is_nil(state, -1)) {
-			elf_stack_set_top(state, task_checkpoint);
+		elf_i32 task = elf_abs_index(state, -1);
+		elf_get_field(state, task, "dependencies");
+		if (elf_is_nil(state, -1)) {
+			elf_set_top(state, task_checkpoint);
 			continue;
 		}
-		elf_i32 dependencies = elf_stack_abs_index(state, -1);
+		elf_i32 dependencies = elf_abs_index(state, -1);
 		elf_u32 dependency_count = 0;
-		if (!elf_stack_length(state, dependencies, &dependency_count)) {
+		if (!elf_length(state, dependencies, &dependency_count)) {
 			snprintf(result->error, sizeof(result->error), "dependencies for task %u must be a table", i);
 			goto cleanup;
 		}
 		for (elf_u32 dependency = 0; dependency < dependency_count; ++dependency)
 		{
-			elf_stack_get_index(state, dependencies, dependency);
-			if (elf_stack_type(state, -1) != ELF_VALUE_TYPE_TABLE) {
+			elf_get_index(state, dependencies, dependency);
+			if (elf_type(state, -1) != ELF_VALUE_TYPE_TABLE) {
 				snprintf(result->error, sizeof(result->error), "dependencies for task %u must contain task tables", i);
 				goto cleanup;
 			}
@@ -909,9 +921,9 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 				snprintf(result->error, sizeof(result->error), "unable to retain dependency for task %u", i);
 				goto cleanup;
 			}
-			elf_stack_pop(state, 1);
+			elf_pop(state, 1);
 		}
-		elf_stack_set_top(state, task_checkpoint);
+		elf_set_top(state, task_checkpoint);
 	}
 
 	result->bob = bob_create();
@@ -922,16 +934,16 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 
 	for (u32 i = 0; i < task_tables.count; ++i)
 	{
-		elf_i32 task_checkpoint = elf_stack_get_top(state);
+		elf_i32 task_checkpoint = elf_get_top(state);
 		elf_push_ref(state, task_tables.items[i]);
-		elf_i32 description = elf_stack_abs_index(state, -1);
+		elf_i32 description = elf_abs_index(state, -1);
 		Bob_Task task = {0};
-		elf_stack_get_field(state, description, "name");
+		elf_get_field(state, description, "name");
 		task.name = copy_stack_string(scratch.arena, state, -1);
-		elf_stack_pop(state, 1);
-		elf_stack_get_field(state, description, "command_line");
+		elf_pop(state, 1);
+		elf_get_field(state, description, "command_line");
 		task.command_line = copy_stack_string(scratch.arena, state, -1);
-		elf_stack_pop(state, 1);
+		elf_pop(state, 1);
 		if (!task.name.data || !task.command_line.data) {
 			snprintf(result->error, sizeof(result->error), "task %u requires string fields 'name' and 'command_line'", i);
 			goto cleanup;
@@ -952,27 +964,27 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			snprintf(result->error, sizeof(result->error), "unable to add task '%s': %s", task.name.data, bob_error_string(bob_error));
 			goto cleanup;
 		}
-		elf_stack_set_top(state, task_checkpoint);
+		elf_set_top(state, task_checkpoint);
 	}
 
 	for (u32 i = 0; i < task_tables.count; ++i)
 	{
-		elf_i32 task_checkpoint = elf_stack_get_top(state);
+		elf_i32 task_checkpoint = elf_get_top(state);
 		elf_push_ref(state, task_tables.items[i]);
-		elf_i32 description = elf_stack_abs_index(state, -1);
-		elf_stack_get_field(state, description, "dependencies");
-		if (elf_stack_is_nil(state, -1)) {
-			elf_stack_set_top(state, task_checkpoint);
+		elf_i32 description = elf_abs_index(state, -1);
+		elf_get_field(state, description, "dependencies");
+		if (elf_is_nil(state, -1)) {
+			elf_set_top(state, task_checkpoint);
 			continue;
 		}
-		elf_i32 dependencies = elf_stack_abs_index(state, -1);
+		elf_i32 dependencies = elf_abs_index(state, -1);
 		elf_u32 dependency_count = 0;
-		elf_stack_length(state, dependencies, &dependency_count);
+		elf_length(state, dependencies, &dependency_count);
 		for (elf_u32 dependency = 0; dependency < dependency_count; ++dependency)
 		{
-			elf_stack_get_index(state, dependencies, dependency);
+			elf_get_index(state, dependencies, dependency);
 			u32 resolved = ref_list_find(&task_tables, state, -1);
-			elf_stack_pop(state, 1);
+			elf_pop(state, 1);
 			if (resolved == UINT32_MAX) {
 				snprintf(result->error, sizeof(result->error), "unable to resolve dependency for task %u", i);
 				goto cleanup;
@@ -985,13 +997,13 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 				goto cleanup;
 			}
 		}
-		elf_stack_set_top(state, task_checkpoint);
+		elf_set_top(state, task_checkpoint);
 	}
 	success = true;
 
 cleanup:
-	elf_stack_set_top(state, checkpoint);
-	for (u32 i = 0; i < task_tables.count; ++i) elf_stack_release_ref(state, task_tables.items[i]);
+	elf_set_top(state, checkpoint);
+	for (u32 i = 0; i < task_tables.count; ++i) elf_release_ref(state, task_tables.items[i]);
 	end_scratch(scratch);
 	if (!success)
 	{
@@ -1007,10 +1019,10 @@ cleanup:
 b32 elf_script_read_build(Script *script, Script_Build *result)
 {
 	Elf_Script *elf = script->context;
-	elf_i32 checkpoint = elf_stack_get_top(elf->state);
+	elf_i32 checkpoint = elf_get_top(elf->state);
 	if (!elf_push_ref(elf->state, elf->exports)) return false;
-	elf_i32 root = elf_stack_abs_index(elf->state, -1);
+	elf_i32 root = elf_abs_index(elf->state, -1);
 	b32 success = read_build_table(script, root, result);
-	elf_stack_set_top(elf->state, checkpoint);
+	elf_set_top(elf->state, checkpoint);
 	return success;
 }
