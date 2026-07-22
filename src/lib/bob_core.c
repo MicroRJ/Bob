@@ -1,7 +1,7 @@
 #include "bob.h"
 #include "c_include_scan.h"
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 #include "profiler.h"
 
 typedef struct Builder Builder;
@@ -208,7 +208,7 @@ static void report_completion(const Completion *completion)
 		logger_log_at(1, LOG_LEVEL_ERROR, "command", "%s", command_line.data);
 		{
 			String message;
-			if (platform_error_message(completion->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", completion->process.error_code, message.data);
+			if (bob_platform_error_message(completion->process.error_code, scratch.arena, &message)) logger_log(LOG_LEVEL_ERROR, "os", "error %u: %s", completion->process.error_code, message.data);
 			else logger_log(LOG_LEVEL_ERROR, "os", "error %u", completion->process.error_code);
 		}
 		executable = command_executable(scratch.arena, command_line);

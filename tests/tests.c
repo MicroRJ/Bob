@@ -4,7 +4,7 @@
 #include "c_include_scan.h"
 #include "compiler_command.h"
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 #include "vcvars_cache.h"
 
 #define WIN32_LEAN_AND_MEAN

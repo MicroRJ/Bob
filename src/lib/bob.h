@@ -2,7 +2,7 @@
 #define BOB_H
 
 #include "base.h"
-#include "platform\platform.h"
+#include "platform_adapter.h"
 
 #define BOB_VERSION "0.1.0-dev"
 

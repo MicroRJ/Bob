@@ -103,6 +103,17 @@ int main(void)
 	Platform_String_Result environment_block = platform_get_environment_block(NULL, 0);
 	assert(environment_block.error == PLATFORM_ERROR_NONE);
 	assert(environment_block.required_capacity > 1);
+	Platform_Process_Start_Result missing_process = platform_start_process("platform-test-command-that-does-not-exist", (Platform_Process_Options){0});
+	assert(missing_process.error == PLATFORM_ERROR_NOT_FOUND);
+	assert(missing_process.os_error != 0);
+	Platform_String_Result error_message_query = platform_error_message(missing_process.os_error, NULL, 0);
+	assert(error_message_query.error == PLATFORM_ERROR_NONE);
+	assert(error_message_query.size > 0);
+	char error_message[512];
+	Platform_String_Result error_message_read = platform_error_message(missing_process.os_error, error_message, sizeof(error_message));
+	assert(error_message_read.error == PLATFORM_ERROR_NONE);
+	assert(error_message_read.size > 0);
+	assert(platform_write_console(PLATFORM_STANDARD_OUTPUT, NULL, 0).error == PLATFORM_ERROR_NONE);
 
 	Platform_Process_Start_Result start = platform_start_process("cmd.exe /d /c echo platapuss", (Platform_Process_Options){ .capture_standard_output = PLATFORM_TRUE, .capture_standard_error = PLATFORM_TRUE, .hide_window = PLATFORM_TRUE });
 	assert(start.error == PLATFORM_ERROR_NONE);

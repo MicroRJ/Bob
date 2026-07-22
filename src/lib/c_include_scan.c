@@ -1,6 +1,6 @@
 #include "c_include_scan.h"
 #include "compiler_command.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 
 #include <stdio.h>
 #include <stdlib.h>

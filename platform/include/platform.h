@@ -81,6 +81,17 @@ typedef struct Platform_Environment_Result {
 	B32 found;
 } Platform_Environment_Result;
 
+typedef enum Platform_Standard_Stream {
+	PLATFORM_STANDARD_OUTPUT,
+	PLATFORM_STANDARD_ERROR,
+} Platform_Standard_Stream;
+
+typedef struct Platform_Write_Result {
+	U64 size;
+	Platform_Error error;
+	U32 os_error;
+} Platform_Write_Result;
+
 typedef struct Platform_Directory {
 	UPtr handle;
 } Platform_Directory;
@@ -186,6 +197,11 @@ void platform_close_directory(Platform_Directory *directory);
 Platform_Environment_Result platform_get_environment(const char *name, char *buffer, U64 capacity);
 Platform_Result platform_set_environment(const char *name, const char *value);
 Platform_String_Result platform_get_environment_block(char *buffer, U64 capacity);
+B32 platform_stream_is_console(Platform_Standard_Stream stream);
+B32 platform_console_supports_colors(Platform_Standard_Stream stream);
+Platform_Result platform_enable_console_colors(Platform_Standard_Stream stream);
+Platform_Write_Result platform_write_console(Platform_Standard_Stream stream, const void *data, U64 size);
+Platform_String_Result platform_error_message(U32 os_error, char *buffer, U64 capacity);
 B32 platform_get_file_size(Platform_File file, U64 *size);
 B32 platform_set_file_cursor(Platform_File file, Platform_Seek_Origin origin, I64 distance, U64 *position);
 B32 platform_read_file(Platform_File file, void *data, U64 size, U64 *bytes_read);

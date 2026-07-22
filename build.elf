@@ -12,7 +12,7 @@ core_sources := {
 	{ name = "script_path",   path = "src/scripts/libs/path.c" },
 	{ name = "script_fs",     path = "src/scripts/libs/filesystem.c" },
 	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
-	{ name = "platform",     path = "src/platform/win32/platform_win32.c" },
+	{ name = "platform",     path = "src/platform_adapter.c" },
 }
 
 cc := "clang-cl"
@@ -20,7 +20,6 @@ cc := "clang-cl"
 include_dirs := {
 	"src",
 	"src/lib",
-	"src/platform",
 	"elf/include",
 }
 

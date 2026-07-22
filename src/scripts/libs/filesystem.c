@@ -1,6 +1,6 @@
 #include "scripts/libs/filesystem.h"
 
-#include "platform/platform.h"
+#include "platform_adapter.h"
 #include "scripts/libs/path.h"
 
 #include <stdlib.h>

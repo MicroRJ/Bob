@@ -4,7 +4,7 @@
 
 #include "elf.h"
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 #include "profiler.h"
 #include "scripts/libs/filesystem.h"
 #include "scripts/libs/path.h"

@@ -1,7 +1,7 @@
 #include "profiler.h"
 
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 
 #include <stdatomic.h>
 #include <stdio.h>

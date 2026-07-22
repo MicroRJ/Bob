@@ -1,3 +1,7 @@
+#include "platform_adapter.h"
+
+#include <stdlib.h>
+
 typedef struct Shared_Platform_Process {
 	u64 handle;
 	u64 standard_output;
@@ -114,6 +118,8 @@ enum {
 	SHARED_PROCESS_WAIT_FAILED,
 };
 
+#define BOB_PLATFORM_ERROR_OUT_OF_MEMORY UINT32_MAX
+
 void platform_virtual_release(void *memory);
 u64 platform_counter(void);
 u64 platform_counter_frequency(void);
@@ -156,6 +162,9 @@ void platform_close_directory(Shared_Platform_Directory *directory);
 Shared_Platform_Environment_Result platform_get_environment(const char *name, char *buffer, u64 capacity);
 Shared_Platform_Result platform_set_environment(const char *name, const char *value);
 Shared_Platform_String_Result platform_get_environment_block(char *buffer, u64 capacity);
+i32 platform_console_supports_colors(i32 stream);
+Shared_Platform_Result platform_enable_console_colors(i32 stream);
+Shared_Platform_String_Result platform_error_message(u32 os_error, char *buffer, u64 capacity);
 
 struct Platform_Thread {
 	Shared_Platform_Thread thread;
@@ -423,7 +432,7 @@ static b32 append_process_pipe(Shared_Platform_Process *process, Arena *arena, b
 		return false;
 	}
 	if (read.size && !arena_push_copy(arena, read.size, buffer)) {
-		*error_code = ERROR_NOT_ENOUGH_MEMORY;
+		*error_code = BOB_PLATFORM_ERROR_OUT_OF_MEMORY;
 		return false;
 	}
 	return read.size != 0;
@@ -470,26 +479,45 @@ failure:
 	return false;
 }
 
-b32 platform_error_message(u32 error_code, Arena *arena, String *result)
+b32 bob_platform_error_message(u32 error_code, Arena *arena, String *result)
 {
-	u64 mark;
-	char *data;
-	DWORD length;
 	if (!error_code || !arena || !result) return false;
-	mark = arena_mark(arena);
-	data = arena_reserve(arena, KILOBYTES(4));
+	Shared_Platform_String_Result query = platform_error_message(error_code, NULL, 0);
+	if (query.error || query.required_capacity == 0) return false;
+	u64 mark = arena_mark(arena);
+	char *data = arena_reserve(arena, query.required_capacity);
 	if (!data) return false;
-	length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, error_code, 0, data, KILOBYTES(4), NULL);
-	if (!length) return false;
-	while (length && (data[length - 1] == '\r' || data[length - 1] == '\n' || data[length - 1] == ' ')) --length;
-	data[length] = 0;
-	if (!arena_push(arena, length + 1)) {
+	Shared_Platform_String_Result read = platform_error_message(error_code, data, query.required_capacity);
+	if (read.error || !arena_push(arena, query.required_capacity)) {
 		arena_restore(arena, mark);
 		return false;
 	}
 	result->data = data;
-	result->size = length;
+	result->size = read.size;
 	return true;
+}
+
+static Shared_Platform_Mutex bob_output_mutex;
+static b32 bob_output_mutex_initialized;
+
+void bob_platform_enable_console_colors(void)
+{
+	if (!bob_output_mutex_initialized) {
+		platform_init_mutex(&bob_output_mutex);
+		bob_output_mutex_initialized = true;
+	}
+	platform_enable_console_colors(0);
+	platform_enable_console_colors(1);
+}
+
+void platform_output_lock(void)
+{
+	platform_lock_mutex(&bob_output_mutex);
+}
+
+void platform_output_unlock(void)
+{
+	platform_unlock_mutex(&bob_output_mutex);
 }
 
 Platform_Thread *platform_thread_create(Platform_Thread_Function *function, void *data)

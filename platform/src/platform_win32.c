@@ -440,6 +440,99 @@ Platform_String_Result platform_get_environment_block(char *buffer, U64 capacity
 	return result;
 }
 
+static HANDLE win32_standard_stream(Platform_Standard_Stream stream)
+{
+	if (stream == PLATFORM_STANDARD_OUTPUT) return GetStdHandle(STD_OUTPUT_HANDLE);
+	if (stream == PLATFORM_STANDARD_ERROR) return GetStdHandle(STD_ERROR_HANDLE);
+	return NULL;
+}
+
+B32 platform_stream_is_console(Platform_Standard_Stream stream)
+{
+	HANDLE handle = win32_standard_stream(stream);
+	DWORD mode = 0;
+	return handle && handle != INVALID_HANDLE_VALUE && GetConsoleMode(handle, &mode) != 0;
+}
+
+B32 platform_console_supports_colors(Platform_Standard_Stream stream)
+{
+	HANDLE handle = win32_standard_stream(stream);
+	DWORD mode = 0;
+	return handle && handle != INVALID_HANDLE_VALUE && GetConsoleMode(handle, &mode) && (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+}
+
+Platform_Result platform_enable_console_colors(Platform_Standard_Stream stream)
+{
+	Platform_Result result = {0};
+	HANDLE handle = win32_standard_stream(stream);
+	DWORD mode = 0;
+	if (!handle || handle == INVALID_HANDLE_VALUE) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	if (!GetConsoleMode(handle, &mode)) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	if (!SetConsoleMode(handle, mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+	}
+	return result;
+}
+
+Platform_Write_Result platform_write_console(Platform_Standard_Stream stream, const void *data, U64 size)
+{
+	Platform_Write_Result result = {0};
+	HANDLE handle = win32_standard_stream(stream);
+	if (!handle || handle == INVALID_HANDLE_VALUE || (!data && size)) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	while (result.size < size) {
+		U64 remaining = size - result.size;
+		DWORD request = remaining > MAXDWORD ? MAXDWORD : (DWORD)remaining;
+		DWORD written = 0;
+		if (!WriteFile(handle, (const char *)data + result.size, request, &written, NULL)) {
+			result.os_error = GetLastError();
+			result.error = win32_platform_error(result.os_error);
+			return result;
+		}
+		if (written == 0) break;
+		result.size += written;
+	}
+	return result;
+}
+
+Platform_String_Result platform_error_message(U32 os_error, char *buffer, U64 capacity)
+{
+	Platform_String_Result result = {0};
+	if (!os_error) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	char *message = NULL;
+	DWORD length = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, os_error, 0, (char *)&message, 0, NULL);
+	if (!length) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	while (length && (message[length - 1] == '\r' || message[length - 1] == '\n' || message[length - 1] == ' ')) --length;
+	result.size = length;
+	result.required_capacity = (U64)length + 1;
+	if (buffer) {
+		if (capacity < result.required_capacity) result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		else {
+			memcpy(buffer, message, length);
+			buffer[length] = 0;
+		}
+	}
+	LocalFree(message);
+	return result;
+}
+
 B32 platform_get_file_size(Platform_File file, U64 *size)
 {
 	LARGE_INTEGER value;

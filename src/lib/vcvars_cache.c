@@ -1,7 +1,7 @@
 #include "vcvars_cache.h"
 
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 
 #include <stdio.h>
 #include <stdlib.h>

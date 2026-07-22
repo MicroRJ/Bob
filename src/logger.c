@@ -1,5 +1,5 @@
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 
 #include <stdio.h>
 
@@ -26,7 +26,7 @@ static const char *level_color(Log_Level level)
 }
 
 void logger_init(void) {
-   platform_enable_console_colors();
+   bob_platform_enable_console_colors();
 }
 
 void logger_set_minimum_level(Log_Level level) {

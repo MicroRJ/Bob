@@ -1,7 +1,7 @@
 
 #include "bob.h"
 #include "logger.h"
-#include "platform/platform.h"
+#include "platform_adapter.h"
 #include "profiler.h"
 #include "script.h"
 #include "vcvars_cache.h"
