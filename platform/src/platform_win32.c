@@ -6,6 +6,8 @@
 #include <limits.h>
 #include <string.h>
 
+static Platform_Error win32_platform_error(DWORD error);
+
 static HANDLE win32_handle_from_file(Platform_File file)
 {
 	return (HANDLE)file.value;
@@ -128,6 +130,235 @@ B32 platform_remove_file(const char *path)
 	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
 }
 
+B32 platform_copy_file(const char *source, const char *destination, B32 overwrite)
+{
+	return source && destination && CopyFileA(source, destination, !overwrite) != 0;
+}
+
+B32 platform_move_file(const char *source, const char *destination, B32 overwrite)
+{
+	if (!source || !destination) return PLATFORM_FALSE;
+	DWORD flags = MOVEFILE_COPY_ALLOWED;
+	if (overwrite) flags |= MOVEFILE_REPLACE_EXISTING;
+	return MoveFileExA(source, destination, flags) != 0;
+}
+
+static B32 win32_create_directory(const char *path)
+{
+	if (CreateDirectoryA(path, NULL)) return PLATFORM_TRUE;
+	if (GetLastError() != ERROR_ALREADY_EXISTS) return PLATFORM_FALSE;
+	DWORD attributes = GetFileAttributesA(path);
+	return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+B32 platform_create_directory(const char *path)
+{
+	return path && win32_create_directory(path);
+}
+
+B32 platform_create_directories(const char *path)
+{
+	if (!path || !path[0]) return PLATFORM_FALSE;
+	SIZE_T size = strlen(path) + 1;
+	char *copy = HeapAlloc(GetProcessHeap(), 0, size);
+	if (!copy) return PLATFORM_FALSE;
+	memcpy(copy, path, size);
+	SIZE_T root = 0;
+	if (copy[0] && copy[1] == ':') root = 2;
+	else if (copy[0] == '/' || copy[0] == '\\') root = 1;
+	if ((copy[0] == '/' || copy[0] == '\\') && (copy[1] == '/' || copy[1] == '\\')) {
+		root = 2;
+		U32 components = 0;
+		while (copy[root] && components < 2) {
+			if (copy[root] == '/' || copy[root] == '\\') ++components;
+			++root;
+		}
+	}
+	B32 result = PLATFORM_TRUE;
+	for (SIZE_T index = root; copy[index]; ++index) {
+		if (copy[index] != '/' && copy[index] != '\\') continue;
+		if (index == root) continue;
+		char separator = copy[index];
+		copy[index] = 0;
+		if (!win32_create_directory(copy)) result = PLATFORM_FALSE;
+		copy[index] = separator;
+		if (!result) break;
+	}
+	if (result) result = win32_create_directory(copy);
+	HeapFree(GetProcessHeap(), 0, copy);
+	return result;
+}
+
+B32 platform_remove_directory(const char *path)
+{
+	if (!path) return PLATFORM_FALSE;
+	if (RemoveDirectoryA(path)) return PLATFORM_TRUE;
+	DWORD error = GetLastError();
+	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
+B32 platform_executable_resolves(const char *name)
+{
+	if (!name) return PLATFORM_FALSE;
+	char buffer[32768];
+	DWORD length = SearchPathA(NULL, name, ".exe", sizeof(buffer), buffer, NULL);
+	return length > 0 && length < sizeof(buffer);
+}
+
+Platform_String_Result platform_get_current_directory(char *buffer, U64 capacity)
+{
+	Platform_String_Result result = {0};
+	DWORD required = GetCurrentDirectoryA(0, NULL);
+	if (!required) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	result.required_capacity = required;
+	result.size = required - 1;
+	if (!buffer) return result;
+	if (capacity < required || capacity > MAXDWORD) {
+		result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	DWORD length = GetCurrentDirectoryA((DWORD)capacity, buffer);
+	if (!length || length >= capacity) {
+		result.os_error = GetLastError();
+		result.error = result.os_error ? win32_platform_error(result.os_error) : PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	result.size = length;
+	return result;
+}
+
+Platform_String_Result platform_get_absolute_path(const char *path, char *buffer, U64 capacity)
+{
+	Platform_String_Result result = {0};
+	if (!path) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	DWORD required = GetFullPathNameA(path, 0, NULL, NULL);
+	if (!required) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	result.required_capacity = required;
+	result.size = required - 1;
+	if (!buffer) return result;
+	if (capacity < required || capacity > MAXDWORD) {
+		result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	DWORD length = GetFullPathNameA(path, (DWORD)capacity, buffer, NULL);
+	if (!length || length >= capacity) {
+		result.os_error = GetLastError();
+		result.error = result.os_error ? win32_platform_error(result.os_error) : PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	result.size = length;
+	return result;
+}
+
+typedef struct Win32_Directory {
+	HANDLE find;
+	WIN32_FIND_DATAA data;
+	B32 pending;
+} Win32_Directory;
+
+Platform_Directory_Open_Result platform_open_directory(const char *path)
+{
+	Platform_Directory_Open_Result result = {0};
+	if (!path) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	Win32_Directory *directory = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*directory));
+	if (!directory) {
+		result.error = PLATFORM_ERROR_OUT_OF_MEMORY;
+		result.os_error = ERROR_NOT_ENOUGH_MEMORY;
+		return result;
+	}
+	SIZE_T path_size = strlen(path);
+	SIZE_T search_size = path_size + 3;
+	char *search = HeapAlloc(GetProcessHeap(), 0, search_size);
+	if (!search) {
+		HeapFree(GetProcessHeap(), 0, directory);
+		result.error = PLATFORM_ERROR_OUT_OF_MEMORY;
+		result.os_error = ERROR_NOT_ENOUGH_MEMORY;
+		return result;
+	}
+	memcpy(search, path, path_size);
+	SIZE_T cursor = path_size;
+	if (cursor && search[cursor - 1] != '/' && search[cursor - 1] != '\\') search[cursor++] = '\\';
+	search[cursor++] = '*';
+	search[cursor] = 0;
+	directory->find = FindFirstFileA(search, &directory->data);
+	HeapFree(GetProcessHeap(), 0, search);
+	if (directory->find == INVALID_HANDLE_VALUE) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		HeapFree(GetProcessHeap(), 0, directory);
+		return result;
+	}
+	directory->pending = PLATFORM_TRUE;
+	result.directory.handle = (UPtr)directory;
+	return result;
+}
+
+Platform_Directory_Next_Result platform_next_directory(Platform_Directory *directory_value, char *name, U64 capacity)
+{
+	Platform_Directory_Next_Result result = {0};
+	if (!directory_value || !directory_value->handle) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	Win32_Directory *directory = (Win32_Directory *)directory_value->handle;
+	for (;;) {
+		if (!directory->pending) {
+			if (!FindNextFileA(directory->find, &directory->data)) {
+				DWORD error = GetLastError();
+				if (error != ERROR_NO_MORE_FILES) {
+					result.error = win32_platform_error(error);
+					result.os_error = error;
+				}
+				return result;
+			}
+			directory->pending = PLATFORM_TRUE;
+		}
+		if (strcmp(directory->data.cFileName, ".") != 0 && strcmp(directory->data.cFileName, "..") != 0) break;
+		directory->pending = PLATFORM_FALSE;
+	}
+	result.name_size = strlen(directory->data.cFileName);
+	if (!name || capacity <= result.name_size) {
+		result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	memcpy(name, directory->data.cFileName, result.name_size + 1);
+	ULARGE_INTEGER size;
+	size.LowPart = directory->data.nFileSizeLow;
+	size.HighPart = directory->data.nFileSizeHigh;
+	result.info.size = size.QuadPart;
+	result.info.creation_time = win32_file_time(directory->data.ftCreationTime);
+	result.info.access_time = win32_file_time(directory->data.ftLastAccessTime);
+	result.info.write_time = win32_file_time(directory->data.ftLastWriteTime);
+	result.info.is_directory = (directory->data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+	result.info.is_symbolic_link = (directory->data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+	result.has_entry = PLATFORM_TRUE;
+	directory->pending = PLATFORM_FALSE;
+	return result;
+}
+
+void platform_close_directory(Platform_Directory *directory_value)
+{
+	if (!directory_value || !directory_value->handle) return;
+	Win32_Directory *directory = (Win32_Directory *)directory_value->handle;
+	FindClose(directory->find);
+	HeapFree(GetProcessHeap(), 0, directory);
+	*directory_value = (Platform_Directory){0};
+}
+
 B32 platform_get_file_size(Platform_File file, U64 *size)
 {
 	LARGE_INTEGER value;
@@ -216,6 +447,8 @@ static Platform_Error win32_platform_error(DWORD error)
 	case ERROR_CALL_NOT_IMPLEMENTED: return PLATFORM_ERROR_NOT_SUPPORTED;
 	case ERROR_BROKEN_PIPE:
 	case ERROR_NO_DATA: return PLATFORM_ERROR_BROKEN_PIPE;
+	case ERROR_INSUFFICIENT_BUFFER:
+	case ERROR_MORE_DATA: return PLATFORM_ERROR_BUFFER_TOO_SMALL;
 	default: return PLATFORM_ERROR_UNKNOWN;
 	}
 }

@@ -56,6 +56,33 @@ int main(void)
 	assert(info.size == sizeof(expected));
 	assert(!info.is_directory);
 	assert(platform_remove_file(path));
+	char path_buffer[1024];
+	Platform_String_Result current_directory = platform_get_current_directory(path_buffer, sizeof(path_buffer));
+	assert(current_directory.error == PLATFORM_ERROR_NONE);
+	assert(current_directory.size > 0);
+	Platform_String_Result absolute_path = platform_get_absolute_path(".", path_buffer, sizeof(path_buffer));
+	assert(absolute_path.error == PLATFORM_ERROR_NONE);
+	assert(absolute_path.size > 0);
+	assert(platform_executable_resolves("cmd"));
+	assert(platform_create_directories("build/platform_test/a/b"));
+	assert(platform_copy_file("build/platform_tests.exe", "build/platform_test/a/source.tmp", PLATFORM_TRUE));
+	assert(platform_move_file("build/platform_test/a/source.tmp", "build/platform_test/a/moved.tmp", PLATFORM_TRUE));
+	Platform_Directory_Open_Result directory_open = platform_open_directory("build/platform_test/a");
+	assert(directory_open.error == PLATFORM_ERROR_NONE);
+	B32 found_moved = PLATFORM_FALSE;
+	for (;;) {
+		char name[256];
+		Platform_Directory_Next_Result next = platform_next_directory(&directory_open.directory, name, sizeof(name));
+		assert(next.error == PLATFORM_ERROR_NONE);
+		if (!next.has_entry) break;
+		if (strcmp(name, "moved.tmp") == 0) found_moved = PLATFORM_TRUE;
+	}
+	assert(found_moved);
+	platform_close_directory(&directory_open.directory);
+	assert(platform_remove_file("build/platform_test/a/moved.tmp"));
+	assert(platform_remove_directory("build/platform_test/a/b"));
+	assert(platform_remove_directory("build/platform_test/a"));
+	assert(platform_remove_directory("build/platform_test"));
 
 	Platform_Process_Start_Result start = platform_start_process("cmd.exe /d /c echo platapuss", (Platform_Process_Options){ .capture_standard_output = PLATFORM_TRUE, .capture_standard_error = PLATFORM_TRUE, .hide_window = PLATFORM_TRUE });
 	assert(start.error == PLATFORM_ERROR_NONE);

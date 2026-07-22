@@ -63,7 +63,33 @@ typedef enum Platform_Error {
 	PLATFORM_ERROR_OUT_OF_MEMORY,
 	PLATFORM_ERROR_NOT_SUPPORTED,
 	PLATFORM_ERROR_BROKEN_PIPE,
+	PLATFORM_ERROR_BUFFER_TOO_SMALL,
 } Platform_Error;
+
+typedef struct Platform_String_Result {
+	U64 size;
+	U64 required_capacity;
+	Platform_Error error;
+	U32 os_error;
+} Platform_String_Result;
+
+typedef struct Platform_Directory {
+	UPtr handle;
+} Platform_Directory;
+
+typedef struct Platform_Directory_Open_Result {
+	Platform_Directory directory;
+	Platform_Error error;
+	U32 os_error;
+} Platform_Directory_Open_Result;
+
+typedef struct Platform_Directory_Next_Result {
+	Platform_File_Info info;
+	U64 name_size;
+	Platform_Error error;
+	U32 os_error;
+	B32 has_entry;
+} Platform_Directory_Next_Result;
 
 typedef struct Platform_Process_Start_Result {
 	Platform_Process process;
@@ -138,6 +164,17 @@ B32 platform_file_is_valid(Platform_File file);
 void platform_close_file(Platform_File file);
 B32 platform_get_file_info(const char *path, Platform_File_Info *info);
 B32 platform_remove_file(const char *path);
+B32 platform_copy_file(const char *source, const char *destination, B32 overwrite);
+B32 platform_move_file(const char *source, const char *destination, B32 overwrite);
+B32 platform_create_directory(const char *path);
+B32 platform_create_directories(const char *path);
+B32 platform_remove_directory(const char *path);
+B32 platform_executable_resolves(const char *name);
+Platform_String_Result platform_get_current_directory(char *buffer, U64 capacity);
+Platform_String_Result platform_get_absolute_path(const char *path, char *buffer, U64 capacity);
+Platform_Directory_Open_Result platform_open_directory(const char *path);
+Platform_Directory_Next_Result platform_next_directory(Platform_Directory *directory, char *name, U64 capacity);
+void platform_close_directory(Platform_Directory *directory);
 B32 platform_get_file_size(Platform_File file, U64 *size);
 B32 platform_set_file_cursor(Platform_File file, Platform_Seek_Origin origin, I64 distance, U64 *position);
 B32 platform_read_file(Platform_File file, void *data, U64 size, U64 *bytes_read);

@@ -212,7 +212,7 @@ static void report_completion(const Completion *completion)
 			else logger_log(LOG_LEVEL_ERROR, "os", "error %u", completion->process.error_code);
 		}
 		executable = command_executable(scratch.arena, command_line);
-		if (executable.data) logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data, platform_executable_resolves(executable) ? "found" : "not found in current directory or PATH");
+		if (executable.data) logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data, bob_platform_executable_resolves(executable) ? "found" : "not found in current directory or PATH");
 		else logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
 		if (platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
 		end_scratch(scratch);

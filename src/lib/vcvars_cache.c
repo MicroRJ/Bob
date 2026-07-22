@@ -216,7 +216,7 @@ static b32 ensure_cache_path(Arena *arena, String *path)
 	// Reuse the returned terminator as the next append position.
 	arena->used -= 1;
 	arena_append_text(arena, "\\bob");
-	b32 directory_ready = platform_create_directory(string_from_range(start, (char *)arena_top(arena)));
+	b32 directory_ready = bob_platform_create_directory(string_from_range(start, (char *)arena_top(arena)));
 	if (!directory_ready) goto failure;
 	arena_append_text(arena, "\\vcvars64.env");
 	*path = arena_string_from(arena, start);

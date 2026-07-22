@@ -382,7 +382,7 @@ static int transfer_file(elf_State *state, int nargs, b32 move)
 	Scratch scratch = begin_different_scratch(script->arena);
 	source = arena_push_string_copy(scratch.arena, source);
 	destination = arena_push_string_copy(scratch.arena, destination);
-	b32 result = move ? platform_move_file(source, destination, overwrite) : platform_copy_file(source, destination, overwrite);
+	b32 result = move ? bob_platform_move_file(source, destination, overwrite) : bob_platform_copy_file(source, destination, overwrite);
 	elf_push_int(state, result);
 	end_scratch(scratch);
 	return 1;
@@ -495,7 +495,7 @@ ELF_FUNCTION(l_fs_create_directory)
 	}
 	Scratch scratch = begin_different_scratch(script->arena);
 	path = arena_push_string_copy(scratch.arena, path);
-	b32 result = recursive ? platform_create_directories(path) : platform_create_directory(path);
+	b32 result = recursive ? bob_platform_create_directories(path) : bob_platform_create_directory(path);
 	elf_push_int(S, result);
 	end_scratch(scratch);
 	return 1;
