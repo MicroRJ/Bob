@@ -33,9 +33,9 @@ typedef enum Platform_Seek_Origin {
 
 typedef struct Platform_File_Info {
 	U64 size;
-	U64 creation_time;
-	U64 access_time;
-	U64 write_time;
+	I64 created_unix_ms;
+	I64 accessed_unix_ms;
+	I64 modified_unix_ms;
 	B32 is_directory;
 	B32 is_symbolic_link;
 } Platform_File_Info;
@@ -173,6 +173,7 @@ void *platform_virtual_reserve(U64 size);
 B32 platform_virtual_commit(void *memory, U64 size);
 B32 platform_virtual_decommit(void *memory, U64 size);
 void platform_virtual_release(void *memory);
+B32 platform_debug_break(void);
 
 U64 platform_counter(void);
 U64 platform_counter_frequency(void);
@@ -190,6 +191,7 @@ B32 platform_create_directories(const char *path);
 B32 platform_remove_directory(const char *path);
 B32 platform_executable_resolves(const char *name);
 Platform_String_Result platform_get_current_directory(char *buffer, U64 capacity);
+B32 platform_set_current_directory(const char *path);
 Platform_String_Result platform_get_absolute_path(const char *path, char *buffer, U64 capacity);
 Platform_Directory_Open_Result platform_open_directory(const char *path);
 Platform_Directory_Next_Result platform_next_directory(Platform_Directory *directory, char *name, U64 capacity);
@@ -213,6 +215,8 @@ Platform_Process_Read_Result platform_read_process_output(Platform_Process *proc
 Platform_Process_Read_Result platform_read_process_error(Platform_Process *process, void *data, U64 capacity);
 Platform_Process_Wait_Result platform_wait_process(Platform_Process process, U32 milliseconds);
 void platform_close_process(Platform_Process *process);
+U64 platform_current_process_id(void);
+void platform_exit_process(I32 exit_code);
 
 Platform_Thread_Start_Result platform_start_thread(Platform_Thread_Function *function, void *context);
 B32 platform_thread_is_valid(Platform_Thread thread);

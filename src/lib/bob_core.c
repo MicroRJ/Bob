@@ -51,12 +51,12 @@ static b32 task_needs_rebuild(const Bob_Node *node, const Bob_Task *task)
 	for (i = 0; i < task->outputs.count; ++i) {
 		Platform_File_Info info;
 		if (!platform_file_info(task->outputs.items[i], &info)) return true;
-		if (info.write_time < oldest_output) oldest_output = info.write_time;
+		if ((u64)info.modified_unix_ms < oldest_output) oldest_output = (u64)info.modified_unix_ms;
 	}
 	for (i = 0; i < task->inputs.count; ++i) {
 		Platform_File_Info info;
 		if (!platform_file_info(task->inputs.items[i], &info)) return true;
-		if (info.write_time > newest_input) newest_input = info.write_time;
+		if ((u64)info.modified_unix_ms > newest_input) newest_input = (u64)info.modified_unix_ms;
 	}
 
 	{
@@ -65,7 +65,7 @@ static b32 task_needs_rebuild(const Bob_Node *node, const Bob_Task *task)
 		b32 scan_ok = c_include_scan(task->inputs, task->include_directories, task->command_line, &scan);
 		profile_scope_end(&scope);
 		if (!scan_ok || scan.unresolved_quoted_include) return true;
-		if (scan.newest_write_time > newest_input) newest_input = scan.newest_write_time;
+		if ((u64)scan.newest_modified_unix_ms > newest_input) newest_input = (u64)scan.newest_modified_unix_ms;
 	}
 
 	for (i = 0; i < bob_dependency_count(node); ++i) {

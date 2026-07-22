@@ -1,18 +1,18 @@
 core_sources := {
-	{ name = "base",         path = "src/base.c" },
-	{ name = "logger",       path = "src/logger.c" },
-	{ name = "profiler",     path = "src/profiler.c" },
-	{ name = "bob_core",     path = "src/lib/bob_core.c" },
-	{ name = "bob_node",     path = "src/lib/bob_node.c" },
-	{ name = "compiler_command", path = "src/lib/compiler_command.c" },
-	{ name = "include_scan", path = "src/lib/c_include_scan.c" },
-	{ name = "vcvars_cache", path = "src/lib/vcvars_cache.c" },
-	{ name = "script",       path = "src/script.c" },
-	{ name = "script_string", path = "src/scripts/libs/string.c" },
-	{ name = "script_path",   path = "src/scripts/libs/path.c" },
-	{ name = "script_fs",     path = "src/scripts/libs/filesystem.c" },
-	{ name = "elf_adapter",  path = "src/scripts/elf_adapter.c" },
-	{ name = "platform",     path = "src/platform_adapter.c" },
+	{ name = "base",               path = "src/base.c"                      },
+	{ name = "logger",             path = "src/logger.c"                    },
+	{ name = "profiler",           path = "src/profiler.c"                  },
+	{ name = "bob_core",           path = "src/lib/bob_core.c"              },
+	{ name = "bob_node",           path = "src/lib/bob_node.c"              },
+	{ name = "compiler_command",   path = "src/lib/compiler_command.c"      },
+	{ name = "include_scan",       path = "src/lib/c_include_scan.c"        },
+	{ name = "vcvars_cache",       path = "src/lib/vcvars_cache.c"          },
+	{ name = "script",             path = "src/script.c"                    },
+	{ name = "script_string",      path = "src/scripts/libs/string.c"       },
+	{ name = "script_path",        path = "src/scripts/libs/path.c"         },
+	{ name = "script_fs",          path = "src/scripts/libs/filesystem.c"   },
+	{ name = "elf_adapter",        path = "src/scripts/elf_adapter.c"       },
+	{ name = "platform",           path = "src/platform_adapter.c"          },
 }
 
 cc := "clang-cl"
@@ -166,12 +166,12 @@ entries.test = fun() {
 }
 
 entries.bless = fun() {
-	elf.assert(bob.fs.exists("build/bob.exe"), "build/bob.exe does not exist; build Bob before blessing it")
+	elf.assert(elf.fs.is_file("build/bob.exe"), "build/bob.exe does not exist; build Bob before blessing it")
 	archive_directory := f"blessed/archive/${bob.version}"
-	archive := bob.path.join(archive_directory, "bob.exe")
-	elf.assert(bob.fs.create_directory(archive_directory, true), "could not create the blessed archive directory")
-	elf.assert(bob.fs.copy_file("build/bob.exe", archive, true), "could not archive the new blessed Bob")
-	elf.assert(bob.fs.copy_file("build/bob.exe", "blessed/bob.exe", true), "could not update blessed/bob.exe; run bless using build/bob.exe")
+	archive := elf.path.join(archive_directory, "bob.exe")
+	elf.assert(elf.fs.create_directories(archive_directory), "could not create the blessed archive directory")
+	elf.assert(elf.fs.copy_file("build/bob.exe", archive, true), "could not archive the new blessed Bob")
+	elf.assert(elf.fs.copy_file("build/bob.exe", "blessed/bob.exe", true), "could not update blessed/bob.exe; run bless using build/bob.exe")
 	elf.printl(f"\x1b[1;33mBob ${bob.version} has been blessed. Go forth and compile.\x1b[0m")
 	elf.printl(f"\x1b[2;36mThe sacred binary rests at ${archive}\x1b[0m")
 }

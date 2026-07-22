@@ -13,12 +13,14 @@ static HANDLE win32_handle_from_file(Platform_File file)
 	return (HANDLE)file.value;
 }
 
-static U64 win32_file_time(FILETIME time)
+static I64 win32_file_time_to_unix_ms(FILETIME time)
 {
 	ULARGE_INTEGER value;
 	value.LowPart = time.dwLowDateTime;
 	value.HighPart = time.dwHighDateTime;
-	return value.QuadPart;
+	const U64 unix_epoch = 116444736000000000ull;
+	if (value.QuadPart < unix_epoch) return 0;
+	return (I64)((value.QuadPart - unix_epoch) / 10000ull);
 }
 
 void *platform_virtual_reserve(U64 size)
@@ -40,6 +42,12 @@ B32 platform_virtual_decommit(void *memory, U64 size)
 void platform_virtual_release(void *memory)
 {
 	if (memory) VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+B32 platform_debug_break(void)
+{
+	DebugBreak();
+	return PLATFORM_TRUE;
 }
 
 U64 platform_counter(void)
@@ -113,9 +121,9 @@ B32 platform_get_file_info(const char *path, Platform_File_Info *info)
 	size.HighPart = data.nFileSizeHigh;
 	*info = (Platform_File_Info){
 		.size = size.QuadPart,
-		.creation_time = win32_file_time(data.ftCreationTime),
-		.access_time = win32_file_time(data.ftLastAccessTime),
-		.write_time = win32_file_time(data.ftLastWriteTime),
+		.created_unix_ms = win32_file_time_to_unix_ms(data.ftCreationTime),
+		.accessed_unix_ms = win32_file_time_to_unix_ms(data.ftLastAccessTime),
+		.modified_unix_ms = win32_file_time_to_unix_ms(data.ftLastWriteTime),
 		.is_directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0,
 		.is_symbolic_link = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0,
 	};
@@ -231,6 +239,11 @@ Platform_String_Result platform_get_current_directory(char *buffer, U64 capacity
 	return result;
 }
 
+B32 platform_set_current_directory(const char *path)
+{
+	return path && SetCurrentDirectoryA(path) != 0;
+}
+
 Platform_String_Result platform_get_absolute_path(const char *path, char *buffer, U64 capacity)
 {
 	Platform_String_Result result = {0};
@@ -340,9 +353,9 @@ Platform_Directory_Next_Result platform_next_directory(Platform_Directory *direc
 	size.LowPart = directory->data.nFileSizeLow;
 	size.HighPart = directory->data.nFileSizeHigh;
 	result.info.size = size.QuadPart;
-	result.info.creation_time = win32_file_time(directory->data.ftCreationTime);
-	result.info.access_time = win32_file_time(directory->data.ftLastAccessTime);
-	result.info.write_time = win32_file_time(directory->data.ftLastWriteTime);
+	result.info.created_unix_ms = win32_file_time_to_unix_ms(directory->data.ftCreationTime);
+	result.info.accessed_unix_ms = win32_file_time_to_unix_ms(directory->data.ftLastAccessTime);
+	result.info.modified_unix_ms = win32_file_time_to_unix_ms(directory->data.ftLastWriteTime);
 	result.info.is_directory = (directory->data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 	result.info.is_symbolic_link = (directory->data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 	result.has_entry = PLATFORM_TRUE;
@@ -782,6 +795,16 @@ void platform_close_process(Platform_Process *process)
 	win32_close_handle(&output);
 	win32_close_handle(&error);
 	*process = (Platform_Process){0};
+}
+
+U64 platform_current_process_id(void)
+{
+	return GetCurrentProcessId();
+}
+
+void platform_exit_process(I32 exit_code)
+{
+	ExitProcess((UINT)exit_code);
 }
 
 typedef struct Win32_Thread_Start {

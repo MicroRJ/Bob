@@ -342,8 +342,8 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
         end_scratch(scratch);
         return true;
     }
-    if (info.write_time > context->result->newest_write_time) {
-        context->result->newest_write_time = info.write_time;
+    if (info.modified_unix_ms > context->result->newest_modified_unix_ms) {
+        context->result->newest_modified_unix_ms = info.modified_unix_ms;
     }
     if (!is_c_file(absolute.data)) {
         end_scratch(scratch);

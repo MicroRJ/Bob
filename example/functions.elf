@@ -1,9 +1,9 @@
 expanded := bob.strings.expand({ "src", "vendor" }, "'/I'.(' ')*")
 elf.assert(expanded == "/Isrc /Ivendor", "bob.strings.expand produced the wrong result")
-elf.assert(bob.path.join("src\\scripts", "libs") == "src/scripts/libs", "bob.path.join produced the wrong result")
-elf.assert(bob.fs.exists("src/base.c"), "bob.fs.exists did not find src/base.c")
-elf.assert(bob.fs.is_file("src/base.c"), "bob.fs.is_file did not recognize src/base.c")
-elf.assert(bob.fs.is_directory("src/scripts"), "bob.fs.is_directory did not recognize src/scripts")
+elf.assert(elf.path.join("src/scripts", "libs") == "src/scripts/libs", "elf.path.join produced the wrong result")
+elf.assert(elf.fs.exists("src/base.c"), "elf.fs.exists did not find src/base.c")
+elf.assert(elf.fs.is_file("src/base.c"), "elf.fs.is_file did not recognize src/base.c")
+elf.assert(elf.fs.is_directory("src/scripts"), "elf.fs.is_directory did not recognize src/scripts")
 
 library_sources := bob.fs.list({
 	root = "src/scripts/libs",
@@ -45,25 +45,25 @@ clean := fun() {
 
 environment := fun() {
 	name := "BOB_SCRIPT_ENV_TEST"
-	elf.assert(bob.env.unset(name), "bob.env.unset failed")
-	elf.assert(bob.env.has(name) == false, "bob.env.has found an unset variable")
-	elf.assert(bob.env.set(name, "value"), "bob.env.set failed")
-	elf.assert(bob.env.get(name) == "value", "bob.env.get returned the wrong value")
-	ret bob.env.unset(name)
+	elf.assert(elf.env.unset(name), "elf.env.unset failed")
+	elf.assert(elf.env.has(name) == false, "elf.env.has found an unset variable")
+	elf.assert(elf.env.set(name, "value"), "elf.env.set failed")
+	elf.assert(elf.env.get(name) == "value", "elf.env.get returned the wrong value")
+	ret elf.env.unset(name)
 }
 
 filesystem := fun() {
 	root := "build/script_fs_test"
 	elf.assert(bob.fs.remove({ path = root, recursive = true }), "initial bob.fs.remove failed")
-	elf.assert(bob.fs.create_directory(root), "positional bob.fs.create_directory failed")
-	nested := bob.path.join(root, "nested/deep")
-	elf.assert(bob.fs.create_directory({ path = nested, recursive = true }), "named bob.fs.create_directory failed")
-	copy := bob.path.join(nested, "copy.h")
-	moved := bob.path.join(nested, "moved.h")
-	elf.assert(bob.fs.copy_file("src/base.h", copy), "positional bob.fs.copy_file failed")
-	elf.assert(bob.fs.move_file({ from = copy, to = moved }), "named bob.fs.move_file failed")
-	elf.assert(bob.fs.exists(copy) == false && bob.fs.is_file(moved), "bob.fs.move_file produced the wrong files")
-	elf.assert(bob.fs.remove(moved), "positional bob.fs.remove could not remove a file")
+	elf.assert(elf.fs.create_directory(root), "elf.fs.create_directory failed")
+	nested := elf.path.join(root, "nested/deep")
+	elf.assert(elf.fs.create_directories(nested), "elf.fs.create_directories failed")
+	copy := elf.path.join(nested, "copy.h")
+	moved := elf.path.join(nested, "moved.h")
+	elf.assert(elf.fs.copy_file("src/base.h", copy), "elf.fs.copy_file failed")
+	elf.assert(elf.fs.move_file(copy, moved), "elf.fs.move_file failed")
+	elf.assert(elf.fs.exists(copy) == false && elf.fs.is_file(moved), "elf.fs.move_file produced the wrong files")
+	elf.assert(elf.fs.remove_file(moved), "elf.fs.remove_file could not remove a file")
 	ret bob.fs.remove({ path = root, recursive = true })
 }
 

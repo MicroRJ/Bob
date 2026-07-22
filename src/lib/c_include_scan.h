@@ -4,7 +4,7 @@
 #include "base.h"
 
 typedef struct C_Include_Scan_Result {
-    u64 newest_write_time;
+    i64 newest_modified_unix_ms;
     b32 unresolved_quoted_include;
 } C_Include_Scan_Result;
 

@@ -535,7 +535,7 @@ static b32 write_test_file_at_time(const char *path, u64 time)
     b32 succeeded;
 
     if (file == INVALID_HANDLE_VALUE) return false;
-    value.QuadPart = time;
+    value.QuadPart = 116444736000000000ULL + time * 10000ULL;
     file_time.dwLowDateTime = value.LowPart;
     file_time.dwHighDateTime = value.HighPart;
     succeeded = SetFileTime(file, NULL, NULL, &file_time);
@@ -557,7 +557,7 @@ static b32 write_test_text_at_time(const char *path, const char *text, u64 time)
         if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
         return false;
     }
-    value.QuadPart = time;
+    value.QuadPart = 116444736000000000ULL + time * 10000ULL;
     file_time.dwLowDateTime = value.LowPart;
     file_time.dwHighDateTime = value.HighPart;
     succeeded = WriteFile(file, text, (DWORD)text_size, &written, NULL) &&
@@ -577,8 +577,8 @@ static b32 test_newer_input_rebuilds(void)
     Bob *clean_graph;
     Bob *dirty_graph;
 
-    CHECK(write_test_file_at_time(input_path, 100000000000000000ULL));
-    CHECK(write_test_file_at_time(output_path, 100000000000000100ULL));
+    CHECK(write_test_file_at_time(input_path, 0ULL));
+    CHECK(write_test_file_at_time(output_path, 100ULL));
     task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
@@ -588,7 +588,7 @@ static b32 test_newer_input_rebuilds(void)
     CHECK(run_tasks(clean_graph, &task, 1, 1));
     bob_destroy(clean_graph);
 
-    CHECK(write_test_file_at_time(input_path, 100000000000000200ULL));
+    CHECK(write_test_file_at_time(input_path, 200ULL));
     task.command_line = STRING_LITERAL("cmd /c echo rebuilt>build\\incremental_test.out");
     dirty_graph = bob_create();
     add_node(dirty_graph, "dirty timestamps");
@@ -614,10 +614,10 @@ static b32 test_multiple_inputs_and_outputs(void)
     Platform_File_Info info;
 
     DeleteFileA(marker);
-    CHECK(write_test_file_at_time(input_a, 100000000000000100ULL));
-    CHECK(write_test_file_at_time(input_b, 100000000000000150ULL));
-    CHECK(write_test_file_at_time(output_a, 100000000000000200ULL));
-    CHECK(write_test_file_at_time(output_b, 100000000000000250ULL));
+    CHECK(write_test_file_at_time(input_a, 100ULL));
+    CHECK(write_test_file_at_time(input_b, 150ULL));
+    CHECK(write_test_file_at_time(output_a, 200ULL));
+    CHECK(write_test_file_at_time(output_b, 250ULL));
     task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
@@ -627,7 +627,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     CHECK(run_tasks(graph, &task, 1, 1));
     bob_destroy(graph);
 
-    CHECK(write_test_file_at_time(input_b, 100000000000000225ULL));
+    CHECK(write_test_file_at_time(input_b, 225ULL));
     task.command_line = STRING_LITERAL("cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker");
     graph = bob_create();
     add_node(graph, "newest input wins");
@@ -668,9 +668,9 @@ static b32 test_dependency_rebuild_propagates(void)
     Platform_File_Info info;
 
     DeleteFileA(marker);
-    CHECK(write_test_file_at_time(dependency_input, 100000000000000100ULL));
-    CHECK(write_test_file_at_time(dependency_output, 100000000000000200ULL));
-    CHECK(write_test_file_at_time(parent_output, 100000000000000300ULL));
+    CHECK(write_test_file_at_time(dependency_input, 100ULL));
+    CHECK(write_test_file_at_time(dependency_output, 200ULL));
+    CHECK(write_test_file_at_time(parent_output, 300ULL));
 
     tasks[0].command_line = STRING_LITERAL("bob_dependency_that_must_not_run.exe");
     tasks[0].inputs = STRING_ARRAY_FROM(dependency_inputs);
@@ -685,7 +685,7 @@ static b32 test_dependency_rebuild_propagates(void)
     CHECK(run_tasks(graph, tasks, 2, 1));
     bob_destroy(graph);
 
-    CHECK(write_test_file_at_time(dependency_input, 100000000000000400ULL));
+    CHECK(write_test_file_at_time(dependency_input, 400ULL));
     tasks[0].command_line = STRING_LITERAL("cmd /c echo dependency>build\\dependency.out");
     tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
     graph = bob_create();
@@ -708,7 +708,7 @@ static b32 test_transparent_dependency(void)
 	const char *parent_output = "build\\transparent_parent.out";
 	String parent_outputs[] = { string_from_cstring(parent_output) };
 	Bob_Task tasks[2] = {0};
-	CHECK(write_test_file_at_time(parent_output, 100000000000000300ULL));
+	CHECK(write_test_file_at_time(parent_output, 300ULL));
 	tasks[0].command_line = STRING_LITERAL("cmd /c exit /b 0");
 	tasks[0].transparent = true;
 	tasks[1].command_line = STRING_LITERAL("bob_transparent_parent_must_not_run.exe");
@@ -747,17 +747,17 @@ static b32 test_recursive_include_rebuilds(void)
                                   "# /* comment crosses\n"
                                   "     a line */ include \"ignored_continuation.h\"\n"
                                   "/* prefix comment */ #include <include_scan_a.h>\n",
-                                  100000000000000100ULL));
+                                  100ULL));
     CHECK(write_test_text_at_time(header_a,
                                   "/* #include \"ignored_block.h\" */\n"
                                   "# /* directive gap */ include /* name gap */ \"include_scan_b.h\"\n",
-                                  100000000000000150ULL));
+                                  150ULL));
     CHECK(write_test_text_at_time(header_b, "#include \"include_scan_a.h\"\n",
-                                  100000000000000300ULL));
-    CHECK(write_test_file_at_time(output, 100000000000000200ULL));
+                                  300ULL));
+    CHECK(write_test_file_at_time(output, 200ULL));
     CHECK(c_include_scan(STRING_ARRAY_FROM(inputs), (String_Array){0}, STRING_LITERAL("clang-cl /Ibuild -c build\\include_scan.c"), &scan));
     CHECK(!scan.unresolved_quoted_include);
-    CHECK(scan.newest_write_time == 100000000000000300ULL);
+    CHECK(scan.newest_modified_unix_ms == 300);
 
     task.command_line = STRING_LITERAL("cmd /c echo object>build\\include_scan.obj && echo rebuilt>build\\include_scan.marker");
     task.inputs = STRING_ARRAY_FROM(inputs);
@@ -770,7 +770,7 @@ static b32 test_recursive_include_rebuilds(void)
 	CHECK(platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
-    CHECK(write_test_file_at_time(output, 100000000000000400ULL));
+    CHECK(write_test_file_at_time(output, 400ULL));
     CHECK(DeleteFileA(marker));
     task.command_line = STRING_LITERAL("bob_include_scanner_must_not_run.exe");
     graph = bob_create();

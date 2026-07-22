@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 typedef struct Platform_File_Info {
-   u64 write_time;
+   i64 modified_unix_ms;
    b32 is_directory;
    b32 is_symbolic_link;
 } Platform_File_Info;

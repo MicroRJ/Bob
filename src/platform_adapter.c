@@ -70,9 +70,9 @@ typedef struct Shared_Platform_File {
 
 typedef struct Shared_Platform_File_Info {
 	u64 size;
-	u64 creation_time;
-	u64 access_time;
-	u64 write_time;
+	i64 created_unix_ms;
+	i64 accessed_unix_ms;
+	i64 modified_unix_ms;
 	i32 is_directory;
 	i32 is_symbolic_link;
 } Shared_Platform_File_Info;
@@ -197,7 +197,7 @@ b32 platform_file_info(String path, Platform_File_Info *info)
 {
 	Shared_Platform_File_Info shared;
 	if (!string_is_terminated(path) || !info || !platform_get_file_info(path.data, &shared)) return false;
-	info->write_time = shared.write_time;
+	info->modified_unix_ms = shared.modified_unix_ms;
 	info->is_directory = shared.is_directory;
 	info->is_symbolic_link = shared.is_symbolic_link;
 	return true;
