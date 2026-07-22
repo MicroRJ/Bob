@@ -1,0 +1,78 @@
+compiler := "clang-cl"
+librarian := "lib"
+compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od /Iinclude"
+
+prepare := {
+	name = "prepare build directory",
+	command_line = "cmd /c if not exist build\\obj mkdir build\\obj",
+	inputs = {},
+	outputs = { "build/obj" },
+	include_dirs = {},
+	dependencies = {},
+}
+
+compile_platform := {
+	name = "compile platform",
+	command_line = f"${compiler}${compile_options} /c src/platform_win32.c /Fobuild/obj/platform.obj /Fdbuild/obj/platform.pdb",
+	inputs = { "src/platform_win32.c" },
+	outputs = { "build/obj/platform.obj" },
+	include_dirs = { "include" },
+	dependencies = { prepare },
+}
+
+platform_library := {
+	name = "archive platform.lib",
+	command_line = f"${librarian} /nologo /out:build/platform.lib build/obj/platform.obj",
+	inputs = { "build/obj/platform.obj" },
+	outputs = { "build/platform.lib" },
+	include_dirs = {},
+	dependencies = { compile_platform },
+}
+
+compile_tests := {
+	name = "compile platform tests",
+	command_line = f"${compiler}${compile_options} /c tests/platform_tests.c /Fobuild/obj/platform_tests.obj /Fdbuild/obj/platform_tests.pdb",
+	inputs = { "tests/platform_tests.c" },
+	outputs = { "build/obj/platform_tests.obj" },
+	include_dirs = { "include" },
+	dependencies = { prepare },
+}
+
+link_tests := {
+	name = "link platform tests",
+	command_line = f"${compiler} /nologo build/obj/platform_tests.obj build/platform.lib /Febuild/platform_tests.exe /link /DEBUG /PDB:build/platform_tests.pdb",
+	inputs = { "build/obj/platform_tests.obj", "build/platform.lib" },
+	outputs = { "build/platform_tests.exe" },
+	include_dirs = {},
+	dependencies = { compile_tests, platform_library },
+}
+
+run_tests := {
+	name = "run platform tests",
+	command_line = "build\\platform_tests.exe",
+	inputs = { "build/platform_tests.exe" },
+	outputs = {},
+	include_dirs = {},
+	dependencies = { link_tests },
+}
+
+options := {
+	workers = 4,
+	verbosity = 0,
+}
+
+entries := {}
+
+entries.lib = fun() {
+	ret bob.build({ targets = { platform_library }, options = options })
+}
+
+entries.build = fun() {
+	ret bob.build({ targets = { platform_library }, options = options })
+}
+
+entries.test = fun() {
+	ret bob.build({ targets = { run_tests }, options = options })
+}
+
+ret entries
