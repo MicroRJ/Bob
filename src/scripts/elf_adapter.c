@@ -551,7 +551,7 @@ static int push_environment(elf_State *state, int nargs, b32 has_only)
 	Scratch scratch = begin_different_scratch(script->arena);
 	String name = arena_push_string_copy(scratch.arena, stack_string(state, 1));
 	String value;
-	b32 read = platform_get_environment(name, scratch.arena, &value);
+	b32 read = bob_platform_get_environment(name, scratch.arena, &value);
 	if (!read) {
 		end_scratch(scratch);
 		binding_error(state, script, "unable to read environment variable");
@@ -587,7 +587,7 @@ ELF_FUNCTION(l_env_set)
 	Scratch scratch = begin_different_scratch(script->arena);
 	String name = arena_push_string_copy(scratch.arena, stack_string(S, 1));
 	String value = arena_push_string_copy(scratch.arena, stack_string(S, 2));
-	elf_push_int(S, platform_set_environment(name, value));
+	elf_push_int(S, bob_platform_set_environment(name, value));
 	end_scratch(scratch);
 	return 1;
 }
@@ -602,7 +602,7 @@ ELF_FUNCTION(l_env_unset)
 	}
 	Scratch scratch = begin_different_scratch(script->arena);
 	String name = arena_push_string_copy(scratch.arena, stack_string(S, 1));
-	elf_push_int(S, platform_set_environment(name, (String){0}));
+	elf_push_int(S, bob_platform_set_environment(name, (String){0}));
 	end_scratch(scratch);
 	return 1;
 }

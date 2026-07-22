@@ -50,7 +50,7 @@ static b32 environment_equals(const char *name, const char *expected)
 {
     Scratch scratch = begin_scratch();
     String value = {0};
-	b32 equal = platform_get_environment(string_from_cstring(name), scratch.arena, &value) &&
+	b32 equal = bob_platform_get_environment(string_from_cstring(name), scratch.arena, &value) &&
         string_equal(value, string_from_cstring(expected));
     end_scratch(scratch);
     return equal;
@@ -65,9 +65,9 @@ static b32 test_vcvars_cache_application(void)
         "set BOB_VCVARS_TEST_SET=value\n";
     b32 result = false;
 
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), STRING_LITERAL("base"));
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), STRING_LITERAL("base"));
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), STRING_LITERAL("base"));
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), STRING_LITERAL("base"));
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
 
     if (!vcvars_cache_apply(string_from_cstring(cache_text))) goto cleanup;
     if (!environment_equals("BOB_VCVARS_TEST_PREPEND", "tool;base")) goto cleanup;
@@ -76,9 +76,9 @@ static b32 test_vcvars_cache_application(void)
     result = true;
 
 cleanup:
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), (String){0});
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), (String){0});
-	platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), (String){0});
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), (String){0});
+	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
     return result;
 }
 

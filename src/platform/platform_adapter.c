@@ -98,6 +98,14 @@ typedef struct Shared_Platform_Directory_Next_Result {
 	i32 has_entry;
 } Shared_Platform_Directory_Next_Result;
 
+typedef struct Shared_Platform_Environment_Result {
+	u64 size;
+	u64 required_capacity;
+	i32 error;
+	u32 os_error;
+	i32 found;
+} Shared_Platform_Environment_Result;
+
 typedef u32 Shared_Platform_Thread_Function(void *context);
 
 enum {
@@ -145,6 +153,9 @@ Shared_Platform_String_Result platform_get_absolute_path(const char *path, char 
 Shared_Platform_Directory_Open_Result platform_open_directory(const char *path);
 Shared_Platform_Directory_Next_Result platform_next_directory(Shared_Platform_Directory *directory, char *name, u64 capacity);
 void platform_close_directory(Shared_Platform_Directory *directory);
+Shared_Platform_Environment_Result platform_get_environment(const char *name, char *buffer, u64 capacity);
+Shared_Platform_Result platform_set_environment(const char *name, const char *value);
+Shared_Platform_String_Result platform_get_environment_block(char *buffer, u64 capacity);
 
 struct Platform_Thread {
 	Shared_Platform_Thread thread;
@@ -351,6 +362,56 @@ b32 bob_platform_create_directories(String path)
 b32 bob_platform_executable_resolves(String name)
 {
 	return string_is_terminated(name) && platform_executable_resolves(name.data);
+}
+
+b32 bob_platform_get_environment(String name, Arena *arena, String *value)
+{
+	if (!string_is_terminated(name) || !arena || !value) return false;
+	*value = (String){0};
+	Shared_Platform_Environment_Result query = platform_get_environment(name.data, NULL, 0);
+	if (query.error) return false;
+	if (!query.found) return true;
+	u64 mark = arena_mark(arena);
+	char *data = arena_reserve(arena, query.required_capacity);
+	if (!data) return false;
+	Shared_Platform_Environment_Result read = platform_get_environment(name.data, data, query.required_capacity);
+	if (read.error || !read.found || !arena_push(arena, query.required_capacity)) {
+		arena_restore(arena, mark);
+		return false;
+	}
+	value->data = data;
+	value->size = read.size;
+	return true;
+}
+
+b32 bob_platform_get_environment_block(Arena *arena, String *block)
+{
+	if (!arena || !block) return false;
+	*block = (String){0};
+	Shared_Platform_String_Result query = platform_get_environment_block(NULL, 0);
+	if (query.error || query.required_capacity == 0) return false;
+	u64 mark = arena_mark(arena);
+	char *data = arena_reserve(arena, query.required_capacity);
+	if (!data) return false;
+	Shared_Platform_String_Result read = platform_get_environment_block(data, query.required_capacity);
+	if (read.error || !arena_push(arena, query.required_capacity)) {
+		arena_restore(arena, mark);
+		return false;
+	}
+	block->data = data;
+	block->size = read.size;
+	return true;
+}
+
+b32 bob_platform_set_environment(String name, String value)
+{
+	if (!string_is_terminated(name) || (value.data && !string_is_terminated(value))) return false;
+	return platform_set_environment(name.data, value.data).error == 0;
+}
+
+b32 bob_platform_local_app_data(Arena *arena, String *result)
+{
+	return bob_platform_get_environment(STRING_LITERAL("LOCALAPPDATA"), arena, result) && result->size > 0;
 }
 
 static b32 append_process_pipe(Shared_Platform_Process *process, Arena *arena, b32 standard_error, u32 *error_code)

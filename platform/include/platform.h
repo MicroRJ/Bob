@@ -73,6 +73,14 @@ typedef struct Platform_String_Result {
 	U32 os_error;
 } Platform_String_Result;
 
+typedef struct Platform_Environment_Result {
+	U64 size;
+	U64 required_capacity;
+	Platform_Error error;
+	U32 os_error;
+	B32 found;
+} Platform_Environment_Result;
+
 typedef struct Platform_Directory {
 	UPtr handle;
 } Platform_Directory;
@@ -175,6 +183,9 @@ Platform_String_Result platform_get_absolute_path(const char *path, char *buffer
 Platform_Directory_Open_Result platform_open_directory(const char *path);
 Platform_Directory_Next_Result platform_next_directory(Platform_Directory *directory, char *name, U64 capacity);
 void platform_close_directory(Platform_Directory *directory);
+Platform_Environment_Result platform_get_environment(const char *name, char *buffer, U64 capacity);
+Platform_Result platform_set_environment(const char *name, const char *value);
+Platform_String_Result platform_get_environment_block(char *buffer, U64 capacity);
 B32 platform_get_file_size(Platform_File file, U64 *size);
 B32 platform_set_file_cursor(Platform_File file, Platform_Seek_Origin origin, I64 distance, U64 *position);
 B32 platform_read_file(Platform_File file, void *data, U64 size, U64 *bytes_read);

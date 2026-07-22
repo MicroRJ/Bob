@@ -359,6 +359,87 @@ void platform_close_directory(Platform_Directory *directory_value)
 	*directory_value = (Platform_Directory){0};
 }
 
+Platform_Environment_Result platform_get_environment(const char *name, char *buffer, U64 capacity)
+{
+	Platform_Environment_Result result = {0};
+	if (!name) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	SetLastError(ERROR_SUCCESS);
+	DWORD required = GetEnvironmentVariableA(name, NULL, 0);
+	if (required == 0) {
+		DWORD error = GetLastError();
+		if (error == ERROR_ENVVAR_NOT_FOUND) return result;
+		if (error != ERROR_SUCCESS) {
+			result.error = win32_platform_error(error);
+			result.os_error = error;
+			return result;
+		}
+		result.found = PLATFORM_TRUE;
+		result.required_capacity = 1;
+		if (buffer && capacity) buffer[0] = 0;
+		else if (buffer) result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	result.found = PLATFORM_TRUE;
+	result.size = required - 1;
+	result.required_capacity = required;
+	if (!buffer) return result;
+	if (capacity < required || capacity > MAXDWORD) {
+		result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		return result;
+	}
+	DWORD length = GetEnvironmentVariableA(name, buffer, (DWORD)capacity);
+	if (length >= capacity) {
+		result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		result.required_capacity = (U64)length + 1;
+		return result;
+	}
+	if (length == 0 && GetLastError() != ERROR_SUCCESS) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	result.size = length;
+	return result;
+}
+
+Platform_Result platform_set_environment(const char *name, const char *value)
+{
+	Platform_Result result = {0};
+	if (!name) {
+		result.error = PLATFORM_ERROR_INVALID_ARGUMENT;
+		return result;
+	}
+	if (!SetEnvironmentVariableA(name, value)) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+	}
+	return result;
+}
+
+Platform_String_Result platform_get_environment_block(char *buffer, U64 capacity)
+{
+	Platform_String_Result result = {0};
+	LPCH environment = GetEnvironmentStringsA();
+	if (!environment) {
+		result.os_error = GetLastError();
+		result.error = win32_platform_error(result.os_error);
+		return result;
+	}
+	LPCH cursor = environment;
+	while (*cursor) cursor += strlen(cursor) + 1;
+	result.size = (U64)(cursor - environment);
+	result.required_capacity = result.size + 1;
+	if (buffer) {
+		if (capacity < result.required_capacity) result.error = PLATFORM_ERROR_BUFFER_TOO_SMALL;
+		else memcpy(buffer, environment, (SIZE_T)result.required_capacity);
+	}
+	FreeEnvironmentStringsA(environment);
+	return result;
+}
+
 B32 platform_get_file_size(Platform_File file, U64 *size)
 {
 	LARGE_INTEGER value;

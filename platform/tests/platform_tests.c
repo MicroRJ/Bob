@@ -83,6 +83,26 @@ int main(void)
 	assert(platform_remove_directory("build/platform_test/a/b"));
 	assert(platform_remove_directory("build/platform_test/a"));
 	assert(platform_remove_directory("build/platform_test"));
+	Platform_Result set_environment = platform_set_environment("PLATFORM_TEST_VALUE", "platapuss");
+	assert(set_environment.error == PLATFORM_ERROR_NONE);
+	Platform_Environment_Result environment_query = platform_get_environment("PLATFORM_TEST_VALUE", NULL, 0);
+	assert(environment_query.error == PLATFORM_ERROR_NONE);
+	assert(environment_query.found);
+	assert(environment_query.size == sizeof("platapuss") - 1);
+	char environment_value[32];
+	Platform_Environment_Result environment_read = platform_get_environment("PLATFORM_TEST_VALUE", environment_value, sizeof(environment_value));
+	assert(environment_read.error == PLATFORM_ERROR_NONE);
+	assert(strcmp(environment_value, "platapuss") == 0);
+	assert(platform_set_environment("PLATFORM_TEST_EMPTY", "").error == PLATFORM_ERROR_NONE);
+	Platform_Environment_Result empty_environment = platform_get_environment("PLATFORM_TEST_EMPTY", environment_value, sizeof(environment_value));
+	assert(empty_environment.error == PLATFORM_ERROR_NONE);
+	assert(empty_environment.found && empty_environment.size == 0);
+	assert(platform_set_environment("PLATFORM_TEST_VALUE", NULL).error == PLATFORM_ERROR_NONE);
+	assert(platform_set_environment("PLATFORM_TEST_EMPTY", NULL).error == PLATFORM_ERROR_NONE);
+	assert(!platform_get_environment("PLATFORM_TEST_VALUE", NULL, 0).found);
+	Platform_String_Result environment_block = platform_get_environment_block(NULL, 0);
+	assert(environment_block.error == PLATFORM_ERROR_NONE);
+	assert(environment_block.required_capacity > 1);
 
 	Platform_Process_Start_Result start = platform_start_process("cmd.exe /d /c echo platapuss", (Platform_Process_Options){ .capture_standard_output = PLATFORM_TRUE, .capture_standard_error = PLATFORM_TRUE, .hide_window = PLATFORM_TRUE });
 	assert(start.error == PLATFORM_ERROR_NONE);

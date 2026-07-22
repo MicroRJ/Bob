@@ -210,7 +210,7 @@ static b32 ensure_cache_path(Arena *arena, String *path)
 	*path = (String){0};
 
 	String local_app_data;
-	if (!platform_local_app_data(arena, &local_app_data)) goto failure;
+	if (!bob_platform_local_app_data(arena, &local_app_data)) goto failure;
 	if (!string_is_terminated(local_app_data)) goto failure;
 	char *start = local_app_data.data;
 	// Reuse the returned terminator as the next append position.
@@ -240,7 +240,7 @@ static b32 apply_rule(String action, String name, String value)
 		return false;
 	}
 
-	if (!platform_get_environment(string_from_cstring(name_text), scratch.arena, &current)) {
+	if (!bob_platform_get_environment(string_from_cstring(name_text), scratch.arena, &current)) {
 		end_scratch(scratch);
 		return false;
 	}
@@ -265,7 +265,7 @@ static b32 apply_rule(String action, String name, String value)
 		end_scratch(scratch);
 		return false;
 	}
-	success = platform_set_environment(string_from_cstring(name_text), string_from_cstring(value_text));
+	success = bob_platform_set_environment(string_from_cstring(name_text), string_from_cstring(value_text));
 	end_scratch(scratch);
 	return success;
 }
@@ -331,7 +331,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		goto cleanup;
 	}
 
-	if (!platform_get_environment_block(arena, &before_block))
+	if (!bob_platform_get_environment_block(arena, &before_block))
 	{
 		log_error("unable to capture the current environment");
 		goto cleanup;

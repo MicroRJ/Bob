@@ -5,6 +5,5 @@
 
 #include <stdlib.h>
 
-#include "win32/win32_environment.c"
 #include "win32/win32_console.c"
 #include "../platform_adapter.c"
