@@ -22,28 +22,6 @@ include_dirs := {
 	"src/lib",
 	"src/platform",
 	"elf/include",
-	"elf/batteries",
-}
-
-elf_include_dirs := {
-	"elf/src",
-	"elf/src/base",
-	"elf/src/api",
-	"elf/src/core",
-	"elf/src/diagnostics",
-	"elf/src/core/libs",
-	"elf/src/core/value",
-	"elf/src/core/table",
-	"elf/src/core/atom",
-	"elf/src/platform",
-	"elf/src/compiler",
-	"elf/src/compiler/frontend",
-	"elf/src/compiler/middle",
-	"elf/src/compiler/backend",
-	"elf/batteries",
-	"elf/batteries/internal",
-	"elf/include",
-	"elf/stb",
 }
 
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
@@ -96,19 +74,6 @@ for source := core_sources[...] ? {
 	common_objects:add(compiled.object)
 }
 
-elf_include_options := bob.strings.expand(elf_include_dirs, "' /I'.")
-elf_batteries_object := "build/obj/elf_batteries.obj"
-elf_batteries_task := {
-	name = "compile Elf batteries",
-	command_line = f"${cc} /nologo /std:c11 /Zi /Od /D_DEBUG /DPLATFORM_DESKTOP -Wno-macro-redefined${elf_include_options} /c elf/batteries/batteries.c /Fo${elf_batteries_object} /Fdbuild/obj/elf_batteries.pdb",
-	inputs = { "elf/batteries/batteries.c" },
-	outputs = { elf_batteries_object },
-	include_dirs = elf_include_dirs,
-	dependencies = { prepare, build_elf },
-}
-common_tasks:add(elf_batteries_task)
-common_objects:add(elf_batteries_object)
-
 bob_compiled := compile_source({
 	name = "bob",
 	source = "src/bob_main.c",
@@ -120,12 +85,13 @@ bob_dependencies := common_tasks:clone():extend({
 bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
 	"elf/build/elf.lib",
+	"elf/build/elf_batteries.lib",
 })
 common_object_options := bob.strings.expand(common_objects, "' '.")
 
 build_bob := {
 	name = "link Bob",
-	command_line = f"${cc} /nologo${common_object_options} ${bob_compiled.object} elf\\build\\elf.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${bob_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
 	inputs = bob_inputs,
 	outputs = { "build/bob.exe" },
 	include_dirs = {},
@@ -140,12 +106,12 @@ test_dependencies := common_tasks:clone():extend({
 	build_elf,
 })
 test_inputs := common_objects:clone():extend({
-	tests_compiled.object, "elf/build/elf.lib",
+	tests_compiled.object, "elf/build/elf.lib", "elf/build/elf_batteries.lib",
 })
 
 build_tests := {
 	name = "link tests",
-	command_line = f"${cc} /nologo${common_object_options} ${tests_compiled.object} elf\\build\\elf.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${tests_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
 	inputs = test_inputs,
 	outputs = { "build/tests.exe" },
 	include_dirs = {},

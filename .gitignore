@@ -16,3 +16,6 @@ build/
 
 # Experiments
 laboratory/
+
+# Local tooling scratch files
+.codex-staging/
