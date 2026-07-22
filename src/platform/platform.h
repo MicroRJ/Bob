@@ -47,7 +47,7 @@ b32 platform_read_entire_file(Arena *arena, String path, String *result);
 b32 platform_write_entire_file(String path, const void *data, size_t size);
 b32 platform_copy_file(String source, String destination, b32 overwrite);
 b32 platform_move_file(String source, String destination, b32 overwrite);
-b32 platform_remove_file(String path);
+b32 bob_platform_remove_file(String path);
 b32 platform_remove_directory(String path);
 b32 platform_create_directory(String path);
 b32 platform_create_directories(String path);

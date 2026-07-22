@@ -116,10 +116,10 @@ b32 script_remove_path(Arena *arena, String path, b32 recursive)
 {
 	Platform_File_Info info;
 	if (!platform_file_info(path, &info)) {
-		if (platform_remove_file(path)) return true;
+		if (bob_platform_remove_file(path)) return true;
 		return platform_remove_directory(path);
 	}
-	if (!info.is_directory) return platform_remove_file(path);
+	if (!info.is_directory) return bob_platform_remove_file(path);
 	if (!recursive || info.is_symbolic_link) return platform_remove_directory(path);
 
 	u64 mark = arena_mark(arena);

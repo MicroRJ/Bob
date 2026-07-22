@@ -223,7 +223,7 @@ b32 platform_move_file(String source, String destination, b32 overwrite)
 	return MoveFileExA(source.data, destination.data, flags) != 0;
 }
 
-b32 platform_remove_file(String path)
+b32 bob_platform_remove_file(String path)
 {
 	if (!string_is_terminated(path)) return false;
 	if (DeleteFileA(path.data)) return true;

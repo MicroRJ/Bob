@@ -74,6 +74,21 @@ for source := core_sources[...] ? {
 	common_objects:add(compiled.object)
 }
 
+build_platform := {
+	name = "build platform library",
+	command_line = "cmd /c \"cd /d platform && ..\\blessed\\bob.exe build.elf lib\"",
+	inputs = {
+		"platform/build.elf",
+		"platform/include/platform.h",
+		"platform/include/platform_types.h",
+		"platform/src/platform_win32.c",
+	},
+	outputs = { "platform/build/platform.lib" },
+	include_dirs = {},
+	dependencies = {},
+	transparent = true,
+}
+
 bob_compiled := compile_source({
 	name = "bob",
 	source = "src/bob_main.c",
@@ -81,17 +96,19 @@ bob_compiled := compile_source({
 bob_dependencies := common_tasks:clone():extend({
 	bob_compiled.task,
 	build_elf,
+	build_platform,
 })
 bob_inputs := common_objects:clone():extend({
 	bob_compiled.object,
 	"elf/build/elf.lib",
 	"elf/build/elf_batteries.lib",
+	"platform/build/platform.lib",
 })
 common_object_options := bob.strings.expand(common_objects, "' '.")
 
 build_bob := {
 	name = "link Bob",
-	command_line = f"${cc} /nologo${common_object_options} ${bob_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${bob_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib platform\\build\\platform.lib /Febuild\\bob.exe /link /DEBUG /PDB:build\\bob.pdb",
 	inputs = bob_inputs,
 	outputs = { "build/bob.exe" },
 	include_dirs = {},
@@ -104,14 +121,15 @@ tests_compiled := compile_source({
 test_dependencies := common_tasks:clone():extend({
 	tests_compiled.task,
 	build_elf,
+	build_platform,
 })
 test_inputs := common_objects:clone():extend({
-	tests_compiled.object, "elf/build/elf.lib", "elf/build/elf_batteries.lib",
+	tests_compiled.object, "elf/build/elf.lib", "elf/build/elf_batteries.lib", "platform/build/platform.lib",
 })
 
 build_tests := {
 	name = "link tests",
-	command_line = f"${cc} /nologo${common_object_options} ${tests_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
+	command_line = f"${cc} /nologo${common_object_options} ${tests_compiled.object} elf\\build\\elf.lib elf\\build\\elf_batteries.lib platform\\build\\platform.lib /Febuild\\tests.exe /link /DEBUG /PDB:build\\tests.pdb",
 	inputs = test_inputs,
 	outputs = { "build/tests.exe" },
 	include_dirs = {},
