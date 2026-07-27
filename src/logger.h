@@ -17,6 +17,7 @@ void logger_init(void);
 void logger_set_minimum_level(Log_Level level);
 void logger_set_colors(b32 enabled);
 void logger_set_verbosity(i32 verbosity);
+void logger_set_quiet(b32 quiet);
 void logger_logv(Log_Level level, const char *tag, const char *format, va_list arguments);
 void logger_log(Log_Level level, const char *tag, const char *format, ...);
 void logger_log_string(Log_Level level, const char *tag, String message);

@@ -126,6 +126,11 @@ int main(int argument_count, char **arguments)
             }
          }
       }
+      else if (strcmp(arguments[argument_index], "-q") == 0 ||
+               strcmp(arguments[argument_index], "--quiet") == 0)
+      {
+         command_line_options.quiet = true;
+      }
       else if (strcmp(arguments[argument_index], "--workers") == 0 && argument_index + 1 < argument_count)
       {
          char *end;
@@ -179,15 +184,16 @@ int main(int argument_count, char **arguments)
       }
       else
       {
-         log_error("usage: bob [build-file] [function] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
+         log_error("usage: bob [build-file] [function] [-q | --quiet] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
          return 2;
       }
    }
+   logger_set_quiet(command_line_options.quiet);
    if (cache_vcvars)
    {
 		Scratch scratch;
 		String cache_path;
-      if (has_build_path || has_function || command_line_options.has_worker_count || command_line_options.has_verbosity || profile)
+      if (has_build_path || has_function || command_line_options.has_worker_count || command_line_options.has_verbosity || command_line_options.quiet || profile)
       {
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;
