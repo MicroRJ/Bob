@@ -316,7 +316,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 	String before_block;
 	String after_capture;
 	String cache;
-	Platform_Process_Result process;
+	Bob_Platform_Process_Result process;
 	b32 success = false;
 
 	String path;
@@ -341,7 +341,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to parse the current environment");
 		goto cleanup;
 	}
-	if (!platform_run_command(command, arena, (Platform_Process_Options){ .hide_window = true }, &process)) {
+	if (!bob_platform_run_command(command, arena, (Bob_Platform_Process_Options){ .hide_window = true }, &process)) {
 		log_error("unable to run vcvars64 (error %u)", process.error_code);
 		goto cleanup;
 	}
@@ -365,7 +365,7 @@ b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 		log_error("unable to serialize environment diff");
 		goto cleanup;
 	}
-	if (!platform_write_entire_file(path, cache.data, cache.size))
+	if (!bob_platform_write_entire_file(path, cache.data, cache.size))
 	{
 		log_error("unable to write vcvars cache: %s", path.data);
 		goto cleanup;
@@ -388,7 +388,7 @@ b32 vcvars_cache_load(void)
 		end_scratch(scratch);
 		return false;
 	}
-	if (!platform_read_entire_file(scratch.arena, path, &data)) {
+	if (!bob_platform_read_entire_file(scratch.arena, path, &data)) {
 		end_scratch(scratch);
 		return false;
 	}

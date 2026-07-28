@@ -1,13 +1,10 @@
 #include "elf_adapter.h"
 #include "elf_batteries.h"
-#include "scripts/libs/string.h"
 
 #include "elf.h"
 #include "logger.h"
 #include "platform_adapter.h"
 #include "profiler.h"
-#include "scripts/libs/filesystem.h"
-#include "scripts/libs/path.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -20,10 +17,6 @@ typedef struct Elf_Script
 Elf_Script;
 
 static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result);
-static ELF_FUNCTION(l_strings_expand);
-static ELF_FUNCTION(l_fs_list);
-static ELF_FUNCTION(l_fs_remove);
-
 ELF_FUNCTION(l_bob_build)
 {
 	(void)nargs;
@@ -52,78 +45,11 @@ ELF_FUNCTION(l_bob_build)
 	return 1;
 }
 
-ELF_FUNCTION(l_strings_expand)
-{
-	(void)nrets;
-	Script *script = elf_get_user_data(S);
-	if (nargs != 3 || elf_type(S, 1) != ELF_VALUE_TYPE_TABLE || elf_type(S, 2) != ELF_VALUE_TYPE_STRING)
-	{
-		script_set_error(script, "strings.expand expects a table of strings and a rule string");
-		script->failed = true;
-		elf_push_nil(S);
-		return 1;
-	}
-
-	Scratch scratch = begin_different_scratch(script->arena);
-	elf_u32 length = 0;
-	elf_length(S, 1, &length);
-	String_Array strings = { .count = length };
-	strings.items = arena_push_zero_aligned(scratch.arena, strings.count * sizeof(String), _Alignof(String));
-	for (u32 index = 0; index < strings.count; ++index)
-	{
-		elf_StrSlice value;
-		elf_get_index(S, 1, index);
-		if (!elf_to_str(S, -1, &value))
-		{
-			script_set_error(script, "strings.expand expects a table containing only strings");
-			script->failed = true;
-			elf_push_nil(S);
-			end_scratch(scratch);
-			return 1;
-		}
-		strings.items[index] = string_from_data(value.data, value.size);
-		elf_pop(S, 1);
-	}
-
-	elf_StrSlice rule_value;
-	elf_to_str(S, 2, &rule_value);
-	String rule = string_from_data(rule_value.data, rule_value.size);
-	String result;
-	const char *error;
-	if (!script_strings_expand(scratch.arena, strings, rule, &result, &error))
-	{
-		script_set_error(script, "invalid strings.expand rule: %s", error);
-		script->failed = true;
-		elf_push_nil(S);
-	}
-	else {
-		elf_push_str(S, result.data, (int)result.size);
-	}
-	end_scratch(scratch);
-	return 1;
-}
-
-static b32 binding_error(elf_State *state, Script *script, const char *message)
-{
-	script_set_error(script, "%s", message);
-	script->failed = true;
-	elf_push_nil(state);
-	return false;
-}
-
 static String stack_string(elf_State *state, elf_i32 index)
 {
 	elf_StrSlice value;
 	if (!elf_to_str(state, index, &value)) return (String){0};
 	return string_from_data(value.data, value.size);
-}
-
-static String stack_string_field(elf_State *state, elf_i32 table, const char *field)
-{
-	if (!elf_get_field(state, table, field)) return (String){0};
-	String result = stack_string(state, -1);
-	elf_pop(state, 1);
-	return result;
 }
 
 static b32 stack_integer_field(elf_State *state, elf_i32 table, const char *field, elf_Integer *value, b32 *present)
@@ -133,170 +59,6 @@ static b32 stack_integer_field(elf_State *state, elf_i32 table, const char *fiel
 	b32 result = !*present || elf_to_int(state, -1, value);
 	elf_pop(state, 1);
 	return result;
-}
-
-ELF_FUNCTION(l_fs_list)
-{
-	(void)nrets;
-	Script *script = elf_get_user_data(S);
-	if (nargs != 2 || elf_type(S, 1) != ELF_VALUE_TYPE_TABLE) {
-		binding_error(S, script, "bob.fs.list expects an options table");
-		return 1;
-	}
-
-	Script_List_Paths_Options options = {0};
-	elf_get_field(S, 1, "root");
-	if (!elf_is_nil(S, -1)) {
-		options.root = stack_string(S, -1);
-		if (!options.root.data) {
-			binding_error(S, script, "bob.fs.list option 'root' must be a string");
-			return 1;
-		}
-	}
-	elf_pop(S, 1);
-	elf_get_field(S, 1, "pattern");
-	if (!elf_is_nil(S, -1)) {
-		options.pattern = stack_string(S, -1);
-		if (!options.pattern.data) {
-			binding_error(S, script, "bob.fs.list option 'pattern' must be a string");
-			return 1;
-		}
-	}
-	elf_pop(S, 1);
-	elf_get_field(S, 1, "recursive");
-	if (!elf_is_nil(S, -1)) {
-		elf_Integer value;
-		if (!elf_to_int(S, -1, &value)) {
-			binding_error(S, script, "bob.fs.list option 'recursive' must be a boolean");
-			return 1;
-		}
-		options.recursive = value != 0;
-	}
-	elf_pop(S, 1);
-	elf_get_field(S, 1, "relative");
-	if (!elf_is_nil(S, -1)) {
-		elf_Integer value;
-		if (!elf_to_int(S, -1, &value)) {
-			binding_error(S, script, "bob.fs.list option 'relative' must be a boolean");
-			return 1;
-		}
-		options.relative = value != 0;
-	}
-	elf_pop(S, 1);
-	elf_get_field(S, 1, "kind");
-	if (!elf_is_nil(S, -1))
-	{
-		String kind = stack_string(S, -1);
-		if (!kind.data) {
-			binding_error(S, script, "bob.fs.list option 'kind' must be a string");
-			return 1;
-		}
-		if (string_is(kind, "files")) options.kind = SCRIPT_PATH_FILES;
-		else if (string_is(kind, "directories")) options.kind = SCRIPT_PATH_DIRECTORIES;
-		else if (string_is(kind, "all")) options.kind = SCRIPT_PATH_ALL;
-		else {
-			binding_error(S, script, "bob.fs.list option 'kind' must be 'files', 'directories', or 'all'");
-			return 1;
-		}
-	}
-	elf_pop(S, 1);
-
-	Scratch scratch = begin_different_scratch(script->arena);
-	elf_get_field(S, 1, "patterns");
-	if (!elf_is_nil(S, -1))
-	{
-		if (options.pattern.data) {
-			end_scratch(scratch);
-			binding_error(S, script, "bob.fs.list accepts either 'pattern' or 'patterns', not both");
-			return 1;
-		}
-		if (elf_type(S, -1) != ELF_VALUE_TYPE_TABLE) {
-			end_scratch(scratch);
-			binding_error(S, script, "bob.fs.list option 'patterns' must be a table of strings");
-			return 1;
-		}
-		options.has_patterns = true;
-		elf_length(S, -1, &options.patterns.count);
-		options.patterns.items = arena_push_zero_aligned(scratch.arena, options.patterns.count * sizeof(String), _Alignof(String));
-		elf_i32 patterns = elf_abs_index(S, -1);
-		for (u32 index = 0; index < options.patterns.count; ++index)
-		{
-			elf_get_index(S, patterns, index);
-			options.patterns.items[index] = stack_string(S, -1);
-			if (!options.patterns.items[index].data) {
-				end_scratch(scratch);
-				binding_error(S, script, "bob.fs.list option 'patterns' must contain only strings");
-				return 1;
-			}
-			elf_pop(S, 1);
-		}
-	}
-	elf_pop(S, 1);
-	String_Array paths;
-	if (!script_list_paths(scratch.arena, options, &paths))
-	{
-		end_scratch(scratch);
-		binding_error(S, script, "bob.fs.list could not read the root directory");
-		return 1;
-	}
-	elf_new_table(S);
-	elf_i32 result = elf_abs_index(S, -1);
-	for (u32 index = 0; index < paths.count; ++index) {
-		elf_push_str(S, paths.items[index].data, (int)paths.items[index].size);
-		elf_append(S, result);
-	}
-	end_scratch(scratch);
-	return 1;
-}
-
-ELF_FUNCTION(l_fs_remove)
-{
-	(void)nrets;
-	Script *script = elf_get_user_data(S);
-	String path = {0};
-	b32 recursive = false;
-	if (nargs < 2) {
-		binding_error(S, script, "bob.fs.remove expects arguments");
-		return 1;
-	}
-	if (elf_type(S, 1) == ELF_VALUE_TYPE_TABLE)
-	{
-		if (nargs != 2) {
-			binding_error(S, script, "bob.fs.remove options must be passed in one table");
-			return 1;
-		}
-		path = stack_string_field(S, 1, "path");
-		elf_Integer value = 0;
-		b32 present = false;
-		if (!stack_integer_field(S, 1, "recursive", &value, &present)) {
-			binding_error(S, script, "bob.fs.remove option 'recursive' must be a boolean");
-			return 1;
-		}
-		if (present) recursive = value != 0;
-	}
-	else
-	{
-		if ((nargs != 2 && nargs != 3) || elf_type(S, 1) != ELF_VALUE_TYPE_STRING || (nargs == 3 && elf_type(S, 2) != ELF_VALUE_TYPE_INTEGER))
-		{
-			binding_error(S, script, "bob.fs.remove expects (path, recursive?)");
-			return 1;
-		}
-		path = stack_string(S, 1);
-		if (nargs == 3) {
-			elf_Integer value;
-			elf_to_int(S, 2, &value);
-			recursive = value != 0;
-		}
-	}
-	if (!path.data) {
-		binding_error(S, script, "bob.fs.remove requires a path string");
-		return 1;
-	}
-	Scratch scratch = begin_different_scratch(script->arena);
-	path = arena_push_string_copy(scratch.arena, path);
-	elf_push_int(S, script_remove_path(scratch.arena, path, recursive));
-	end_scratch(scratch);
-	return 1;
 }
 
 static b32 set_function(elf_State *state, elf_i32 table, const char *name, elf_Function function)
@@ -314,17 +76,6 @@ static b32 register_bob_library(elf_State *state)
 	if (!set_function(state, bob, "build", l_bob_build)) goto error;
 	elf_push_cstr(state, BOB_VERSION);
 	if (!elf_set_field(state, bob, "version")) goto error;
-
-	elf_new_table(state);
-	elf_i32 strings = elf_abs_index(state, -1);
-	if (!set_function(state, strings, "expand", l_strings_expand)) goto error;
-	if (!elf_set_field(state, bob, "strings")) goto error;
-
-	elf_new_table(state);
-	elf_i32 fs = elf_abs_index(state, -1);
-	if (!set_function(state, fs, "list", l_fs_list)) goto error;
-	if (!set_function(state, fs, "remove", l_fs_remove)) goto error;
-	if (!elf_set_field(state, bob, "fs")) goto error;
 
 	if (!elf_set_global(state, "bob")) goto error;
 	return true;
@@ -350,7 +101,7 @@ b32 elf_script_load(Script *script, String path)
 		return false;
 	}
 	String source;
-	if (!platform_read_entire_file(script->arena, path, &source)) {
+	if (!bob_platform_read_entire_file(script->arena, path, &source)) {
 		script_set_error(script, "unable to read '%s'", path.data);
 		return false;
 	}

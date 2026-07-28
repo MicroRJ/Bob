@@ -65,11 +65,11 @@ void logger_logv(Log_Level level, const char *tag, const char *format, va_list a
    if (level < logger.minimum_level) { return; }
    stream = level >= LOG_LEVEL_WARNING ? stderr : stdout;
 
-   platform_output_lock();
+   bob_platform_output_lock();
    scratch = begin_scratch();
    start = arena_top(scratch.arena);
    colors = logger.colors &&
-   platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
+   bob_platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
    if (colors) { arena_append_text(scratch.arena, level_color(level)); }
    arena_appendf(scratch.arena, "[%s]", tag);
    if (colors) { arena_append_text(scratch.arena, "\x1b[0m"); }
@@ -81,7 +81,7 @@ void logger_logv(Log_Level level, const char *tag, const char *format, va_list a
    fwrite(message.data, 1, (size_t)message.size, stream);
    fflush(stream);
    end_scratch(scratch);
-   platform_output_unlock();
+   bob_platform_output_unlock();
 }
 
 void logger_log(Log_Level level, const char *tag, const char *format, ...)
@@ -123,11 +123,11 @@ void logger_log_string(Log_Level level, const char *tag, String input)
 
 	if (level < logger.minimum_level) return;
 	stream = level >= LOG_LEVEL_WARNING ? stderr : stdout;
-	platform_output_lock();
+	bob_platform_output_lock();
 	scratch = begin_scratch();
 	start = arena_top(scratch.arena);
 	colors = logger.colors &&
-		platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
+		bob_platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
 	if (colors) arena_append_text(scratch.arena, level_color(level));
 	arena_appendf(scratch.arena, "[%s]", tag);
 	if (colors) arena_append_text(scratch.arena, "\x1b[0m");
@@ -141,7 +141,7 @@ void logger_log_string(Log_Level level, const char *tag, String input)
 	fwrite(message.data, 1, (size_t)message.size, stream);
 	fflush(stream);
 	end_scratch(scratch);
-	platform_output_unlock();
+	bob_platform_output_unlock();
 }
 
 void logger_log_string_at(i32 verbosity, Log_Level level, const char *tag, String message)

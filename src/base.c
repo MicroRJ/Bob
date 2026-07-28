@@ -1,5 +1,5 @@
 #include "base.h"
-#include "platform_adapter.h"
+#include "platform.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -19,7 +19,7 @@ Arena arena_create(u64 capacity)
 void arena_destroy(Arena *arena)
 {
 	if (!arena) return;
-	platform_virtual_free(arena->data);
+	platform_virtual_release(arena->data);
 	memset(arena, 0, sizeof(*arena));
 }
 

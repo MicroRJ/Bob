@@ -1,7 +1,9 @@
 #include "bob.h"
 #include "c_include_scan.h"
+#include "compiler_command.h"
 #include "logger.h"
 #include "platform_adapter.h"
+#include "platform.h"
 #include "profiler.h"
 
 typedef struct Builder Builder;
@@ -9,7 +11,7 @@ typedef struct Builder Builder;
 typedef struct Completion
 {
 	Bob_Node                *node;
-	Platform_Process_Result  process;
+	Bob_Platform_Process_Result process;
 	b32                      rebuilt;
 }
 Completion;
@@ -17,7 +19,7 @@ Completion;
 typedef struct Worker
 {
 	Builder         *builder;
-	Platform_Thread *thread;
+	Platform_Thread  thread;
 	Arena            output;
 }
 Worker;
@@ -34,9 +36,10 @@ struct Builder
 	u32                 work_count;
 	Completion        **completions;
 	u32                 completion_count;
-	Platform_Mutex     *mutex;
-	Platform_Condition *work_available;
-	Platform_Condition *completion_available;
+	Platform_Mutex      mutex;
+	Platform_Condition  work_available;
+	Platform_Condition  completion_available;
+	b32                 synchronization_initialized;
 	b32                 stopping;
 };
 
@@ -49,13 +52,13 @@ static b32 task_needs_rebuild(const Bob_Node *node, const Bob_Task *task)
 	if (task->outputs.count == 0) return true;
 
 	for (i = 0; i < task->outputs.count; ++i) {
-		Platform_File_Info info;
-		if (!platform_file_info(task->outputs.items[i], &info)) return true;
+		Bob_Platform_File_Info info;
+		if (!bob_platform_file_info(task->outputs.items[i], &info)) return true;
 		if ((u64)info.modified_unix_ms < oldest_output) oldest_output = (u64)info.modified_unix_ms;
 	}
 	for (i = 0; i < task->inputs.count; ++i) {
-		Platform_File_Info info;
-		if (!platform_file_info(task->inputs.items[i], &info)) return true;
+		Bob_Platform_File_Info info;
+		if (!bob_platform_file_info(task->inputs.items[i], &info)) return true;
 		if ((u64)info.modified_unix_ms > newest_input) newest_input = (u64)info.modified_unix_ms;
 	}
 
@@ -97,13 +100,25 @@ static String command_executable(Arena *arena, String command_line)
 static void request_stop_locked(Builder *builder)
 {
 	builder->stopping = true;
-	if (builder->work_available) platform_condition_broadcast(builder->work_available);
-	if (builder->completion_available) platform_condition_broadcast(builder->completion_available);
+	platform_broadcast_condition(&builder->work_available);
+	platform_broadcast_condition(&builder->completion_available);
 }
 
 static void run_command(Worker *worker, Completion *completion)
 {
-	platform_run_command(completion->node->task.command_line, &worker->output, (Platform_Process_Options){ .capture_stderr = true }, &completion->process);
+	const Bob_Task *task = &completion->node->task;
+	String command_line = task->command_line;
+	Scratch scratch = begin_scratch();
+	if (task->outputs.count > 0) {
+		void *start = arena_top(scratch.arena);
+		arena_append_str(scratch.arena, task->outputs.items[0]);
+		arena_append_text(scratch.arena, ".d");
+		String dependency_file = arena_string_from(scratch.arena, start);
+		arena_finalize_string(scratch.arena, dependency_file);
+		compiler_command_add_dependencies(scratch.arena, command_line, dependency_file, &command_line);
+	}
+	bob_platform_run_command(command_line, &worker->output, (Bob_Platform_Process_Options){ .capture_stderr = true }, &completion->process);
+	end_scratch(scratch);
 }
 
 static u32 worker_main(void *data)
@@ -112,20 +127,20 @@ static u32 worker_main(void *data)
 	Builder *builder = worker->builder;
 	for (;;)
 	{
-		platform_mutex_lock(builder->mutex);
+		platform_lock_mutex(&builder->mutex);
 		while (!builder->stopping && builder->work_count == 0) {
-			if (!platform_condition_wait(builder->work_available, builder->mutex)) {
+			if (platform_wait_condition(&builder->work_available, &builder->mutex).error) {
 				log_fatal("failed waiting for worker queue");
 				request_stop_locked(builder);
 			}
 		}
 		if (builder->stopping) {
-			platform_mutex_unlock(builder->mutex);
+			platform_unlock_mutex(&builder->mutex);
 			break;
 		}
 
 		Bob_Node *node = builder->work[--builder->work_count];
-		platform_mutex_unlock(builder->mutex);
+		platform_unlock_mutex(&builder->mutex);
 
 		const Bob_Task *task = bob_get_task(node);
 
@@ -136,9 +151,9 @@ static u32 worker_main(void *data)
 		Completion *completion = arena_push_zero_aligned(&worker->output, sizeof(*completion), _Alignof(Completion));
 		if (!completion) {
 			log_fatal("worker output arena exhausted");
-			platform_mutex_lock(builder->mutex);
+			platform_lock_mutex(&builder->mutex);
 			request_stop_locked(builder);
-			platform_mutex_unlock(builder->mutex);
+			platform_unlock_mutex(&builder->mutex);
 			break;
 		}
 		completion->node = node;
@@ -151,10 +166,10 @@ static u32 worker_main(void *data)
 			profile_scope_end(&scope);
 		}
 
-		platform_mutex_lock(builder->mutex);
+		platform_lock_mutex(&builder->mutex);
 		builder->completions[builder->completion_count++] = completion;
-		platform_condition_signal(builder->completion_available);
-		platform_mutex_unlock(builder->mutex);
+		platform_signal_condition(&builder->completion_available);
+		platform_unlock_mutex(&builder->mutex);
 	}
 	destroy_global_scratch();
 	return 0;
@@ -162,14 +177,14 @@ static u32 worker_main(void *data)
 
 static void stop_workers(Builder *builder)
 {
-	if (builder->mutex) {
-		platform_mutex_lock(builder->mutex);
+	if (builder->synchronization_initialized) {
+		platform_lock_mutex(&builder->mutex);
 		request_stop_locked(builder);
-		platform_mutex_unlock(builder->mutex);
+		platform_unlock_mutex(&builder->mutex);
 	}
 	for (u32 i = 0; i < builder->thread_count; ++i) {
-		platform_thread_join(builder->workers[i].thread);
-		platform_thread_destroy(builder->workers[i].thread);
+		platform_join_thread(builder->workers[i].thread);
+		platform_close_thread(&builder->workers[i].thread);
 	}
 	for (u32 i = 0; i < builder->arena_count; ++i) arena_destroy(&builder->workers[i].output);
 }
@@ -214,7 +229,7 @@ static void report_completion(const Completion *completion)
 		executable = command_executable(scratch.arena, command_line);
 		if (executable.data) logger_log(LOG_LEVEL_ERROR, "executable", "%s (%s)", executable.data, bob_platform_executable_resolves(executable) ? "found" : "not found in current directory or PATH");
 		else logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
-		if (platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
+		if (bob_platform_current_directory(scratch.arena, &working_directory)) logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
 		end_scratch(scratch);
 	} else if (completion->process.exit_code != 0) {
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "process exited with code %u", completion->process.exit_code);
@@ -224,7 +239,7 @@ static void report_completion(const Completion *completion)
 
 static void dispatch_ready(Builder *builder)
 {
-	platform_mutex_lock(builder->mutex);
+	platform_lock_mutex(&builder->mutex);
 	u32 previous_work_count = builder->work_count;
 	Bob_Node *node;
 	while (builder->running < builder->worker_count && bob_take_ready(builder->bob, &node))
@@ -232,8 +247,8 @@ static void dispatch_ready(Builder *builder)
 		builder->work[builder->work_count++] = node;
 		++builder->running;
 	}
-	if (builder->work_count > previous_work_count) platform_condition_broadcast(builder->work_available);
-	platform_mutex_unlock(builder->mutex);
+	if (builder->work_count > previous_work_count) platform_broadcast_condition(&builder->work_available);
+	platform_unlock_mutex(&builder->mutex);
 }
 
 b32 bob_build(Bob *bob, u32 worker_count)
@@ -265,12 +280,12 @@ b32 bob_build(Bob *bob, u32 worker_count)
 	builder.workers = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.workers), _Alignof(Worker));
 	builder.work = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.work), _Alignof(Bob_Node *));
 	builder.completions = arena_push_zero_aligned(scratch.arena, worker_count * sizeof(*builder.completions), _Alignof(Completion *));
-	builder.mutex = platform_mutex_create();
-	builder.work_available = platform_condition_create();
-	builder.completion_available = platform_condition_create();
-
-	b32 internal_error = !builder.workers || !builder.work || !builder.completions || !builder.mutex || !builder.work_available || !builder.completion_available;
+	b32 internal_error = !builder.workers || !builder.work || !builder.completions;
 	if (internal_error) goto cleanup;
+	platform_init_mutex(&builder.mutex);
+	platform_init_condition(&builder.work_available);
+	platform_init_condition(&builder.completion_available);
+	builder.synchronization_initialized = true;
 
 	for (u32 i = 0; i < worker_count; ++i)
 	{
@@ -282,9 +297,10 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 		++ builder.arena_count;
 
-		worker->thread = platform_thread_create(worker_main, worker);
-		internal_error = !worker->thread;
+		Platform_Thread_Start_Result start = platform_start_thread(worker_main, worker);
+		internal_error = start.error != PLATFORM_ERROR_NONE;
 		if (internal_error) goto cleanup;
+		worker->thread = start.thread;
 
 		++ builder.thread_count;
 	}
@@ -300,9 +316,9 @@ b32 bob_build(Bob *bob, u32 worker_count)
 			break;
 		}
 
-		platform_mutex_lock(builder.mutex);
+		platform_lock_mutex(&builder.mutex);
 		while (!builder.stopping && builder.completion_count == 0) {
-			if (!platform_condition_wait(builder.completion_available, builder.mutex)) {
+			if (platform_wait_condition(&builder.completion_available, &builder.mutex).error) {
 				log_fatal("failed waiting for worker completion");
 				request_stop_locked(&builder);
 			}
@@ -312,7 +328,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 		if (builder.completion_count > 0) {
 			completion = builder.completions[--builder.completion_count];
 		}
-		platform_mutex_unlock(builder.mutex);
+		platform_unlock_mutex(&builder.mutex);
 
 		if (!completion) {
 			internal_error = true;
@@ -334,9 +350,11 @@ b32 bob_build(Bob *bob, u32 worker_count)
 
 cleanup:
 	stop_workers(&builder);
-	platform_condition_destroy(builder.completion_available);
-	platform_condition_destroy(builder.work_available);
-	platform_mutex_destroy(builder.mutex);
+	if (builder.synchronization_initialized) {
+		platform_destroy_condition(&builder.completion_available);
+		platform_destroy_condition(&builder.work_available);
+		platform_destroy_mutex(&builder.mutex);
+	}
 	end_scratch(scratch);
 	return !internal_error && !bob_has_failed(bob);
 }

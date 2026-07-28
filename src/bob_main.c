@@ -37,12 +37,12 @@ static int run_build(Script *script, Cmd_Options command_line_options)
 
 static int run_script(String path, String function_name, Cmd_Options command_line_options)
 {
-	Platform_File_Info build_file;
-	if (!platform_file_info(path, &build_file))
+	Bob_Platform_File_Info build_file;
+	if (!bob_platform_file_info(path, &build_file))
 	{
 		Scratch scratch = begin_scratch();
 		String working_directory;
-		if (platform_current_directory(scratch.arena, &working_directory)) log_error("%s: file not found (working directory: %s)", path.data, working_directory.data);
+		if (bob_platform_current_directory(scratch.arena, &working_directory)) log_error("%s: file not found (working directory: %s)", path.data, working_directory.data);
 		else log_error("%s: file not found", path.data);
 		end_scratch(scratch);
 		return 1;

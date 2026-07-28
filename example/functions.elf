@@ -1,33 +1,48 @@
-expanded := bob.strings.expand({ "src", "vendor" }, "'/I'.(' ')*")
-elf.assert(expanded == "/Isrc /Ivendor", "bob.strings.expand produced the wrong result")
+expanded := " ":join({ "src", "vendor" }:map(fun(directory) {
+	ret f"/I${directory}"
+}))
+elf.assert(expanded == "/Isrc /Ivendor", "elf map and join produced the wrong result")
 elf.assert(elf.path.join("src/scripts", "libs") == "src/scripts/libs", "elf.path.join produced the wrong result")
 elf.assert(elf.fs.exists("src/base.c"), "elf.fs.exists did not find src/base.c")
 elf.assert(elf.fs.is_file("src/base.c"), "elf.fs.is_file did not recognize src/base.c")
 elf.assert(elf.fs.is_directory("src/scripts"), "elf.fs.is_directory did not recognize src/scripts")
 
-library_sources := bob.fs.list({
-	root = "src/scripts/libs",
-	patterns = { "*.c", "*.h" },
-	relative = true,
-})
-elf.assert(library_sources:length() == 6, "bob.fs.list returned the wrong number of sources")
-elf.assert(library_sources[0] == "filesystem.c", "bob.fs.list is not sorted")
+compare_paths := fun(left, right) {
+	ret left:compare(right)
+}
 
-recursive_sources := bob.fs.list({
-	root = "src/scripts",
-	pattern = "*.c",
-	recursive = true,
-	relative = true,
-})
-elf.assert(recursive_sources:length() == 4, "bob.fs.list recursion returned the wrong number of sources")
-elf.assert(recursive_sources[0] == "elf_adapter.c", "bob.fs.list recursive results are not sorted")
+matching_files := fun(root, recursion, patterns) {
+	prefix_length := root:length() + 1
+	paths := elf.fs.get_paths(root, recursion):filter(fun(path) {
+		if elf.fs.is_file(path) == false ? ret false
+		relative := path:slice(prefix_length)
+		for pattern := patterns[...] ? {
+			if relative:glob_match(pattern) ? ret true
+		}
+		ret false
+	})
+	ret paths:map(fun(path) {
+		ret path:slice(prefix_length)
+	}):sort(compare_paths)
+}
 
-directories := bob.fs.list({
-	root = "src/scripts",
-	kind = "directories",
-	relative = true,
+library_sources := matching_files("src/lib", 0, { "*.c", "*.h" })
+elf.assert(library_sources:length() == 9, "elf filesystem primitives returned the wrong number of sources")
+elf.assert(library_sources[0] == "bob.h", "elf filesystem results are not sorted")
+
+recursive_sources := matching_files("src", 32, { "*.c" })
+elf.assert(recursive_sources:length() == 12, "elf filesystem recursion returned the wrong number of sources")
+elf.assert(recursive_sources[0] == "base.c", "recursive elf filesystem results are not sorted")
+
+directory_root := "src"
+directory_prefix_length := directory_root:length() + 1
+directories := elf.fs.get_paths(directory_root, 0):filter(fun(path) {
+	ret elf.fs.is_directory(path)
+}):map(fun(path) {
+	ret path:slice(directory_prefix_length)
 })
-elf.assert(directories:length() == 1 && directories[0] == "libs", "bob.fs.list directory filtering failed")
+directories:sort(compare_paths)
+elf.assert(directories:length() == 2 && directories[0] == "lib", "elf filesystem directory filtering failed")
 
 build := fun() {
 	ret bob.build({
@@ -54,7 +69,7 @@ environment := fun() {
 
 filesystem := fun() {
 	root := "build/script_fs_test"
-	elf.assert(bob.fs.remove({ path = root, recursive = true }), "initial bob.fs.remove failed")
+	elf.assert(elf.fs.remove_tree(root), "initial recursive removal failed")
 	elf.assert(elf.fs.create_directory(root), "elf.fs.create_directory failed")
 	nested := elf.path.join(root, "nested/deep")
 	elf.assert(elf.fs.create_directories(nested), "elf.fs.create_directories failed")
@@ -64,7 +79,7 @@ filesystem := fun() {
 	elf.assert(elf.fs.move_file(copy, moved), "elf.fs.move_file failed")
 	elf.assert(elf.fs.exists(copy) == false && elf.fs.is_file(moved), "elf.fs.move_file produced the wrong files")
 	elf.assert(elf.fs.remove_file(moved), "elf.fs.remove_file could not remove a file")
-	ret bob.fs.remove({ path = root, recursive = true })
+	ret elf.fs.remove_tree(root)
 }
 
 ret {

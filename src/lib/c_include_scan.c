@@ -290,8 +290,8 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
             if (slash) {
                 *slash = 0;
                 if (join_path(candidate, sizeof(candidate), directory, name) &&
-					platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
-					platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
+					bob_platform_file_info(string_from_cstring(candidate), &(Bob_Platform_File_Info){0}) &&
+					bob_platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
                     return true;
                 }
             }
@@ -300,16 +300,16 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
 
     for (i = 0; i < context->include_directories.count; ++i) {
         if (join_path(candidate, sizeof(candidate), context->include_directories.items[i].data, name) &&
-			platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
-			platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
+			bob_platform_file_info(string_from_cstring(candidate), &(Bob_Platform_File_Info){0}) &&
+			bob_platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
             return true;
         }
     }
     for (i = 0; i < context->command_include_directories.count; ++i) {
         if (join_path(candidate, sizeof(candidate),
                       context->command_include_directories.items[i].data, name) &&
-			platform_file_info(string_from_cstring(candidate), &(Platform_File_Info){0}) &&
-			platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
+			bob_platform_file_info(string_from_cstring(candidate), &(Bob_Platform_File_Info){0}) &&
+			bob_platform_absolute_path(arena, string_from_cstring(candidate), resolved)) {
             return true;
         }
     }
@@ -319,7 +319,7 @@ static b32 resolve_include(Scan_Context *context, const char *including_file,
 static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
 {
     String absolute;
-    Platform_File_Info info;
+    Bob_Platform_File_Info info;
     b32 was_seen;
     String source;
     Scratch scratch;
@@ -329,8 +329,8 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
 
     scratch = begin_scratch();
     if (depth > 256 ||
-		!platform_absolute_path(scratch.arena, string_from_cstring(path), &absolute) ||
-		!platform_file_info(absolute, &info)) {
+		!bob_platform_absolute_path(scratch.arena, string_from_cstring(path), &absolute) ||
+		!bob_platform_file_info(absolute, &info)) {
         end_scratch(scratch);
         return true;
     }
@@ -350,7 +350,7 @@ static b32 scan_file(Scan_Context *context, const char *path, u32 depth)
         return true;
     }
 
-	if (!platform_read_entire_file(scratch.arena, absolute, &source)) {
+	if (!bob_platform_read_entire_file(scratch.arena, absolute, &source)) {
         end_scratch(scratch);
         return true;
     }

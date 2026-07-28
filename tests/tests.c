@@ -1,10 +1,10 @@
 #include "bob.h"
 #include "script.h"
-#include "scripts/libs/string.h"
 #include "c_include_scan.h"
 #include "compiler_command.h"
 #include "logger.h"
 #include "platform_adapter.h"
+#include "platform.h"
 #include "vcvars_cache.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -27,24 +27,6 @@ static int tests_failed;
 
 #define CHECK_OK(expression) CHECK((expression) == BOB_OK)
 #define STRING_ARRAY_FROM(array) ((String_Array){ .items = (array), .count = ARRAY_COUNT(array) })
-
-static b32 test_script_string_expand(void)
-{
-	Scratch scratch = begin_scratch();
-	String values[] = { STRING_LITERAL("src"), STRING_LITERAL("vendor") };
-	String result;
-	const char *error;
-
-	CHECK(script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("'/I'.(' ')*"), &result, &error));
-	CHECK(string_equal(result, STRING_LITERAL("/Isrc /Ivendor")));
-	CHECK(script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("' '."), &result, &error));
-	CHECK(string_equal(result, STRING_LITERAL(" src vendor")));
-	CHECK(!script_strings_expand(scratch.arena, STRING_ARRAY_FROM(values), STRING_LITERAL("('broken'"), &result, &error));
-	CHECK(error != NULL);
-
-	end_scratch(scratch);
-	return true;
-}
 
 static b32 environment_equals(const char *name, const char *expected)
 {
@@ -84,10 +66,10 @@ cleanup:
 
 static b32 test_high_resolution_timer(void)
 {
-    u64 frequency = platform_performance_frequency();
-    u64 before = platform_performance_counter();
+    u64 frequency = platform_counter_frequency();
+    u64 before = platform_counter();
     Sleep(1);
-    return frequency > 0 && platform_performance_counter() >= before && platform_current_thread_id() != 0;
+    return frequency > 0 && platform_counter() >= before && platform_current_thread_id() != 0;
 }
 
 static Bob_Node *add_node(Bob *graph, const char *name)
@@ -503,7 +485,7 @@ static b32 test_builder_skips_existing_output(void)
     Bob *first_graph;
     Bob *second_graph;
     Bob_Task task = {0};
-    Platform_File_Info info;
+    Bob_Platform_File_Info info;
 
     DeleteFileA(output_path);
     task.command_line = STRING_LITERAL("cmd /c echo built>build\\incremental_test.out");
@@ -512,7 +494,7 @@ static b32 test_builder_skips_existing_output(void)
     first_graph = bob_create();
     add_node(first_graph, "create output");
     CHECK(run_tasks(first_graph, &task, 1, 1));
-	CHECK(platform_file_info(string_from_cstring(output_path), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(output_path), &info));
     bob_destroy(first_graph);
 
     task.command_line = STRING_LITERAL("bob_command_that_must_not_run.exe");
@@ -611,7 +593,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     String outputs[] = { string_from_cstring(output_a), string_from_cstring(output_b) };
     Bob_Task task = {0};
     Bob *graph;
-    Platform_File_Info info;
+    Bob_Platform_File_Info info;
 
     DeleteFileA(marker);
     CHECK(write_test_file_at_time(input_a, 100ULL));
@@ -632,7 +614,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     graph = bob_create();
     add_node(graph, "newest input wins");
     CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(platform_file_info(string_from_cstring(marker), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
     CHECK(DeleteFileA(output_b));
@@ -640,8 +622,8 @@ static b32 test_multiple_inputs_and_outputs(void)
     graph = bob_create();
     add_node(graph, "one output missing");
     CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(platform_file_info(string_from_cstring(output_b), &info));
-	CHECK(platform_file_info(string_from_cstring(marker), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(output_b), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
     CHECK(DeleteFileA(input_a));
@@ -665,7 +647,7 @@ static b32 test_dependency_rebuild_propagates(void)
     Bob *graph;
     Bob_Node *dependency;
     Bob_Node *parent;
-    Platform_File_Info info;
+    Bob_Platform_File_Info info;
 
     DeleteFileA(marker);
     CHECK(write_test_file_at_time(dependency_input, 100ULL));
@@ -693,7 +675,7 @@ static b32 test_dependency_rebuild_propagates(void)
     parent = add_node(graph, "propagated parent");
     CHECK_OK(bob_add_dependency(graph, parent, dependency));
     CHECK(run_tasks(graph, tasks, 2, 1));
-	CHECK(platform_file_info(string_from_cstring(marker), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
     CHECK(DeleteFileA(dependency_input));
@@ -735,7 +717,7 @@ static b32 test_recursive_include_rebuilds(void)
     String include_directories[] = { STRING_LITERAL("build") };
     Bob_Task task = {0};
     Bob *graph;
-    Platform_File_Info info;
+    Bob_Platform_File_Info info;
     C_Include_Scan_Result scan;
 
     DeleteFileA(marker);
@@ -767,7 +749,7 @@ static b32 test_recursive_include_rebuilds(void)
     graph = bob_create();
     add_node(graph, "recursive include dirty");
     CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(platform_file_info(string_from_cstring(marker), &info));
+	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
     CHECK(write_test_file_at_time(output, 400ULL));
@@ -776,7 +758,7 @@ static b32 test_recursive_include_rebuilds(void)
     graph = bob_create();
     add_node(graph, "recursive include clean");
     CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(!platform_file_info(string_from_cstring(marker), &info));
+	CHECK(!bob_platform_file_info(string_from_cstring(marker), &info));
     bob_destroy(graph);
 
     CHECK(DeleteFileA(source));
@@ -881,13 +863,29 @@ static b32 test_compiler_command(void)
 {
 	Arena arena = arena_create(KILOBYTES(64));
 	Compiler_Command command;
+	String augmented;
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("clang-cl /Ione /I \"two words\" -Ithree -I four -isystem system"), &command));
+	CHECK(command.kind == COMPILER_KIND_CLANG_CL);
+	CHECK(!command.compiles);
 	CHECK(command.include_directories.count == 5);
 	CHECK(string_equal(command.include_directories.items[0], STRING_LITERAL("one")));
 	CHECK(string_equal(command.include_directories.items[1], STRING_LITERAL("two words")));
 	CHECK(string_equal(command.include_directories.items[2], STRING_LITERAL("three")));
 	CHECK(string_equal(command.include_directories.items[3], STRING_LITERAL("four")));
 	CHECK(string_equal(command.include_directories.items[4], STRING_LITERAL("system")));
+	CHECK(compiler_command_add_dependencies(&arena,
+		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
+		STRING_LITERAL("object.obj.d"), &augmented));
+	CHECK(string_ends_with(augmented, STRING_LITERAL(" /clang:-MD /clang:-MF\"object.obj.d\"")));
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("cl.exe /nologo /c source.c"), &command));
+	CHECK(command.kind == COMPILER_KIND_MSVC && command.compiles);
+	CHECK(compiler_command_add_dependencies(&arena, STRING_LITERAL("cl /c source.c"),
+		STRING_LITERAL("object.json"), &augmented));
+	CHECK(string_ends_with(augmented, STRING_LITERAL(" /sourceDependencies \"object.json\"")));
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("gcc -MMD -c source.c"), &command));
+	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles && command.generates_dependencies);
+	CHECK(!compiler_command_add_dependencies(&arena, STRING_LITERAL("gcc -MMD -c source.c"),
+		STRING_LITERAL("object.d"), &augmented));
 	arena_destroy(&arena);
 	return true;
 }
@@ -988,7 +986,6 @@ static int build_tasks_from_file(String path)
 static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
-	run_test("script string expansion", test_script_string_expand);
     run_test("option resolution", test_option_resolution);
     run_test("compiler command", test_compiler_command);
     run_test("thread-local scratch", test_thread_local_scratch);
