@@ -1,7 +1,9 @@
 #include "bob.h"
+#include "build_state.h"
 #include "script.h"
 #include "c_include_scan.h"
 #include "compiler_command.h"
+#include "make_depfile.h"
 #include "logger.h"
 #include "platform_adapter.h"
 #include "platform.h"
@@ -81,6 +83,170 @@ static Bob_Node *add_node(Bob *graph, const char *name)
         exit(2);
     }
     return node;
+}
+
+static b32 string_array_matches(String_Array actual, const char **expected, u32 count)
+{
+	if (actual.count != count) return false;
+	for (u32 i = 0; i < count; ++i) {
+		if (!string_equal(actual.items[i], string_from_cstring(expected[i]))) return false;
+	}
+	return true;
+}
+
+static b32 test_build_state(void)
+{
+	Arena state_arena = arena_create(KILOBYTES(64));
+	Arena source_arena = arena_create(KILOBYTES(64));
+	Arena parsed_arena = arena_create(KILOBYTES(64));
+	Build_State state = {0};
+	Build_State parsed = {0};
+	String source;
+	String first_dependencies[] = {
+		STRING_LITERAL("src\\main file.c"),
+		STRING_LITERAL("include\\quoted\"name.h"),
+		STRING_LITERAL("include/line\nbreak.h"),
+	};
+	String updated_dependencies[] = {
+		STRING_LITERAL("src\\updated.c"),
+	};
+	const char *first_expected[] = {
+		"src\\main file.c",
+		"include\\quoted\"name.h",
+		"include/line\nbreak.h",
+	};
+	const char *updated_expected[] = { "src\\updated.c" };
+	Build_State_Task *task;
+	u64 mark;
+
+	CHECK(state_arena.data && source_arena.data && parsed_arena.data);
+	CHECK(build_state_set(&state_arena, &state,
+		STRING_LITERAL("build\\obj\\main file.obj"),
+		STRING_ARRAY_FROM(first_dependencies)));
+	CHECK(build_state_set(&state_arena, &state,
+		STRING_LITERAL("build/obj/empty.obj"), (String_Array){0}));
+	CHECK(state.count == 2);
+	CHECK(build_state_write(&source_arena, &state, &source));
+	CHECK(string_is_terminated(source));
+	CHECK(build_state_parse(&parsed_arena, source, &parsed));
+	CHECK(parsed.count == 2);
+
+	task = build_state_find(&parsed, STRING_LITERAL("build\\obj\\main file.obj"));
+	CHECK(task != NULL);
+	CHECK(string_array_matches(task->dependencies, first_expected, ARRAY_COUNT(first_expected)));
+	task = build_state_find(&parsed, STRING_LITERAL("build/obj/empty.obj"));
+	CHECK(task != NULL && task->dependencies.count == 0);
+	CHECK(build_state_find(&parsed, STRING_LITERAL("build/obj/missing.obj")) == NULL);
+
+	CHECK(build_state_set(&parsed_arena, &parsed,
+		STRING_LITERAL("build\\obj\\main file.obj"),
+		STRING_ARRAY_FROM(updated_dependencies)));
+	CHECK(parsed.count == 2);
+	task = build_state_find(&parsed, STRING_LITERAL("build\\obj\\main file.obj"));
+	CHECK(task != NULL);
+	CHECK(string_array_matches(task->dependencies, updated_expected, ARRAY_COUNT(updated_expected)));
+
+	mark = arena_mark(&parsed_arena);
+	{
+		Build_State invalid = {0};
+		CHECK(!build_state_parse(&parsed_arena,
+			STRING_LITERAL("{ version = 2, tasks = {} }"), &invalid));
+		CHECK(arena_mark(&parsed_arena) == mark);
+		CHECK(invalid.count == 0);
+	}
+	{
+		Build_State invalid = {0};
+		CHECK(!build_state_parse(&parsed_arena,
+			STRING_LITERAL("{ version = 1, tasks = { { output = 7, dependencies = {} } } }"),
+			&invalid));
+		CHECK(arena_mark(&parsed_arena) == mark);
+	}
+	{
+		Build_State invalid = {0};
+		CHECK(!build_state_parse(&parsed_arena,
+			STRING_LITERAL(
+				"{ version = 1, tasks = {"
+				"{ output = \"same.obj\", dependencies = {} },"
+				"{ output = \"same.obj\", dependencies = {} } } }"),
+			&invalid));
+		CHECK(arena_mark(&parsed_arena) == mark);
+	}
+
+	arena_destroy(&parsed_arena);
+	arena_destroy(&source_arena);
+	arena_destroy(&state_arena);
+	return true;
+}
+
+static b32 test_make_depfile(void)
+{
+	Arena arena = arena_create(KILOBYTES(64));
+	String_Array dependencies;
+	u64 mark;
+
+	CHECK(arena.data != NULL);
+	{
+		const char *expected[] = { "src/main.c", "include/main.h" };
+		CHECK(make_depfile_parse(&arena,
+			STRING_LITERAL("build/main.o: src/main.c include/main.h\n"),
+			&dependencies));
+		CHECK(string_array_matches(dependencies, expected, ARRAY_COUNT(expected)));
+	}
+
+	arena_reset(&arena);
+	{
+		const char *expected[] = {
+			"C:\\src\\main.c",
+			"C:\\Program Files\\SDK\\header.h",
+		};
+		CHECK(make_depfile_parse(&arena,
+			STRING_LITERAL(
+				"C:\\build\\main.obj: C:\\src\\main.c \\\r\n"
+				"  C:\\Program\\ Files\\SDK\\header.h\r\n"),
+			&dependencies));
+		CHECK(string_array_matches(dependencies, expected, ARRAY_COUNT(expected)));
+	}
+
+	arena_reset(&arena);
+	{
+		const char *expected[] = {
+			"path with spaces/header.h",
+			"hash#header.h",
+			"cash$money.h",
+			"colon:name.h",
+			"slash\\name.h",
+		};
+		CHECK(make_depfile_parse(&arena,
+			STRING_LITERAL(
+				"out.o: path\\ with\\ spaces/header.h hash\\#header.h "
+				"cash$$money.h colon\\:name.h slash\\\\name.h\n"),
+			&dependencies));
+		CHECK(string_array_matches(dependencies, expected, ARRAY_COUNT(expected)));
+	}
+
+	arena_reset(&arena);
+	{
+		const char *expected[] = { "one.c", "common.h" };
+		CHECK(make_depfile_parse(&arena,
+			STRING_LITERAL(
+				"one.o one.d: one.c common.h common.h # ignored.h\n"
+				"one.c:\n"
+				"common.h:\n"),
+			&dependencies));
+		CHECK(string_array_matches(dependencies, expected, ARRAY_COUNT(expected)));
+	}
+
+	arena_reset(&arena);
+	CHECK(make_depfile_parse(&arena, (String){0}, &dependencies));
+	CHECK(dependencies.count == 0);
+	mark = arena_mark(&arena);
+	CHECK(!make_depfile_parse(&arena,
+		STRING_LITERAL("build/main.o src/main.c\n"), &dependencies));
+	CHECK(arena_mark(&arena) == mark);
+	CHECK(dependencies.count == 0);
+
+	arena_destroy(&arena);
+	return true;
 }
 
 static b32 run_tasks(Bob *graph, const Bob_Task *tasks, u32 task_count,
@@ -988,6 +1154,8 @@ static int run_all_tests(void)
     run_test("arena and strings", test_arena_and_strings);
     run_test("option resolution", test_option_resolution);
     run_test("compiler command", test_compiler_command);
+    run_test("build state", test_build_state);
+    run_test("Make depfile", test_make_depfile);
     run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
     run_test("high resolution timer", test_high_resolution_timer);

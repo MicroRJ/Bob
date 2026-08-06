@@ -27,11 +27,11 @@ matching_files := fun(root, recursion, patterns) {
 }
 
 library_sources := matching_files("src/lib", 0, { "*.c", "*.h" })
-elf.assert(library_sources:length() == 9, "elf filesystem primitives returned the wrong number of sources")
+elf.assert(library_sources:length() == 13, "elf filesystem primitives returned the wrong number of sources")
 elf.assert(library_sources[0] == "bob.h", "elf filesystem results are not sorted")
 
 recursive_sources := matching_files("src", 32, { "*.c" })
-elf.assert(recursive_sources:length() == 12, "elf filesystem recursion returned the wrong number of sources")
+elf.assert(recursive_sources:length() == 14, "elf filesystem recursion returned the wrong number of sources")
 elf.assert(recursive_sources[0] == "base.c", "recursive elf filesystem results are not sorted")
 
 directory_root := "src"

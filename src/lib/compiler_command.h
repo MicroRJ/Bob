@@ -15,7 +15,7 @@ Compiler_Kind;
 
 typedef struct Compiler_Command
 {
-	Compiler_Kind kind;
+	Compiler_Kind  kind;
 	String         executable;
 	String_Array   include_directories;
 	b32            compiles;

@@ -87,6 +87,9 @@ void *arena_push_zero_aligned(Arena *arena, u64 size, u64 alignment);
 void *arena_push_copy(Arena *arena, u64 size, const void *data);
 void *arena_push_copy_aligned(Arena *arena, u64 size, u64 alignment, const void *data);
 char *arena_push_data(Arena *arena, const void *data, u64 size);
+
+
+
 char *arena_append_text(Arena *arena, const char *text);
 char *arena_append_str(Arena *arena, String string);
 char *arena_append_char(Arena *arena, char character);
