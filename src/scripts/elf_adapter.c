@@ -35,7 +35,10 @@ ELF_FUNCTION(l_bob_build)
 	Script_Options options = script_options_resolve(build.options, script->command_line_options);
 	logger_set_verbosity(options.verbosity);
 	Profile_Scope scope = profile_scope_begin("builder");
-	b32 succeeded = bob_build(build.bob, options.worker_count);
+	b32 succeeded = bob_build(build.bob, (Bob_Build_Options){
+		.worker_count = options.worker_count,
+		.explain = script->command_line_options.explain,
+	});
 	profile_scope_end(&scope);
 	bob_destroy(build.bob);
 	if (!succeeded) {

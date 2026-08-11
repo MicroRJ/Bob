@@ -342,7 +342,7 @@ static b32 run_tasks(Bob *graph, const Bob_Task *tasks, u32 task_count,
             return false;
         }
     }
-    return bob_build(graph, worker_count);
+    return bob_build(graph, (Bob_Build_Options){ .worker_count = worker_count });
 }
 
 static b32 test_arena_and_strings(void)
@@ -1420,7 +1420,8 @@ static int build_tasks_from_file(String path)
         return 1;
     }
     workers = build.options.has_worker_count ? build.options.worker_count : 4;
-    exit_code = bob_build(build.bob, workers) ? 0 : 1;
+    exit_code = bob_build(build.bob,
+		(Bob_Build_Options){ .worker_count = workers }) ? 0 : 1;
     bob_destroy(build.bob);
     return exit_code;
 }

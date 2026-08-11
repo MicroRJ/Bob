@@ -9,6 +9,29 @@
 
 #define BOB_BUILD_STATE_PATH ".bob/state.elf"
 
+typedef enum Bob_Rebuild_Reason
+{
+	BOB_REBUILD_UP_TO_DATE,
+	BOB_REBUILD_NO_OUTPUTS,
+	BOB_REBUILD_OUTPUT_MISSING,
+	BOB_REBUILD_INPUT_MISSING,
+	BOB_REBUILD_STATE_MISSING,
+	BOB_REBUILD_DEPENDENCY_MISSING,
+	BOB_REBUILD_DEPENDENCY_CHANGED,
+	BOB_REBUILD_INPUT_NEWER,
+}
+Bob_Rebuild_Reason;
+
+typedef struct Bob_Rebuild_Decision
+{
+	Bob_Rebuild_Reason reason;
+	String             path;
+	String             reference;
+	const Bob_Node    *dependency;
+	b32                rebuild;
+}
+Bob_Rebuild_Decision;
+
 typedef struct Bob_Build_Task
 {
 	Bob_Task         task;
@@ -25,7 +48,7 @@ typedef struct Bob_Build_Completion
 	Bob_Build_Task             *task;
 	Bob_Platform_Process_Result process;
 	String_Array                dependencies;
-	b32                         rebuilt;
+	Bob_Rebuild_Decision        decision;
 	b32                         dependency_tracking;
 	b32                         dependency_state_valid;
 }
@@ -39,6 +62,7 @@ typedef struct Bob_Builder
 	Arena       state_arena;
 	Arena       update_arena;
 	b32         dependency_tracking;
+	b32         explain;
 	b32         state_changed;
 	b32         internal_error;
 }
@@ -46,47 +70,94 @@ Bob_Builder;
 
 static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_data);
 
-static b32 task_needs_rebuild(const Bob_Builder *builder, const Bob_Node *node,
+static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
+	const Bob_Node *node,
 	const Bob_Build_Task *build_task)
 {
 	const Bob_Task *task = &build_task->task;
 	u64 oldest_output = UINT64_MAX;
 	u64 newest_input = 0;
+	String oldest_output_path = {0};
+	String newest_input_path = {0};
 
-	if (task->outputs.count == 0) return true;
+	if (task->outputs.count == 0) return (Bob_Rebuild_Decision){
+		.reason = BOB_REBUILD_NO_OUTPUTS,
+		.rebuild = true,
+	};
 	for (u32 i = 0; i < task->outputs.count; ++i) {
 		Bob_Platform_File_Info info;
-		if (!bob_platform_file_info(task->outputs.items[i], &info)) return true;
+		if (!bob_platform_file_info(task->outputs.items[i], &info)) {
+			return (Bob_Rebuild_Decision){
+				.reason = BOB_REBUILD_OUTPUT_MISSING,
+				.path = task->outputs.items[i],
+				.rebuild = true,
+			};
+		}
 		if ((u64)info.modified_unix_ms < oldest_output) {
 			oldest_output = (u64)info.modified_unix_ms;
+			oldest_output_path = task->outputs.items[i];
 		}
 	}
 	for (u32 i = 0; i < task->inputs.count; ++i) {
 		Bob_Platform_File_Info info;
-		if (!bob_platform_file_info(task->inputs.items[i], &info)) return true;
+		if (!bob_platform_file_info(task->inputs.items[i], &info)) {
+			return (Bob_Rebuild_Decision){
+				.reason = BOB_REBUILD_INPUT_MISSING,
+				.path = task->inputs.items[i],
+				.rebuild = true,
+			};
+		}
 		if ((u64)info.modified_unix_ms > newest_input) {
 			newest_input = (u64)info.modified_unix_ms;
+			newest_input_path = task->inputs.items[i];
 		}
 	}
 
 	if (build_task->tracks_dependencies) {
 		Build_State_Task *state_task = build_state_find(
 			(Build_State *)&builder->state, task->outputs.items[0]);
-		if (!state_task) return true;
+		if (!state_task) return (Bob_Rebuild_Decision){
+			.reason = BOB_REBUILD_STATE_MISSING,
+			.path = task->outputs.items[0],
+			.rebuild = true,
+		};
 		for (u32 i = 0; i < state_task->dependencies.count; ++i) {
 			Bob_Platform_File_Info info;
-			if (!bob_platform_file_info(state_task->dependencies.items[i], &info)) return true;
+			if (!bob_platform_file_info(state_task->dependencies.items[i], &info)) {
+				return (Bob_Rebuild_Decision){
+					.reason = BOB_REBUILD_DEPENDENCY_MISSING,
+					.path = state_task->dependencies.items[i],
+					.rebuild = true,
+				};
+			}
 			if ((u64)info.modified_unix_ms > newest_input) {
 				newest_input = (u64)info.modified_unix_ms;
+				newest_input_path = state_task->dependencies.items[i];
 			}
 		}
 	}
 
 	for (u32 i = 0; i < bob_dependency_count(node); ++i) {
 		Bob_Node *dependency = bob_dependency(node, i);
-		if (!dependency || bob_node_result(dependency).changed) return true;
+		if (!dependency || bob_node_result(dependency).changed) {
+			return (Bob_Rebuild_Decision){
+				.reason = BOB_REBUILD_DEPENDENCY_CHANGED,
+				.dependency = dependency,
+				.rebuild = true,
+			};
+		}
 	}
-	return newest_input > oldest_output;
+	if (newest_input > oldest_output) return (Bob_Rebuild_Decision){
+		.reason = BOB_REBUILD_INPUT_NEWER,
+		.path = newest_input_path,
+		.reference = oldest_output_path,
+		.rebuild = true,
+	};
+	return (Bob_Rebuild_Decision){
+		.reason = BOB_REBUILD_UP_TO_DATE,
+		.path = newest_input_path,
+		.reference = oldest_output_path,
+	};
 }
 
 static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task,
@@ -126,21 +197,55 @@ static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_d
 	completion->task = task;
 	{
 		Profile_Scope scope = profile_scope_begin("incremental checks");
-		completion->rebuilt = task_needs_rebuild(builder, context->node, task);
+		completion->decision = task_rebuild_decision(builder, context->node, task);
 		profile_scope_end(&scope);
 	}
-	if (completion->rebuilt) {
+	if (completion->decision.rebuild) {
 		Profile_Scope scope = profile_scope_begin("task processes");
 		run_command(context, task, completion);
 		profile_scope_end(&scope);
 	}
-	succeeded = !completion->rebuilt ||
+	succeeded = !completion->decision.rebuild ||
 		(completion->process.error_code == 0 && completion->process.exit_code == 0);
 	return (Bob_Node_Result){
 		.output = completion,
 		.succeeded = succeeded,
-		.changed = succeeded && completion->rebuilt && !task->task.transparent,
+		.changed = succeeded && completion->decision.rebuild && !task->task.transparent,
 	};
+}
+
+static void report_explanation(const Bob_Build_Completion *completion)
+{
+	const Bob_Rebuild_Decision *decision = &completion->decision;
+	const char *name = bob_task_name(completion->node);
+	switch (decision->reason) {
+	case BOB_REBUILD_UP_TO_DATE:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: inputs are not newer than outputs", name);
+		break;
+	case BOB_REBUILD_NO_OUTPUTS:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because no outputs are declared", name);
+		break;
+	case BOB_REBUILD_OUTPUT_MISSING:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because output is missing: %s", name, decision->path.data);
+		break;
+	case BOB_REBUILD_INPUT_MISSING:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because input is missing: %s", name, decision->path.data);
+		break;
+	case BOB_REBUILD_STATE_MISSING:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because dependency state is missing: %s", name, decision->path.data);
+		break;
+	case BOB_REBUILD_DEPENDENCY_MISSING:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because recorded dependency is missing: %s", name, decision->path.data);
+		break;
+	case BOB_REBUILD_DEPENDENCY_CHANGED:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because dependency changed: %s", name,
+			decision->dependency ? bob_task_name(decision->dependency) : "unknown");
+		break;
+	case BOB_REBUILD_INPUT_NEWER:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because %s is newer than %s", name,
+			decision->path.data, decision->reference.data);
+		break;
+	}
 }
 
 static void report_completion(const Bob_Build_Completion *completion)
@@ -148,10 +253,10 @@ static void report_completion(const Bob_Build_Completion *completion)
 	const Bob_Build_Task *build_task = completion->task;
 	const Bob_Task *task = &build_task->task;
 	String command_line = task->command_line;
-	b32 succeeded = !completion->rebuilt ||
+	b32 succeeded = !completion->decision.rebuild ||
 		(completion->process.error_code == 0 && completion->process.exit_code == 0);
 
-	if (!completion->rebuilt) {
+	if (!completion->decision.rebuild) {
 		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s",
 			bob_task_name(completion->node));
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
@@ -204,8 +309,7 @@ static void report_completion(const Bob_Build_Completion *completion)
 	}
 }
 
-static void collect_dependency_state(Bob_Builder *builder,
-	const Bob_Build_Completion *completion, b32 succeeded)
+static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Completion *completion, b32 succeeded)
 {
 	const Bob_Task *task;
 	String output;
@@ -238,6 +342,7 @@ static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *u
 	}
 	{
 		Profile_Scope scope = profile_scope_begin("report completion");
+		if (builder->explain) report_explanation(completion);
 		report_completion(completion);
 		profile_scope_end(&scope);
 	}
@@ -265,13 +370,14 @@ static b32 valid_task(const Bob_Task *task)
 		(!task->include_directories.count || task->include_directories.items);
 }
 
-b32 bob_build(Bob *bob, u32 worker_count)
+b32 bob_build(Bob *bob, Bob_Build_Options options)
 {
 	Bob_Builder builder = {0};
 	Build_State_Load_Result load_result = BUILD_STATE_LOAD_MISSING;
 	b32 result;
 
-	if (!bob || worker_count == 0) return false;
+	if (!bob || options.worker_count == 0) return false;
+	builder.explain = options.explain;
 	for (u32 i = 0; i < bob_node_count(bob); ++i) {
 		Bob_Node *node = bob_node_at(bob, i);
 		const Bob_Build_Task *task;
@@ -302,7 +408,7 @@ b32 bob_build(Bob *bob, u32 worker_count)
 	}
 
 	result = bob_execute(bob, (Bob_Execute_Options){
-		.worker_count = worker_count,
+		.worker_count = options.worker_count,
 		.user_data = &builder,
 		.completed = build_task_completed,
 	});

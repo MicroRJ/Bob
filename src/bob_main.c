@@ -26,7 +26,10 @@ static int run_build(Script *script, Cmd_Options command_line_options)
 
    {
       Profile_Scope scope = profile_scope_begin("builder");
-      exit_code = bob_build(build.bob, options.worker_count) ? 0 : 1;
+      exit_code = bob_build(build.bob, (Bob_Build_Options){
+			.worker_count = options.worker_count,
+			.explain = command_line_options.explain,
+		}) ? 0 : 1;
       profile_scope_end(&scope);
    }
 
@@ -156,6 +159,10 @@ int main(int argument_count, char **arguments)
          profile = true;
          profile_threads = true;
       }
+      else if (strcmp(arguments[argument_index], "--explain") == 0)
+      {
+         command_line_options.explain = true;
+      }
       else if (strcmp(arguments[argument_index], "--version") == 0)
       {
          printf("bob %s\n", BOB_VERSION);
@@ -184,7 +191,7 @@ int main(int argument_count, char **arguments)
       }
       else
       {
-         log_error("usage: bob [build-file] [function] [-q | --quiet] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
+         log_error("usage: bob [build-file] [function] [-q | --quiet] [--explain] [--verbose [N]] [--workers N] [--profile | --profile-threads]\n" "       bob --cache-vcvars\n" "       bob --version");
          return 2;
       }
    }
@@ -193,7 +200,7 @@ int main(int argument_count, char **arguments)
    {
 		Scratch scratch;
 		String cache_path;
-      if (has_build_path || has_function || command_line_options.has_worker_count || command_line_options.has_verbosity || command_line_options.quiet || profile)
+      if (has_build_path || has_function || command_line_options.has_worker_count || command_line_options.has_verbosity || command_line_options.quiet || command_line_options.explain || profile)
       {
          log_error("--cache-vcvars cannot be combined with build options");
          return 2;

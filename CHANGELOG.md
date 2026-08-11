@@ -2,6 +2,8 @@
 
 ## 2026-08-11
 
+- Added `--explain`, which reports why each task rebuilds or remains up to date.
+
 - Split graph execution from build behavior. Graph nodes can now run arbitrary callbacks and publish results; command execution, incremental checks, and compiler dependencies live in the build layer.
 
 - Replaced lexical include scanning with compiler-generated dependency files. Bob now stores dependencies per task in `.bob/state.elf` and uses them for incremental rebuild checks.
