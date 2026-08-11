@@ -15,15 +15,16 @@ Compiler_Kind;
 
 typedef struct Compiler_Command
 {
-	Compiler_Kind  kind;
-	String         executable;
-	String_Array   include_directories;
-	b32            compiles;
-	b32            generates_dependencies;
+	Compiler_Kind kind;
+	String        executable;
+	b32           compiles;
+	b32           generates_dependencies;
 }
 Compiler_Command;
 
 b32 compiler_command_parse(Arena *arena, String command_line, Compiler_Command *result);
-b32 compiler_command_add_dependencies(Arena *arena, String command_line, String dependency_file, String *result);
+b32 compiler_command_can_add_make_dependencies(const Compiler_Command *command);
+b32 compiler_command_add_dependencies(Arena *arena, const Compiler_Command *command,
+	String command_line, String dependency_file, String *result);
 
 #endif

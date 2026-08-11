@@ -1,7 +1,6 @@
-#include "bob.h"
+#include "bob_build.h"
 #include "build_state.h"
 #include "script.h"
-#include "c_include_scan.h"
 #include "compiler_command.h"
 #include "make_depfile.h"
 #include "logger.h"
@@ -94,6 +93,14 @@ static b32 string_array_matches(String_Array actual, const char **expected, u32 
 	return true;
 }
 
+static b32 string_array_contains(String_Array array, String value)
+{
+	for (u32 i = 0; i < array.count; ++i) {
+		if (string_equal(array.items[i], value)) return true;
+	}
+	return false;
+}
+
 static b32 test_build_state(void)
 {
 	Arena state_arena = arena_create(KILOBYTES(64));
@@ -145,6 +152,10 @@ static b32 test_build_state(void)
 	task = build_state_find(&parsed, STRING_LITERAL("build\\obj\\main file.obj"));
 	CHECK(task != NULL);
 	CHECK(string_array_matches(task->dependencies, updated_expected, ARRAY_COUNT(updated_expected)));
+	CHECK(build_state_remove(&parsed, STRING_LITERAL("build/obj/empty.obj")));
+	CHECK(parsed.count == 1);
+	CHECK(build_state_find(&parsed, STRING_LITERAL("build/obj/empty.obj")) == NULL);
+	CHECK(!build_state_remove(&parsed, STRING_LITERAL("build/obj/missing.obj")));
 
 	mark = arena_mark(&parsed_arena);
 	{
@@ -174,6 +185,78 @@ static b32 test_build_state(void)
 
 	arena_destroy(&parsed_arena);
 	arena_destroy(&source_arena);
+	arena_destroy(&state_arena);
+	return true;
+}
+
+static b32 test_build_state_files(void)
+{
+	static const char malformed[] = "{ version = 1, tasks = 7 }";
+	Arena state_arena = arena_create(KILOBYTES(64));
+	Arena io_arena = arena_create(KILOBYTES(64));
+	Arena loaded_arena = arena_create(KILOBYTES(64));
+	Build_State state = {0};
+	Build_State loaded = {0};
+	String first_dependencies[] = {
+		STRING_LITERAL("src/first.c"),
+		STRING_LITERAL("include/first.h"),
+	};
+	String second_dependencies[] = {
+		STRING_LITERAL("src/second.c"),
+	};
+	const char *first_expected[] = { "src/first.c", "include/first.h" };
+	const char *second_expected[] = { "src/second.c" };
+	String root = STRING_LITERAL("build\\build_state_files");
+	String path = STRING_LITERAL("build\\build_state_files\\nested\\state.elf");
+	String temporary = STRING_LITERAL("build\\build_state_files\\nested\\state.elf.tmp");
+	String missing = STRING_LITERAL("build\\build_state_files\\missing.elf");
+	String directory = STRING_LITERAL("build\\build_state_files\\nested\\directory");
+	String directory_temporary = STRING_LITERAL("build\\build_state_files\\nested\\directory.tmp");
+	Build_State_Task *task;
+	Bob_Platform_File_Info info;
+	u64 io_mark;
+
+	CHECK(state_arena.data && io_arena.data && loaded_arena.data);
+	CHECK(platform_remove_tree(root.data));
+	CHECK(build_state_set(&state_arena, &state, STRING_LITERAL("build/obj/file.obj"),
+		STRING_ARRAY_FROM(first_dependencies)));
+
+	io_mark = arena_mark(&io_arena);
+	CHECK(build_state_save(&io_arena, path, &state));
+	CHECK(arena_mark(&io_arena) == io_mark);
+	CHECK(bob_platform_file_info(path, &info));
+	CHECK(!bob_platform_file_info(temporary, &info));
+	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_OK);
+	task = build_state_find(&loaded, STRING_LITERAL("build/obj/file.obj"));
+	CHECK(task != NULL);
+	CHECK(string_array_matches(task->dependencies, first_expected, ARRAY_COUNT(first_expected)));
+
+	CHECK(build_state_set(&state_arena, &state, STRING_LITERAL("build/obj/file.obj"),
+		STRING_ARRAY_FROM(second_dependencies)));
+	CHECK(build_state_save(&io_arena, path, &state));
+	arena_reset(&loaded_arena);
+	loaded = (Build_State){0};
+	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_OK);
+	task = build_state_find(&loaded, STRING_LITERAL("build/obj/file.obj"));
+	CHECK(task != NULL);
+	CHECK(string_array_matches(task->dependencies, second_expected, ARRAY_COUNT(second_expected)));
+
+	arena_reset(&loaded_arena);
+	loaded = (Build_State){ .count = 7 };
+	CHECK(build_state_load(&loaded_arena, missing, &loaded) == BUILD_STATE_LOAD_MISSING);
+	CHECK(loaded.count == 0);
+	CHECK(bob_platform_write_entire_file(path, malformed, sizeof(malformed) - 1));
+	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_INVALID);
+	CHECK(loaded.count == 0);
+
+	CHECK(bob_platform_create_directory(directory));
+	CHECK(build_state_load(&loaded_arena, directory, &loaded) == BUILD_STATE_LOAD_ERROR);
+	CHECK(!build_state_save(&io_arena, directory, &state));
+	CHECK(!bob_platform_file_info(directory_temporary, &info));
+
+	CHECK(platform_remove_tree(root.data));
+	arena_destroy(&loaded_arena);
+	arena_destroy(&io_arena);
 	arena_destroy(&state_arena);
 	return true;
 }
@@ -546,6 +629,144 @@ static b32 test_invalid_edges_are_rejected(void)
     return true;
 }
 
+typedef struct Generic_Execution_Test Generic_Execution_Test;
+
+typedef struct Generic_Action_Test
+{
+	Generic_Execution_Test *execution;
+	u32                     calls;
+	i32                     value;
+	b32                     changed;
+	b32                     valid;
+}
+Generic_Action_Test;
+
+struct Generic_Execution_Test
+{
+	u32 completed;
+	b32 valid;
+};
+
+static Bob_Node_Result generic_test_action(Bob_Node_Context *context, void *user_data)
+{
+	Generic_Action_Test *action = user_data;
+	i32 *output = arena_push_zero_aligned(context->arena, sizeof(*output), _Alignof(i32));
+	i32 value = action->value;
+	action->valid = context->bob && context->node && output &&
+		context->execution_data == action->execution &&
+		bob_node_user_data(context->node) == action;
+	for (u32 i = 0; i < bob_dependency_count(context->node); ++i) {
+		Bob_Node_Result dependency = bob_node_result(bob_dependency(context->node, i));
+		if (!dependency.succeeded || !dependency.output) action->valid = false;
+		else value += *(i32 *)dependency.output;
+	}
+	++action->calls;
+	if (output) *output = value;
+	return (Bob_Node_Result){
+		.output = output,
+		.succeeded = action->valid,
+		.changed = action->changed,
+	};
+}
+
+static void generic_test_completed(Bob_Node *node, Bob_Node_Result result, void *user_data)
+{
+	Generic_Execution_Test *execution = user_data;
+	if (!node || !result.succeeded || !result.output) execution->valid = false;
+	++execution->completed;
+}
+
+static Bob_Node_Result generic_test_failure(Bob_Node_Context *context, void *user_data)
+{
+	u32 *calls = user_data;
+	(void)context;
+	++*calls;
+	return (Bob_Node_Result){ .succeeded = false, .changed = true };
+}
+
+static b32 test_generic_graph_actions(void)
+{
+	Bob *graph = bob_create();
+	Bob_Node *left = NULL;
+	Bob_Node *right = NULL;
+	Bob_Node *sum = NULL;
+	Generic_Execution_Test execution = { .valid = true };
+	Generic_Action_Test actions[] = {
+		{ .execution = &execution, .value = 3, .changed = true },
+		{ .execution = &execution, .value = 5, .changed = false },
+		{ .execution = &execution, .value = 1, .changed = true },
+	};
+	Bob_Node_Result result;
+	i32 *graph_value;
+	String graph_string;
+
+	CHECK(graph != NULL);
+	graph_value = bob_allocate(graph, sizeof(*graph_value), _Alignof(i32));
+	graph_string = bob_copy_string(graph, STRING_LITERAL("graph storage"));
+	CHECK(graph_value != NULL && graph_string.data != NULL);
+	*graph_value = 17;
+	CHECK(*graph_value == 17 && string_equal(graph_string, STRING_LITERAL("graph storage")));
+	CHECK_OK(bob_add_node(graph, (Bob_Node_Description){
+		.name = STRING_LITERAL("left"),
+		.function = generic_test_action,
+		.user_data = actions + 0,
+	}, &left));
+	CHECK_OK(bob_add_node(graph, (Bob_Node_Description){
+		.name = STRING_LITERAL("right"),
+		.function = generic_test_action,
+		.user_data = actions + 1,
+	}, &right));
+	CHECK_OK(bob_add_node(graph, (Bob_Node_Description){
+		.name = STRING_LITERAL("sum"),
+		.function = generic_test_action,
+		.user_data = actions + 2,
+	}, &sum));
+	CHECK_OK(bob_add_dependency(graph, sum, left));
+	CHECK_OK(bob_add_dependency(graph, sum, right));
+	CHECK(bob_execute(graph, (Bob_Execute_Options){
+		.worker_count = 2,
+		.user_data = &execution,
+		.completed = generic_test_completed,
+	}));
+	CHECK(execution.valid && execution.completed == 3);
+	CHECK(actions[0].valid && actions[0].calls == 1);
+	CHECK(actions[1].valid && actions[1].calls == 1);
+	CHECK(actions[2].valid && actions[2].calls == 1);
+	CHECK(bob_node_state(sum) == BOB_NODE_SUCCEEDED);
+	result = bob_node_result(sum);
+	CHECK(result.succeeded && result.changed && result.output);
+	CHECK(*(i32 *)result.output == 9);
+	CHECK(!bob_node_result(right).changed);
+	CHECK(bob_allocate(graph, 1, 1) == NULL);
+	CHECK(bob_copy_string(graph, STRING_LITERAL("too late")).data == NULL);
+	bob_destroy(graph);
+
+	{
+		u32 failed_calls = 0;
+		u32 blocked_calls = 0;
+		graph = bob_create();
+		CHECK(graph != NULL);
+		CHECK_OK(bob_add_node(graph, (Bob_Node_Description){
+			.name = STRING_LITERAL("failure"),
+			.function = generic_test_failure,
+			.user_data = &failed_calls,
+		}, &left));
+		CHECK_OK(bob_add_node(graph, (Bob_Node_Description){
+			.name = STRING_LITERAL("blocked"),
+			.function = generic_test_failure,
+			.user_data = &blocked_calls,
+		}, &right));
+		CHECK_OK(bob_add_dependency(graph, right, left));
+		CHECK(!bob_execute(graph, (Bob_Execute_Options){ .worker_count = 2 }));
+		CHECK(failed_calls == 1 && blocked_calls == 0);
+		CHECK(bob_node_state(left) == BOB_NODE_FAILED);
+		CHECK(bob_node_state(right) == BOB_NODE_BLOCKED);
+		CHECK(!bob_node_result(left).changed);
+		bob_destroy(graph);
+	}
+	return true;
+}
+
 static b32 get_test_executable(char *buffer, u32 buffer_size)
 {
     DWORD length = GetModuleFileNameA(NULL, buffer, buffer_size);
@@ -871,67 +1092,117 @@ static b32 test_transparent_dependency(void)
 	return true;
 }
 
-static b32 test_recursive_include_rebuilds(void)
+static b32 run_single_task(const Bob_Task *task, const char *name)
 {
-    const char *source = "build\\include_scan.c";
-    const char *header_a = "build\\include_scan_a.h";
-    const char *header_b = "build\\include_scan_b.h";
-    const char *output = "build\\include_scan.obj";
-    const char *marker = "build\\include_scan.marker";
-    String inputs[] = { string_from_cstring(source) };
-    String outputs[] = { string_from_cstring(output) };
-    String include_directories[] = { STRING_LITERAL("build") };
-    Bob_Task task = {0};
-    Bob *graph;
-    Bob_Platform_File_Info info;
-    C_Include_Scan_Result scan;
+	Bob *graph = bob_create();
+	b32 result;
+	if (!graph) return false;
+	add_node(graph, name);
+	result = run_tasks(graph, task, 1, 1);
+	bob_destroy(graph);
+	return result;
+}
 
-    DeleteFileA(marker);
-    CHECK(write_test_text_at_time(source,
-                                  "// #include \"ignored_line.h\"\n"
-                                  "const char *text = \"#include ignored_string.h\";\n"
-                                  "const char marker = '#';\n"
-                                  "#includefoo \"ignored_identifier.h\"\n"
-                                  "# /* comment crosses\n"
-                                  "     a line */ include \"ignored_continuation.h\"\n"
-                                  "/* prefix comment */ #include <include_scan_a.h>\n",
-                                  100ULL));
-    CHECK(write_test_text_at_time(header_a,
-                                  "/* #include \"ignored_block.h\" */\n"
-                                  "# /* directive gap */ include /* name gap */ \"include_scan_b.h\"\n",
-                                  150ULL));
-    CHECK(write_test_text_at_time(header_b, "#include \"include_scan_a.h\"\n",
-                                  300ULL));
-    CHECK(write_test_file_at_time(output, 200ULL));
-    CHECK(c_include_scan(STRING_ARRAY_FROM(inputs), (String_Array){0}, STRING_LITERAL("clang-cl /Ibuild -c build\\include_scan.c"), &scan));
-    CHECK(!scan.unresolved_quoted_include);
-    CHECK(scan.newest_modified_unix_ms == 300);
+static b32 test_compiler_dependency_state(void)
+{
+	static const char malformed[] = "{ version = 1, tasks = 7 }";
+	Arena arena = arena_create(KILOBYTES(64));
+	Arena state_arena = arena_create(KILOBYTES(64));
+	String original_directory = {0};
+	String inputs[] = { STRING_LITERAL("source.c") };
+	String outputs[] = { STRING_LITERAL("object.obj") };
+	Bob_Task task = {
+		.command_line = STRING_LITERAL("clang-cl /nologo /c source.c /Foobject.obj"),
+		.inputs = STRING_ARRAY_FROM(inputs),
+		.outputs = STRING_ARRAY_FROM(outputs),
+	};
+	Build_State state = {0};
+	Build_State_Task *state_task;
+	Bob_Platform_File_Info before;
+	Bob_Platform_File_Info after;
+	b32 changed_directory = false;
+	b32 result = false;
 
-    task.command_line = STRING_LITERAL("cmd /c echo object>build\\include_scan.obj && echo rebuilt>build\\include_scan.marker");
-    task.inputs = STRING_ARRAY_FROM(inputs);
-    task.outputs = STRING_ARRAY_FROM(outputs);
-    task.include_directories = STRING_ARRAY_FROM(include_directories);
+#define CHECK_DEPENDENCY_STATE(condition)                                      \
+	do {                                                                         \
+		if (!(condition)) {                                                        \
+			printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition);          \
+			goto cleanup;                                                           \
+		}                                                                          \
+	} while (0)
 
-    graph = bob_create();
-    add_node(graph, "recursive include dirty");
-    CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
-    bob_destroy(graph);
+	CHECK_DEPENDENCY_STATE(arena.data && state_arena.data);
+	CHECK_DEPENDENCY_STATE(bob_platform_current_directory(&arena, &original_directory));
+	CHECK_DEPENDENCY_STATE(platform_remove_tree("build\\compiler_dependency_state"));
+	CHECK_DEPENDENCY_STATE(platform_create_directories("build\\compiler_dependency_state"));
+	CHECK_DEPENDENCY_STATE(platform_set_current_directory("build\\compiler_dependency_state"));
+	changed_directory = true;
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 1\n", 100ULL));
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("source.c",
+		"#include \"header.h\"\nint dependency_value = VALUE;\n", 100ULL));
 
-    CHECK(write_test_file_at_time(output, 400ULL));
-    CHECK(DeleteFileA(marker));
-    task.command_line = STRING_LITERAL("bob_include_scanner_must_not_run.exe");
-    graph = bob_create();
-    add_node(graph, "recursive include clean");
-    CHECK(run_tasks(graph, &task, 1, 1));
-	CHECK(!bob_platform_file_info(string_from_cstring(marker), &info));
-    bob_destroy(graph);
+	CHECK_DEPENDENCY_STATE(run_single_task(&task, "capture compiler dependencies"));
+	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
+		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
+	state_task = build_state_find(&state, STRING_LITERAL("object.obj"));
+	CHECK_DEPENDENCY_STATE(state_task != NULL);
+	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
+		STRING_LITERAL("source.c")));
+	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
+		STRING_LITERAL("header.h")));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
 
-    CHECK(DeleteFileA(source));
-    CHECK(DeleteFileA(header_a));
-    CHECK(DeleteFileA(header_b));
-    CHECK(DeleteFileA(output));
-    return true;
+	Sleep(20);
+	CHECK_DEPENDENCY_STATE(run_single_task(&task, "reuse compiler dependencies"));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &after));
+	CHECK_DEPENDENCY_STATE(after.modified_unix_ms == before.modified_unix_ms);
+
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 2\n",
+		(u64)after.modified_unix_ms + 1000));
+	Sleep(20);
+	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild changed compiler dependency"));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
+	CHECK_DEPENDENCY_STATE(before.modified_unix_ms != after.modified_unix_ms);
+
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 3\n", 100ULL));
+	CHECK_DEPENDENCY_STATE(platform_remove_file(".bob\\state.elf"));
+	Sleep(20);
+	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild missing compiler state"));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &after));
+	CHECK_DEPENDENCY_STATE(after.modified_unix_ms != before.modified_unix_ms);
+
+	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(STRING_LITERAL(".bob/state.elf"),
+		malformed, sizeof(malformed) - 1));
+	Sleep(20);
+	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild malformed compiler state"));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
+	CHECK_DEPENDENCY_STATE(before.modified_unix_ms != after.modified_unix_ms);
+
+	CHECK_DEPENDENCY_STATE(platform_remove_file("header.h"));
+	CHECK_DEPENDENCY_STATE(!run_single_task(&task, "rebuild missing compiler dependency"));
+	arena_reset(&state_arena);
+	state = (Build_State){0};
+	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
+		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
+	CHECK_DEPENDENCY_STATE(build_state_find(&state, STRING_LITERAL("object.obj")) == NULL);
+	CHECK_DEPENDENCY_STATE(!bob_platform_file_info(STRING_LITERAL("object.obj.d.tmp"), &after));
+	result = true;
+
+cleanup:
+	if (changed_directory) {
+		platform_remove_tree(".bob");
+		platform_remove_file("source.c");
+		platform_remove_file("header.h");
+		platform_remove_file("object.obj");
+		platform_remove_file("object.pdb");
+		if (!platform_set_current_directory(original_directory.data)) result = false;
+		else platform_remove_tree("build\\compiler_dependency_state");
+	}
+	else platform_remove_tree("build\\compiler_dependency_state");
+	arena_destroy(&state_arena);
+	arena_destroy(&arena);
+#undef CHECK_DEPENDENCY_STATE
+	return result;
 }
 
 static b32 test_elf_descriptor(void)
@@ -1030,27 +1301,32 @@ static b32 test_compiler_command(void)
 	Arena arena = arena_create(KILOBYTES(64));
 	Compiler_Command command;
 	String augmented;
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("   "), &command));
+	CHECK(!command.executable.data && command.kind == COMPILER_KIND_UNKNOWN);
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("/c source.c"), &command));
+	CHECK(string_equal(command.executable, STRING_LITERAL("/c")) && !command.compiles);
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("clang-cl /Ione /I \"two words\" -Ithree -I four -isystem system"), &command));
 	CHECK(command.kind == COMPILER_KIND_CLANG_CL);
 	CHECK(!command.compiles);
-	CHECK(command.include_directories.count == 5);
-	CHECK(string_equal(command.include_directories.items[0], STRING_LITERAL("one")));
-	CHECK(string_equal(command.include_directories.items[1], STRING_LITERAL("two words")));
-	CHECK(string_equal(command.include_directories.items[2], STRING_LITERAL("three")));
-	CHECK(string_equal(command.include_directories.items[3], STRING_LITERAL("four")));
-	CHECK(string_equal(command.include_directories.items[4], STRING_LITERAL("system")));
-	CHECK(compiler_command_add_dependencies(&arena,
+	CHECK(compiler_command_parse(&arena,
+		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
+		&command));
+	CHECK(compiler_command_can_add_make_dependencies(&command));
+	CHECK(compiler_command_add_dependencies(&arena, &command,
 		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
 		STRING_LITERAL("object.obj.d"), &augmented));
 	CHECK(string_ends_with(augmented, STRING_LITERAL(" /clang:-MD /clang:-MF\"object.obj.d\"")));
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("cl.exe /nologo /c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_MSVC && command.compiles);
-	CHECK(compiler_command_add_dependencies(&arena, STRING_LITERAL("cl /c source.c"),
+	CHECK(!compiler_command_can_add_make_dependencies(&command));
+	CHECK(compiler_command_add_dependencies(&arena, &command, STRING_LITERAL("cl /c source.c"),
 		STRING_LITERAL("object.json"), &augmented));
 	CHECK(string_ends_with(augmented, STRING_LITERAL(" /sourceDependencies \"object.json\"")));
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("gcc -MMD -c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles && command.generates_dependencies);
-	CHECK(!compiler_command_add_dependencies(&arena, STRING_LITERAL("gcc -MMD -c source.c"),
+	CHECK(!compiler_command_can_add_make_dependencies(&command));
+	CHECK(!compiler_command_add_dependencies(&arena, &command,
+		STRING_LITERAL("gcc -MMD -c source.c"),
 		STRING_LITERAL("object.d"), &augmented));
 	arena_destroy(&arena);
 	return true;
@@ -1155,6 +1431,7 @@ static int run_all_tests(void)
     run_test("option resolution", test_option_resolution);
     run_test("compiler command", test_compiler_command);
     run_test("build state", test_build_state);
+    run_test("build state files", test_build_state_files);
     run_test("Make depfile", test_make_depfile);
     run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
@@ -1165,6 +1442,7 @@ static int run_all_tests(void)
     run_test("failure blocks dependents", test_failure_blocks_dependents);
     run_test("cycle rejection", test_cycle_is_rejected);
     run_test("invalid edge rejection", test_invalid_edges_are_rejected);
+	run_test("generic graph actions", test_generic_graph_actions);
     run_test("builder parallelism", test_builder_runs_in_parallel);
     run_test("builder failure", test_builder_propagates_failure);
     run_test("missing executable", test_builder_reports_missing_executable);
@@ -1173,7 +1451,7 @@ static int run_all_tests(void)
     run_test("multiple inputs and outputs", test_multiple_inputs_and_outputs);
     run_test("dependency rebuild", test_dependency_rebuild_propagates);
     run_test("transparent dependency", test_transparent_dependency);
-    run_test("recursive includes", test_recursive_include_rebuilds);
+    run_test("compiler dependency state", test_compiler_dependency_state);
     run_test("elf build descriptor", test_elf_descriptor);
     run_test("elf generated descriptor", test_elf_generated_descriptor);
     run_test("Bob build script", test_bob_script);

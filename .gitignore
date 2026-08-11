@@ -1,6 +1,9 @@
 # Script_Build output
 build/
 
+# Bob build state
+.bob/
+
 # Visual Studio
 .vs/
 *.suo
@@ -16,6 +19,3 @@ build/
 
 # Experiments
 laboratory/
-
-# Local tooling scratch files
-.codex-staging/

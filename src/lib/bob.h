@@ -2,100 +2,109 @@
 #define BOB_H
 
 #include "base.h"
-#include "platform_adapter.h"
 
 #define BOB_VERSION "0.1.0-dev"
 
-typedef struct Platform_Mutex Platform_Mutex;
-typedef struct Platform_Condition Platform_Condition;
 typedef struct Bob Bob;
 typedef struct Bob_Node Bob_Node;
+typedef struct Bob_Node_Context Bob_Node_Context;
 
 typedef enum Bob_Error
 {
-   BOB_OK,
-   BOB_ERROR_OUT_OF_MEMORY,
-   BOB_ERROR_INVALID_TASK,
-   BOB_ERROR_DUPLICATE_DEPENDENCY,
-   BOB_ERROR_SELF_DEPENDENCY,
-   BOB_ERROR_ALREADY_PREPARED,
-   BOB_ERROR_NOT_PREPARED,
-   BOB_ERROR_INVALID_STATE,
-   BOB_ERROR_CYCLE,
+	BOB_OK,
+	BOB_ERROR_OUT_OF_MEMORY,
+	BOB_ERROR_INVALID_TASK,
+	BOB_ERROR_DUPLICATE_DEPENDENCY,
+	BOB_ERROR_SELF_DEPENDENCY,
+	BOB_ERROR_ALREADY_PREPARED,
+	BOB_ERROR_NOT_PREPARED,
+	BOB_ERROR_INVALID_STATE,
+	BOB_ERROR_CYCLE,
 }
 Bob_Error;
 
-typedef enum Bob_Task_State
-{
-   BOB_TASK_PENDING,
-   BOB_TASK_READY,
-   BOB_TASK_RUNNING,
-   BOB_TASK_SUCCEEDED,
-   BOB_TASK_FAILED,
-   BOB_TASK_BLOCKED,
-}
-Bob_Task_State;
+#define BOB_ERROR_INVALID_NODE BOB_ERROR_INVALID_TASK
 
-typedef struct Bob_Task
+typedef enum Bob_Node_State
 {
-   String       name;
-   String       command_line;
-   String_Array inputs;
-   String_Array outputs;
-   String_Array include_directories;
-   b32          transparent;
+	BOB_NODE_PENDING,
+	BOB_NODE_READY,
+	BOB_NODE_RUNNING,
+	BOB_NODE_SUCCEEDED,
+	BOB_NODE_FAILED,
+	BOB_NODE_BLOCKED,
 }
-Bob_Task;
+Bob_Node_State;
 
-typedef struct Bob_Node_Array
+typedef Bob_Node_State Bob_Task_State;
+
+#define BOB_TASK_PENDING   BOB_NODE_PENDING
+#define BOB_TASK_READY     BOB_NODE_READY
+#define BOB_TASK_RUNNING   BOB_NODE_RUNNING
+#define BOB_TASK_SUCCEEDED BOB_NODE_SUCCEEDED
+#define BOB_TASK_FAILED    BOB_NODE_FAILED
+#define BOB_TASK_BLOCKED   BOB_NODE_BLOCKED
+
+typedef struct Bob_Node_Result
 {
-   Bob_Node **items;
-   u32        count;
-   u32        capacity;
+	/* Output allocated from the node context arena remains valid until bob_destroy. */
+	void *output;
+	b32   succeeded;
+	b32   changed;
 }
-Bob_Node_Array;
+Bob_Node_Result;
 
-struct Bob_Node
+typedef Bob_Node_Result Bob_Node_Function(Bob_Node_Context *context, void *user_data);
+typedef void Bob_Node_Completed_Function(Bob_Node *node, Bob_Node_Result result, void *user_data);
+
+struct Bob_Node_Context
 {
-   Bob_Node_Array dependencies;
-   Bob_Node_Array dependents;
-   u32            unfinished_dependencies;
-   Bob_Task       task;
-   Bob_Task_State state;
-   b32            rebuilt;
+	Bob      *bob;
+	Bob_Node *node;
+	Arena    *arena;
+	void     *execution_data;
 };
 
-struct Bob
+typedef struct Bob_Node_Description
 {
-   Arena               arena;
-   Bob_Node          **nodes;
-   u32                 node_count;
-   u32                 node_capacity;
-   Bob_Node          **ready;
-   u32                 ready_count;
-   u32                 ready_head;
-   u32                 terminal_count;
-   b32                 prepared;
-   b32                 failed;
-};
+	String             name;
+	Bob_Node_Function *function;
+	void              *user_data;
+}
+Bob_Node_Description;
+
+typedef struct Bob_Execute_Options
+{
+	u32                          worker_count;
+	void                        *user_data;
+	Bob_Node_Completed_Function *completed;
+}
+Bob_Execute_Options;
 
 Bob *bob_create(void);
 void bob_destroy(Bob *bob);
-Bob_Error bob_prepare(Bob *bob);
-b32 bob_build(Bob *bob, u32 worker_count);
-
-b32 bob_take_ready(Bob *bob, Bob_Node **node_out);
-Bob_Error bob_add_task(Bob *bob, Bob_Task task, Bob_Node **node_out);
-Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task task);
+/* Graph-lifetime storage. Available only before the graph is prepared. */
+void *bob_allocate(Bob *bob, u64 size, u64 alignment);
+String bob_copy_string(Bob *bob, String string);
+Bob_Error bob_add_node(Bob *bob, Bob_Node_Description description, Bob_Node **node_out);
+Bob_Error bob_set_node(Bob *bob, Bob_Node *node, Bob_Node_Description description);
+Bob_Error bob_set_node_action(Bob *bob, Bob_Node *node, Bob_Node_Function *function, void *user_data);
 Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency);
+Bob_Error bob_prepare(Bob *bob);
+b32 bob_take_ready(Bob *bob, Bob_Node **node_out);
+Bob_Error bob_complete_result(Bob *bob, Bob_Node *node, Bob_Node_Result result);
 Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded);
+b32 bob_execute(Bob *bob, Bob_Execute_Options options);
+b32 bob_is_prepared(const Bob *bob);
 b32 bob_is_finished(const Bob *bob);
 b32 bob_has_failed(const Bob *bob);
-u32 bob_task_count(const Bob *bob);
+u32 bob_node_count(const Bob *bob);
 Bob_Node *bob_node_at(const Bob *bob, u32 index);
-const char *bob_task_name(const Bob_Node *node);
-Bob_Task_State bob_task_state(const Bob_Node *node);
-const Bob_Task *bob_get_task(const Bob_Node *node);
+const char *bob_node_name(const Bob_Node *node);
+Bob_Node_State bob_node_state(const Bob_Node *node);
+Bob_Node_Result bob_node_result(const Bob_Node *node);
+Bob_Node_Function *bob_node_function(const Bob_Node *node);
+void *bob_node_user_data(const Bob_Node *node);
 u32 bob_dependency_count(const Bob_Node *node);
 Bob_Node *bob_dependency(const Bob_Node *node, u32 index);
 const char *bob_error_string(Bob_Error result);

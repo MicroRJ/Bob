@@ -1,5 +1,7 @@
 #include "build_state.h"
 #include "elf.h"
+#include "platform_adapter.h"
+#include "platform.h"
 
 #include <string.h>
 
@@ -69,6 +71,21 @@ b32 build_state_set(Arena *arena, Build_State *state, String output, String_Arra
 
 failure:
 	arena_restore(arena, mark);
+	return false;
+}
+
+b32 build_state_remove(Build_State *state, String output)
+{
+	if (!state) return false;
+	for (u32 i = 0; i < state->count; ++i) {
+		if (!string_equal(state->tasks[i].output, output)) continue;
+		if (i + 1 < state->count) {
+			memmove(state->tasks + i, state->tasks + i + 1,
+				(state->count - i - 1) * sizeof(*state->tasks));
+		}
+		--state->count;
+		return true;
+	}
 	return false;
 }
 
@@ -228,4 +245,69 @@ failure:
 	arena_restore(arena, mark);
 	*source = (String){0};
 	return false;
+}
+
+Build_State_Load_Result build_state_load(Arena *arena, String path, Build_State *state)
+{
+	Bob_Platform_File_Info info;
+	Scratch scratch;
+	String source;
+	b32 parsed;
+
+	if (!arena || !state || !string_is_terminated(path) || path.size == 0) {
+		return BUILD_STATE_LOAD_ERROR;
+	}
+	*state = (Build_State){0};
+	if (!bob_platform_file_info(path, &info)) return BUILD_STATE_LOAD_MISSING;
+	scratch = begin_different_scratch(arena);
+	if (!bob_platform_read_entire_file(scratch.arena, path, &source)) {
+		end_scratch(scratch);
+		return BUILD_STATE_LOAD_ERROR;
+	}
+	parsed = build_state_parse(arena, source, state);
+	end_scratch(scratch);
+	return parsed ? BUILD_STATE_LOAD_OK : BUILD_STATE_LOAD_INVALID;
+}
+
+static String build_state_parent_directory(String path)
+{
+	for (u64 i = path.size; i > 0; --i) {
+		u64 separator = i - 1;
+		if (path.data[separator] != '/' && path.data[separator] != '\\') continue;
+		if (separator == 0 || (separator == 2 && path.data[1] == ':')) ++separator;
+		return string_slice(path, 0, separator);
+	}
+	return (String){0};
+}
+
+b32 build_state_save(Arena *arena, String path, const Build_State *state)
+{
+	u64 mark;
+	String parent;
+	String temporary = {0};
+	String source;
+	b32 result = false;
+	void *start;
+
+	if (!arena || !state || !string_is_terminated(path) || path.size == 0) return false;
+	mark = arena_mark(arena);
+	parent = build_state_parent_directory(path);
+	if (parent.size) {
+		parent = arena_push_string_copy(arena, parent);
+		if (!parent.data || !platform_create_directories(parent.data)) goto done;
+	}
+	start = arena_top(arena);
+	arena_append_str(arena, path);
+	arena_append_text(arena, ".tmp");
+	temporary = arena_string_from(arena, start);
+	arena_finalize_string(arena, temporary);
+	if (!build_state_write(arena, state, &source) || source.size > SIZE_MAX ||
+		!bob_platform_write_entire_file(temporary, source.data, (size_t)source.size)) goto done;
+	if (!platform_move_file(temporary.data, path.data, true)) goto done;
+	result = true;
+
+done:
+	if (!result && temporary.data) platform_remove_file(temporary.data);
+	arena_restore(arena, mark);
+	return result;
 }

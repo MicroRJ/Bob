@@ -2,12 +2,11 @@ core_sources := {
 	{ name = "base",               path = "src/base.c"                      },
 	{ name = "logger",             path = "src/logger.c"                    },
 	{ name = "profiler",           path = "src/profiler.c"                  },
-	{ name = "bob_core",           path = "src/lib/bob_core.c"              },
-	{ name = "bob_node",           path = "src/lib/bob_node.c"              },
+	{ name = "bob",                path = "src/lib/bob.c"                   },
+	{ name = "bob_build",          path = "src/lib/bob_build.c"             },
 	{ name = "build_state",        path = "src/lib/build_state.c"           },
-	{ name = "compiler_command",   path = "src/lib/compiler_command.c"      },
-	{ name = "make_depfile",       path = "src/lib/make_depfile.c"          },
-	{ name = "include_scan",       path = "src/lib/c_include_scan.c"        },
+	{ name = "compiler_command",   path = "src/lib/compiler_command.c"       },
+	{ name = "make_depfile",       path = "src/lib/make_depfile.c"           },
 	{ name = "vcvars_cache",       path = "src/lib/vcvars_cache.c"          },
 	{ name = "script",             path = "src/script.c"                    },
 	{ name = "elf_adapter",        path = "src/scripts/elf_adapter.c"       },
@@ -92,7 +91,7 @@ build_platform := {
 }
 
 bob_compiled := compile_source({
-	name = "bob",
+	name = "bob_main",
 	source = "src/bob_main.c",
 })
 bob_dependencies := common_tasks:clone():extend({

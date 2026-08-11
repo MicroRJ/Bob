@@ -57,24 +57,28 @@ b32 compiler_command_parse(Arena *arena, String command_line, Compiler_Command *
 	*result = (Compiler_Command){0};
 	if (!command_line.data) return true;
 
-	u64 maximum_count = command_line.size / 2 + 1;
-	if (maximum_count > UINT32_MAX) return false;
-	result->include_directories.items = arena_push_zero_aligned(arena, maximum_count * sizeof(String), _Alignof(String));
-
 	Scratch scratch = begin_different_scratch(arena);
 	u64 offset = 0;
-	b32 first = true;
+	u64 executable_mark = arena_mark(scratch.arena);
+	String executable;
+	if (!next_argument(scratch.arena, command_line, &offset, &executable)) {
+		end_scratch(scratch);
+		return true;
+	}
+	result->executable = arena_push_string_copy(arena, executable);
+	if (!result->executable.data) {
+		end_scratch(scratch);
+		return false;
+	}
+	result->kind = compiler_kind_from_executable(executable);
+	arena_restore(scratch.arena, executable_mark);
+
 	for (;;)
 	{
 		u64 mark = arena_mark(scratch.arena);
 		String argument;
 		if (!next_argument(scratch.arena, command_line, &offset, &argument)) break;
 
-		if (first) {
-			result->executable = arena_push_string_copy(arena, argument);
-			result->kind = compiler_kind_from_executable(argument);
-			first = false;
-		}
 		if (string_equal_insensitive(argument, STRING_LITERAL("/c")) ||
 			string_equal(argument, STRING_LITERAL("-c"))) {
 			result->compiles = true;
@@ -86,41 +90,34 @@ b32 compiler_command_parse(Arena *arena, String command_line, Compiler_Command *
 			string_starts_with(argument, STRING_LITERAL("-MF"))) {
 			result->generates_dependencies = true;
 		}
-
-		String directory = {0};
-		if (string_is(argument, "/I") || string_is(argument, "-I") || string_is(argument, "-isystem")) {
-			arena_restore(scratch.arena, mark);
-			mark = arena_mark(scratch.arena);
-			if (!next_argument(scratch.arena, command_line, &offset, &directory)) break;
-		}
-		else if (argument.size > 2 && (argument.data[0] == '/' || argument.data[0] == '-') && argument.data[1] == 'I') {
-			directory = string_slice(argument, 2, argument.size - 2);
-		}
-
-		if (directory.size) {
-			result->include_directories.items[result->include_directories.count++] = arena_push_string_copy(arena, directory);
-		}
 		arena_restore(scratch.arena, mark);
 	}
 	end_scratch(scratch);
 	return true;
 }
 
-b32 compiler_command_add_dependencies(Arena *arena, String command_line, String dependency_file, String *result)
+b32 compiler_command_can_add_make_dependencies(const Compiler_Command *command)
 {
-	Compiler_Command command;
+	if (!command || !command->compiles || command->generates_dependencies) return false;
+	return command->kind == COMPILER_KIND_CLANG ||
+		command->kind == COMPILER_KIND_CLANG_CL ||
+		command->kind == COMPILER_KIND_GCC;
+}
+
+b32 compiler_command_add_dependencies(Arena *arena, const Compiler_Command *command,
+	String command_line, String dependency_file, String *result)
+{
 	void *start;
 
-	if (!arena || !result || !command_line.data || !dependency_file.data) return false;
-	if (!compiler_command_parse(arena, command_line, &command) ||
-		command.kind == COMPILER_KIND_UNKNOWN || !command.compiles ||
-		command.generates_dependencies) {
+	if (!arena || !command || !result || !command_line.data || !dependency_file.data ||
+		command->kind == COMPILER_KIND_UNKNOWN || !command->compiles ||
+		command->generates_dependencies) {
 		return false;
 	}
 
 	start = arena_top(arena);
 	arena_append_str(arena, command_line);
-	switch (command.kind) {
+	switch (command->kind) {
 	case COMPILER_KIND_CLANG:
 	case COMPILER_KIND_GCC:
 		arena_append_text(arena, " -MD -MF \"");

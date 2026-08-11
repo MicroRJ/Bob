@@ -1,6 +1,7 @@
 #include "elf_adapter.h"
 #include "elf_batteries.h"
 
+#include "bob_build.h"
 #include "elf.h"
 #include "logger.h"
 #include "platform_adapter.h"
