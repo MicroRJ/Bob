@@ -1092,6 +1092,46 @@ static b32 test_transparent_dependency(void)
 	return true;
 }
 
+static b32 test_task_working_directory(void)
+{
+	const char *directory = "build\\task_working_directory";
+	const char *resolved_output =
+		"build\\task_working_directory\\result.out";
+	const char *unresolved_output = "result.out";
+	String outputs[] = { STRING_LITERAL("result.out") };
+	Bob_Task task = {
+		.command_line = STRING_LITERAL("cmd /c echo built>result.out"),
+		.working_directory = STRING_LITERAL("build\\task_working_directory"),
+		.outputs = STRING_ARRAY_FROM(outputs),
+	};
+	Bob *graph;
+	Bob_Platform_File_Info info;
+
+	DeleteFileA(resolved_output);
+	DeleteFileA(unresolved_output);
+	if (!CreateDirectoryA(directory, NULL) &&
+		GetLastError() != ERROR_ALREADY_EXISTS) return false;
+	graph = bob_create();
+	add_node(graph, "working directory output");
+	CHECK(run_tasks(graph, &task, 1, 1));
+	CHECK(string_equal(bob_get_task(bob_node_at(graph, 0))->working_directory,
+		STRING_LITERAL("build\\task_working_directory")));
+	bob_destroy(graph);
+	CHECK(bob_platform_file_info(string_from_cstring(resolved_output), &info));
+	CHECK(!bob_platform_file_info(string_from_cstring(unresolved_output), &info));
+
+	task.command_line =
+		STRING_LITERAL("bob_working_directory_task_must_not_run.exe");
+	graph = bob_create();
+	add_node(graph, "working directory incremental output");
+	CHECK(run_tasks(graph, &task, 1, 1));
+	bob_destroy(graph);
+
+	CHECK(DeleteFileA(resolved_output));
+	CHECK(RemoveDirectoryA(directory));
+	return true;
+}
+
 static b32 run_single_task(const Bob_Task *task, const char *name)
 {
 	Bob *graph = bob_create();
@@ -1109,10 +1149,14 @@ static b32 test_compiler_dependency_state(void)
 	Arena arena = arena_create(KILOBYTES(64));
 	Arena state_arena = arena_create(KILOBYTES(64));
 	String original_directory = {0};
+	String absolute_source = {0};
+	String absolute_header = {0};
+	String absolute_output = {0};
 	String inputs[] = { STRING_LITERAL("source.c") };
 	String outputs[] = { STRING_LITERAL("object.obj") };
 	Bob_Task task = {
 		.command_line = STRING_LITERAL("clang-cl /nologo /c source.c /Foobject.obj"),
+		.working_directory = STRING_LITERAL("work"),
 		.inputs = STRING_ARRAY_FROM(inputs),
 		.outputs = STRING_ARRAY_FROM(outputs),
 	};
@@ -1137,64 +1181,69 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(platform_create_directories("build\\compiler_dependency_state"));
 	CHECK_DEPENDENCY_STATE(platform_set_current_directory("build\\compiler_dependency_state"));
 	changed_directory = true;
-	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 1\n", 100ULL));
-	CHECK_DEPENDENCY_STATE(write_test_text_at_time("source.c",
+	CHECK_DEPENDENCY_STATE(platform_create_directories("work"));
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\header.h", "#define VALUE 1\n", 100ULL));
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\source.c",
 		"#include \"header.h\"\nint dependency_value = VALUE;\n", 100ULL));
+	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
+		STRING_LITERAL("work/source.c"), &absolute_source));
+	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
+		STRING_LITERAL("work/header.h"), &absolute_header));
+	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
+		STRING_LITERAL("work/object.obj"), &absolute_output));
 
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "capture compiler dependencies"));
 	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
 		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
-	state_task = build_state_find(&state, STRING_LITERAL("object.obj"));
+	state_task = build_state_find(&state, absolute_output);
 	CHECK_DEPENDENCY_STATE(state_task != NULL);
 	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
-		STRING_LITERAL("source.c")));
+		absolute_source));
 	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
-		STRING_LITERAL("header.h")));
-	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
+		absolute_header));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &before));
 
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "reuse compiler dependencies"));
-	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &after));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &after));
 	CHECK_DEPENDENCY_STATE(after.modified_unix_ms == before.modified_unix_ms);
 
-	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 2\n",
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\header.h", "#define VALUE 2\n",
 		(u64)after.modified_unix_ms + 1000));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild changed compiler dependency"));
-	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &before));
 	CHECK_DEPENDENCY_STATE(before.modified_unix_ms != after.modified_unix_ms);
 
-	CHECK_DEPENDENCY_STATE(write_test_text_at_time("header.h", "#define VALUE 3\n", 100ULL));
+	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\header.h", "#define VALUE 3\n", 100ULL));
 	CHECK_DEPENDENCY_STATE(platform_remove_file(".bob\\state.elf"));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild missing compiler state"));
-	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &after));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &after));
 	CHECK_DEPENDENCY_STATE(after.modified_unix_ms != before.modified_unix_ms);
 
 	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(STRING_LITERAL(".bob/state.elf"),
 		malformed, sizeof(malformed) - 1));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild malformed compiler state"));
-	CHECK_DEPENDENCY_STATE(bob_platform_file_info(STRING_LITERAL("object.obj"), &before));
+	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &before));
 	CHECK_DEPENDENCY_STATE(before.modified_unix_ms != after.modified_unix_ms);
 
-	CHECK_DEPENDENCY_STATE(platform_remove_file("header.h"));
+	CHECK_DEPENDENCY_STATE(platform_remove_file("work\\header.h"));
 	CHECK_DEPENDENCY_STATE(!run_single_task(&task, "rebuild missing compiler dependency"));
 	arena_reset(&state_arena);
 	state = (Build_State){0};
 	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
 		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
-	CHECK_DEPENDENCY_STATE(build_state_find(&state, STRING_LITERAL("object.obj")) == NULL);
-	CHECK_DEPENDENCY_STATE(!bob_platform_file_info(STRING_LITERAL("object.obj.d.tmp"), &after));
+	CHECK_DEPENDENCY_STATE(build_state_find(&state, absolute_output) == NULL);
+	CHECK_DEPENDENCY_STATE(!bob_platform_file_info(
+		STRING_LITERAL("work/object.obj.d.tmp"), &after));
 	result = true;
 
 cleanup:
 	if (changed_directory) {
 		platform_remove_tree(".bob");
-		platform_remove_file("source.c");
-		platform_remove_file("header.h");
-		platform_remove_file("object.obj");
-		platform_remove_file("object.pdb");
+		platform_remove_tree("work");
 		if (!platform_set_current_directory(original_directory.data)) result = false;
 		else platform_remove_tree("build\\compiler_dependency_state");
 	}
@@ -1223,6 +1272,7 @@ static b32 test_elf_descriptor(void)
     CHECK(task->inputs.count == 1);
     CHECK(task->outputs.count == 1);
     CHECK(task->include_directories.count == 1);
+	CHECK(string_equal(task->working_directory, STRING_LITERAL(".")));
     CHECK(build.options.has_worker_count);
     CHECK(build.options.worker_count == 2);
     CHECK(build.options.has_verbosity);
@@ -1448,6 +1498,7 @@ static int run_all_tests(void)
     run_test("builder failure", test_builder_propagates_failure);
     run_test("missing executable", test_builder_reports_missing_executable);
     run_test("incremental output", test_builder_skips_existing_output);
+	run_test("task working directory", test_task_working_directory);
     run_test("newer input", test_newer_input_rebuilds);
     run_test("multiple inputs and outputs", test_multiple_inputs_and_outputs);
     run_test("dependency rebuild", test_dependency_rebuild_propagates);

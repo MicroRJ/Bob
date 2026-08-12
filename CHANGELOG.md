@@ -2,6 +2,8 @@
 
 ## 2026-08-11
 
+- Added per-task working directories. Relative inputs and outputs are resolved from the task directory, and commands run there without changing Bob's process directory.
+
 - Added `--explain`, which reports why each task rebuilds or remains up to date.
 
 - Split graph execution from build behavior. Graph nodes can now run arbitrary callbacks and publish results; command execution, incremental checks, and compiler dependencies live in the build layer.

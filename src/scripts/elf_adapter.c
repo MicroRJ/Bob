@@ -375,6 +375,17 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			snprintf(result->error, sizeof(result->error), "task %u requires string fields 'name' and 'command_line'", i);
 			goto cleanup;
 		}
+		elf_get_field(state, description, "working_directory");
+		if (!elf_is_nil(state, -1)) {
+			task.working_directory = copy_stack_string(scratch.arena, state, -1);
+			if (!task.working_directory.data || task.working_directory.size == 0) {
+				snprintf(result->error, sizeof(result->error),
+					"working_directory for '%s' must be a non-empty string",
+					task.name.data);
+				goto cleanup;
+			}
+		}
+		elf_pop(state, 1);
 		elf_Integer transparent = 0;
 		b32 present = false;
 		if (!stack_integer_field(state, description, "transparent", &transparent, &present)) {

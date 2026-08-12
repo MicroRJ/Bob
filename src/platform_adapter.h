@@ -17,6 +17,7 @@ typedef struct Bob_Platform_Process_Result {
 } Bob_Platform_Process_Result;
 
 typedef struct Bob_Platform_Process_Options {
+	String working_directory;
 	b32 capture_stderr;
 	b32 hide_window;
 } Bob_Platform_Process_Options;

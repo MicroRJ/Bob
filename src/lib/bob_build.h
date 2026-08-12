@@ -7,6 +7,7 @@ typedef struct Bob_Task
 {
 	String       name;
 	String       command_line;
+	String       working_directory;
 	String_Array inputs;
 	String_Array outputs;
 	String_Array include_directories;

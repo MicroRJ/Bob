@@ -163,10 +163,17 @@ b32 bob_platform_run_command(String command_line, Arena *arena, Bob_Platform_Pro
 	u64 mark;
 	Platform_Process_Start_Result start;
 	Platform_Process_Wait_Result wait = {0};
-	if (!string_is_terminated(command_line) || !arena || !result) return false;
+	if (!string_is_terminated(command_line) ||
+		(options.working_directory.data &&
+			!string_is_terminated(options.working_directory)) || !arena || !result) return false;
 	mark = arena_mark(arena);
 	*result = (Bob_Platform_Process_Result){ .exit_code = UINT32_MAX };
-	start = platform_start_process(command_line.data, (Platform_Process_Options){ .capture_standard_output = true, .capture_standard_error = options.capture_stderr, .hide_window = options.hide_window });
+	start = platform_start_process(command_line.data, (Platform_Process_Options){
+		.working_directory = options.working_directory.data,
+		.capture_standard_output = true,
+		.capture_standard_error = options.capture_stderr,
+		.hide_window = options.hide_window,
+	});
 	if (start.error) {
 		result->error_code = start.os_error ? start.os_error : (u32)start.error;
 		return false;

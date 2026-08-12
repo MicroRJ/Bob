@@ -17,6 +17,7 @@ compile_main := add_task(
     { "example" },
     {}
 )
+compile_main.working_directory = "."
 
 compile_message := add_task(
     "compile message",
