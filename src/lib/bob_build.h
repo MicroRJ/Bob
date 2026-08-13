@@ -3,8 +3,15 @@
 
 #include "bob.h"
 
-// This the user fed task descriptor; the internal runtime representation is the normalized
-// version of this descriptor.
+#define BOB_FINGERPRINT_SIZE 32
+
+typedef struct Bob_Fingerprint
+{
+	u8 bytes[BOB_FINGERPRINT_SIZE];
+}
+Bob_Fingerprint;
+
+// User fed task descriptor; the internal runtime representation is normalized.
 typedef struct Bob_Task_Desc
 {
 	String       name;

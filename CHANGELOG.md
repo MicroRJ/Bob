@@ -2,6 +2,8 @@
 
 ## 2026-08-13
 
+- Added BLAKE3 task fingerprints. Bob now rebuilds output tasks when their command, working directory, normalized paths, or relevant flags change, even when file timestamps have not changed.
+
 - Replaced the textual `.bob/state.elf` dependency cache with a checksummed binary `.bob/state` snapshot. Paths are interned and tasks store compact path IDs, substantially reducing state memory, file size, and save/load time.
 
 ## 2026-08-11

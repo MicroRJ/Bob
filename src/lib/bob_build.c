@@ -1,11 +1,15 @@
 #include "bob_build.h"
 #include "build_state.h"
+#include "build_state_stream.h"
 #include "compiler_command.h"
 #include "logger.h"
 #include "make_depfile.h"
 #include "platform_adapter.h"
 #include "platform.h"
 #include "profiler.h"
+#include "blake3.h"
+
+#include <string.h>
 
 #define BOB_BUILD_STATE_PATH ".bob/state"
 
@@ -17,6 +21,7 @@ typedef enum Bob_Rebuild_Reason
 	BOB_REBUILD_INPUT_MISSING,
 	BOB_REBUILD_STATE_MISSING,
 	BOB_REBUILD_STATE_CHANGED,
+	BOB_REBUILD_FINGERPRINT_CHANGED,
 	BOB_REBUILD_DEPENDENCY_MISSING,
 	BOB_REBUILD_DEPENDENCY_CHANGED,
 	BOB_REBUILD_INPUT_NEWER,
@@ -43,6 +48,7 @@ typedef struct Bob_Build_Task
 	String           execution_command_line;
 	Bob_Path         execution_directory;
 	Bob_Path         dependency_file;
+	Bob_Fingerprint  fingerprint;
 	b32              tracks_dependencies;
 }
 Bob_Build_Task;
@@ -56,7 +62,6 @@ typedef struct Bob_Build_Completion
 	Bob_Platform_Process_Result process;
 	String_Array                dependencies;
 	Bob_Rebuild_Decision        decision;
-	b32                         dependency_tracking;
 	b32                         dependency_state_valid;
 }
 Bob_Build_Completion;
@@ -67,9 +72,7 @@ typedef struct Bob_Builder
 	Bob_Path       state_path;
 	Build_State    state;
 	Arena          state_arena;
-	Platform_Mutex state_mutex;
-	b32            state_mutex_initialized;
-	b32            dependency_tracking;
+	b32            state_tracking;
 	b32            state_changed;
 	b32            explain;
 	b32            internal_error;
@@ -126,21 +129,16 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
 		}
 	}
 
-	if (build_task->tracks_dependencies) {
-		Bob_Rebuild_Decision state_decision = {0};
-		Bob_Path_Array state_dependencies = {0};
-		platform_lock_mutex(&builder->state_mutex);
+	if (outputs->count > 0) {
 		Bob_Path output_path = outputs->items[0];
 		String output = bob_path_string(builder->bob, output_path);
-		const Build_State_Task *state_task = build_state_find(&builder->state, output_path);
-		if (!state_task) state_decision = (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
-		else if (state_task->output_stamp != primary_output_stamp) state_decision = (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_CHANGED, .path = output, .rebuild = true };
-		else state_dependencies = state_task->dependencies;
-		platform_unlock_mutex(&builder->state_mutex);
-		if (state_decision.rebuild) return state_decision;
-		for (u32 i = 0; i < state_dependencies.count; ++i) {
+		Build_State_Task_Snapshot state_task;
+		if (!build_state_get_task(&builder->state, output_path, &state_task)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
+		if (state_task.output_stamp != primary_output_stamp) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_CHANGED, .path = output, .rebuild = true };
+		if (memcmp(state_task.fingerprint.bytes, build_task->fingerprint.bytes, BOB_FINGERPRINT_SIZE) != 0) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_FINGERPRINT_CHANGED, .path = output, .rebuild = true };
+		for (u32 i = 0; i < state_task.dependencies.count; ++i) {
 			Bob_Platform_File_Info info;
-			String dependency = bob_path_string(builder->bob, state_dependencies.items[i]);
+			String dependency = bob_path_string(builder->bob, state_task.dependencies.items[i]);
 			if (!dependency.data || !bob_platform_file_info(dependency, &info)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_DEPENDENCY_MISSING, .path = dependency, .rebuild = true };
 			if ((u64)info.modified_unix_ms > newest_input) {
 				newest_input = (u64)info.modified_unix_ms;
@@ -177,8 +175,7 @@ static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task, B
 	Scratch scratch = begin_different_scratch(context->arena);
 	String dependency_file = bob_path_string(context->bob, task->dependency_file);
 	String execution_directory = bob_path_string(context->bob, task->execution_directory);
-	completion->dependency_tracking = task->tracks_dependencies;
-	if (completion->dependency_tracking) {
+	if (task->tracks_dependencies) {
 		platform_remove_file(dependency_file.data);
 	}
 
@@ -187,7 +184,7 @@ static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task, B
 			.working_directory = execution_directory,
 			.capture_stderr = true,
 		}, &completion->process);
-	if (completion->dependency_tracking) {
+	if (task->tracks_dependencies) {
 		String contents;
 		b32 process_succeeded = completion->process.error_code == 0 &&
 			completion->process.exit_code == 0;
@@ -252,6 +249,9 @@ static void report_explanation(const Bob_Build_Completion *completion)
 		break;
 	case BOB_REBUILD_STATE_CHANGED:
 		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because recorded state does not match the output: %s", name, decision->path.data);
+		break;
+	case BOB_REBUILD_FINGERPRINT_CHANGED:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because task configuration changed: %s", name, decision->path.data);
 		break;
 	case BOB_REBUILD_DEPENDENCY_MISSING:
 		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because recorded dependency is missing: %s", name, decision->path.data);
@@ -339,38 +339,34 @@ static b32 resolve_dependency_paths(Bob *bob, Arena *arena, Bob_Path directory, 
 	return true;
 }
 
-static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Completion *completion, b32 succeeded)
+static void collect_build_state(Bob_Builder *builder, const Bob_Build_Completion *completion, b32 succeeded)
 {
 	Bob_Path output_path;
 	String state_path;
-	if (!completion->dependency_tracking || builder->internal_error) return;
+	if (!completion->decision.rebuild || completion->task->outputs.count == 0 || builder->internal_error) return;
 	output_path = completion->task->outputs.items[0];
 	state_path = bob_path_string(builder->bob, builder->state_path);
-	platform_lock_mutex(&builder->state_mutex);
-	if (!succeeded || !completion->dependency_state_valid) {
+	if (!succeeded || (completion->task->tracks_dependencies && !completion->dependency_state_valid)) {
 		if (!build_state_append_remove(state_path, &builder->state, output_path)) builder->internal_error = true;
 		else builder->state_changed = true;
-		platform_unlock_mutex(&builder->state_mutex);
-		if (succeeded && !completion->dependency_state_valid) {
+		if (succeeded && completion->task->tracks_dependencies && !completion->dependency_state_valid) {
 			log_warning("could not read compiler dependencies for %s",
 				bob_task_name(completion->node));
 		}
 		return;
 	}
 	Scratch scratch = begin_scratch();
-	Bob_Path_Array dependencies;
-	if (!resolve_dependency_paths(builder->bob, scratch.arena, completion->task->execution_directory, completion->dependencies, &dependencies)) {
+	Bob_Path_Array dependencies = {0};
+	if (completion->task->tracks_dependencies && !resolve_dependency_paths(builder->bob, scratch.arena, completion->task->execution_directory, completion->dependencies, &dependencies)) {
 		builder->internal_error = true;
-		platform_unlock_mutex(&builder->state_mutex);
 		end_scratch(scratch);
 		return;
 	}
 	Bob_Platform_File_Info info;
 	String output = bob_path_string(builder->bob, output_path);
 	u64 output_stamp = bob_platform_file_info(output, &info) ? (u64)info.modified_unix_ms : 0;
-	if (!build_state_append_set(&builder->state_arena, state_path, builder->bob, &builder->state, output_path, dependencies, output_stamp)) builder->internal_error = true;
+	if (!build_state_append_set(&builder->state_arena, state_path, builder->bob, &builder->state, output_path, dependencies, output_stamp, completion->task->fingerprint)) builder->internal_error = true;
 	else builder->state_changed = true;
-	platform_unlock_mutex(&builder->state_mutex);
 	end_scratch(scratch);
 }
 
@@ -390,7 +386,7 @@ static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *u
 		report_completion(completion);
 		profile_scope_end(&scope);
 	}
-	collect_dependency_state(builder, completion, result.succeeded);
+	collect_build_state(builder, completion, result.succeeded);
 }
 
 static b32 valid_task(const Bob_Task_Desc *task)
@@ -417,9 +413,7 @@ b32 bob_build(Bob *bob, Bob_Build_Params options)
 		if (bob_node_function(node) != build_task_action) continue;
 		task = bob_node_user_data(node);
 		if (!task || !valid_task(&task->task)) return false;
-		if (task->tracks_dependencies) {
-			builder.dependency_tracking = true;
-		}
+		if (task->outputs.count > 0) builder.state_tracking = true;
 	}
 	builder.state_arena = arena_create(MEGABYTES(64));
 	arena_set_name(&builder.state_arena, "build state");
@@ -427,9 +421,11 @@ b32 bob_build(Bob *bob, Bob_Build_Params options)
 		result = false;
 		goto cleanup;
 	}
-	platform_init_mutex(&builder.state_mutex);
-	builder.state_mutex_initialized = true;
-	if (builder.dependency_tracking) {
+	if (!build_state_init(&builder.state)) {
+		result = false;
+		goto cleanup;
+	}
+	if (builder.state_tracking) {
 		String state_path = bob_path_string(bob, builder.state_path);
 		load_result = build_state_load(&builder.state_arena, bob, state_path, &builder.state);
 		if (load_result == BUILD_STATE_LOAD_ERROR) {
@@ -439,7 +435,7 @@ b32 bob_build(Bob *bob, Bob_Build_Params options)
 		}
 		else if (load_result == BUILD_STATE_LOAD_INVALID) {
 			log_warning("ignoring invalid Bob build state");
-			builder.state = (Build_State){0};
+			build_state_clear(&builder.state);
 		}
 		if (load_result != BUILD_STATE_LOAD_OK) {
 			if (!build_state_save(state_path, bob, &builder.state)) {
@@ -456,7 +452,7 @@ b32 bob_build(Bob *bob, Bob_Build_Params options)
 		.completed = build_task_completed,
 	});
 	if (builder.internal_error) result = false;
-	if (result && builder.dependency_tracking && builder.state_changed) {
+	if (result && builder.state_tracking && builder.state_changed) {
 		if (!build_state_save(bob_path_string(bob, builder.state_path), bob, &builder.state)) {
 			log_warning("could not compact Bob build state");
 			result = false;
@@ -464,9 +460,72 @@ b32 bob_build(Bob *bob, Bob_Build_Params options)
 	}
 
 cleanup:
-	if (builder.state_mutex_initialized) platform_destroy_mutex(&builder.state_mutex);
+	build_state_destroy(&builder.state);
 	arena_destroy(&builder.state_arena);
 	return result;
+}
+
+static void fingerprint_u32(blake3_hasher *hasher, u32 value)
+{
+	u8 bytes[4] = {
+		(u8)value,
+		(u8)(value >> 8),
+		(u8)(value >> 16),
+		(u8)(value >> 24),
+	};
+	blake3_hasher_update(hasher, bytes, sizeof(bytes));
+}
+
+static void fingerprint_u64(blake3_hasher *hasher, u64 value)
+{
+	u8 bytes[8] = {
+		(u8)value,
+		(u8)(value >> 8),
+		(u8)(value >> 16),
+		(u8)(value >> 24),
+		(u8)(value >> 32),
+		(u8)(value >> 40),
+		(u8)(value >> 48),
+		(u8)(value >> 56),
+	};
+	blake3_hasher_update(hasher, bytes, sizeof(bytes));
+}
+
+static b32 fingerprint_string(blake3_hasher *hasher, String value)
+{
+	if (!hasher || (!value.data && value.size) || value.size > SIZE_MAX) return false;
+	fingerprint_u64(hasher, value.size);
+	if (value.size) blake3_hasher_update(hasher, value.data, (size_t)value.size);
+	return true;
+}
+
+static b32 fingerprint_paths(const Bob *bob, blake3_hasher *hasher, Bob_Path_Array paths)
+{
+	if (!bob || !hasher || (paths.count && !paths.items)) return false;
+	fingerprint_u32(hasher, paths.count);
+	for (u32 i = 0; i < paths.count; ++i) {
+		String path = bob_path_string(bob, paths.items[i]);
+		if (!path.data || !fingerprint_string(hasher, path)) return false;
+	}
+	return true;
+}
+
+static b32 build_task_fingerprint(const Bob *bob, const Bob_Build_Task *task, Bob_Fingerprint *result)
+{
+	static const char domain[] = "bob.task.fingerprint";
+	blake3_hasher hasher;
+	if (!bob || !task || !result) return false;
+	blake3_hasher_init(&hasher);
+	blake3_hasher_update(&hasher, domain, sizeof(domain) - 1);
+	fingerprint_u32(&hasher, 1);
+	if (!fingerprint_string(&hasher, task->task.command_line)) return false;
+	if (!fingerprint_string(&hasher, bob_path_string(bob, task->execution_directory))) return false;
+	if (!fingerprint_paths(bob, &hasher, task->inputs)) return false;
+	if (!fingerprint_paths(bob, &hasher, task->outputs)) return false;
+	if (!fingerprint_paths(bob, &hasher, task->include_directories)) return false;
+	fingerprint_u32(&hasher, task->task.transparent ? 1 : 0);
+	blake3_hasher_finalize(&hasher, result->bytes, sizeof(result->bytes));
+	return true;
 }
 
 static b32 copy_optional_string(Bob *bob, String source, String *result)
@@ -554,6 +613,7 @@ static Bob_Build_Task *build_task_create(Bob *bob, Bob_Task_Desc task, String fa
 		copy->execution_command_line = bob_copy_string(bob, augmented);
 		if (!copy->execution_command_line.data) goto done;
 	}
+	if (!build_task_fingerprint(bob, copy, &copy->fingerprint)) goto done;
 	valid = true;
 
 done:

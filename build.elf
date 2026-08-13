@@ -6,6 +6,7 @@ core_sources := {
 	{ name = "bob",                path = "src/lib/bob.c"                   },
 	{ name = "bob_build",          path = "src/lib/bob_build.c"             },
 	{ name = "build_state",        path = "src/lib/build_state.c"           },
+	{ name = "build_state_stream", path = "src/lib/build_state_stream.c"    },
 	{ name = "compiler_command",   path = "src/lib/compiler_command.c"       },
 	{ name = "make_depfile",       path = "src/lib/make_depfile.c"           },
 	{ name = "vcvars_cache",       path = "src/lib/vcvars_cache.c"          },

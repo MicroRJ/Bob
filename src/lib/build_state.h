@@ -1,13 +1,8 @@
 #ifndef BUILD_STATE_H
 #define BUILD_STATE_H
 
-#include "bob.h"
-
-#define BUILD_STATE_STREAM_VERSION     2
-#define BUILD_STATE_STREAM_MAGIC       "BOBSTATE"
-#define BUILD_STATE_STREAM_MAGIC_SIZE  8
-#define BUILD_STATE_STREAM_HEADER_SIZE 16
-#define BUILD_STATE_STREAM_RECORD_HEADER_SIZE 8
+#include "bob_build.h"
+#include "platform.h"
 
 typedef u32 Build_State_Path_Id;
 
@@ -26,59 +21,39 @@ Build_State_Path_Map;
 
 typedef struct Build_State_Task
 {
-	Bob_Path       output;
-	u64            output_stamp;
-	Bob_Path_Array dependencies;
+	Bob_Path        output;
+	u64             output_stamp;
+	Bob_Fingerprint fingerprint;
+	Bob_Path_Array  dependencies;
 }
 Build_State_Task;
 
+// Dependency storage is immutable and remains valid until the state arena is destroyed.
+typedef struct Build_State_Task_Snapshot
+{
+	Bob_Path        output;
+	u64             output_stamp;
+	Bob_Fingerprint fingerprint;
+	Bob_Path_Array  dependencies;
+}
+Build_State_Task_Snapshot;
+
 typedef struct Build_State
 {
+	Platform_Mutex       mutex;
 	Build_State_Path_Map paths;
 	Build_State_Task    *tasks;
 	u32                  task_count;
 	u32                  task_capacity;
+	b32                  initialized;
 }
 Build_State;
 
-typedef enum Build_State_Load_Result
-{
-	BUILD_STATE_LOAD_OK,
-	BUILD_STATE_LOAD_RECOVERED,
-	BUILD_STATE_LOAD_MISSING,
-	BUILD_STATE_LOAD_INVALID,
-	BUILD_STATE_LOAD_ERROR,
-}
-Build_State_Load_Result;
-
-const Build_State_Task *build_state_find(const Build_State *state, Bob_Path output);
-b32 build_state_set(Arena *arena, Build_State *state, Bob_Path output, Bob_Path_Array dependencies);
+b32 build_state_init(Build_State *state);
+void build_state_destroy(Build_State *state);
+void build_state_clear(Build_State *state);
+b32 build_state_get_task(Build_State *state, Bob_Path output, Build_State_Task_Snapshot *result);
+b32 build_state_set(Arena *arena, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, Bob_Fingerprint fingerprint);
 b32 build_state_remove(Build_State *state, Bob_Path output);
-Build_State_Load_Result build_state_load(Arena *arena, Bob *bob, String path, Build_State *state);
-b32 build_state_save(String path, const Bob *bob, const Build_State *state);
-
-// A state file is an append-only instruction stream. Compaction writes the
-// same instructions into a new file, keeping only live paths and tasks.
-typedef enum Build_State_Op
-{
-	STATE_OP_INTERN = 1,
-	STATE_OP_SET,
-	STATE_OP_REMOVE,
-}
-Build_State_Op;
-
-typedef enum Build_State_Stream_Result
-{
-	BUILD_STATE_STREAM_OK,
-	BUILD_STATE_STREAM_TRUNCATED,
-	BUILD_STATE_STREAM_INVALID,
-	BUILD_STATE_STREAM_ERROR,
-}
-Build_State_Stream_Result;
-
-b32 build_state_stream_encode(Arena *arena, const Bob *bob, const Build_State *state, String *stream);
-Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob *bob, String stream, Build_State *state);
-b32 build_state_append_set(Arena *arena, String path, const Bob *bob, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp);
-b32 build_state_append_remove(String path, Build_State *state, Bob_Path output);
 
 #endif
