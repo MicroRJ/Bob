@@ -107,11 +107,11 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
 				.rebuild = true,
 			};
 		}
-		if ((u64)info.modified_unix_ms < oldest_output) {
+		if (!info.is_directory && (u64)info.modified_unix_ms < oldest_output) {
 			oldest_output = (u64)info.modified_unix_ms;
 			oldest_output_path = path;
 		}
-		if (i == 0) primary_output_stamp = (u64)info.modified_unix_ms;
+		if (i == 0 && !info.is_directory) primary_output_stamp = (u64)info.modified_unix_ms;
 	}
 	for (u32 i = 0; i < inputs->count; ++i) {
 		Bob_Platform_File_Info info;
@@ -364,7 +364,7 @@ static void collect_build_state(Bob_Builder *builder, const Bob_Build_Completion
 	}
 	Bob_Platform_File_Info info;
 	String output = bob_path_string(builder->bob, output_path);
-	u64 output_stamp = bob_platform_file_info(output, &info) ? (u64)info.modified_unix_ms : 0;
+	u64 output_stamp = bob_platform_file_info(output, &info) && !info.is_directory ? (u64)info.modified_unix_ms : 0;
 	if (!build_state_append_set(&builder->state_arena, state_path, builder->bob, &builder->state, output_path, dependencies, output_stamp, completion->task->fingerprint)) builder->internal_error = true;
 	else builder->state_changed = true;
 	end_scratch(scratch);

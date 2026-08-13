@@ -9,6 +9,7 @@ b32 bob_platform_file_info(String path, Bob_Platform_File_Info *info)
 	if (!string_is_terminated(path) || !info || !platform_get_file_info(path.data, &shared)) return false;
 	info->size = shared.size;
 	info->modified_unix_ms = shared.modified_unix_ms;
+	info->is_directory = shared.is_directory;
 	return true;
 }
 

@@ -7,7 +7,8 @@
 
 typedef struct Bob_Platform_File_Info {
 	u64 size;
-   i64 modified_unix_ms;
+	i64 modified_unix_ms;
+	b32 is_directory;
 } Bob_Platform_File_Info;
 
 typedef struct Bob_Platform_Process_Result {

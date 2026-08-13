@@ -1403,7 +1403,53 @@ static b32 test_builder_skips_existing_output(void)
     bob_destroy(second_graph);
 
     CHECK(DeleteFileA(output_path));
-    return true;
+	return true;
+}
+
+static b32 test_directory_output_stays_clean(void)
+{
+	const char *directory = "build\\directory_output_test";
+	const char *child = "build\\directory_output_test\\child.txt";
+	String directory_outputs[] = { STRING_LITERAL("build/directory_output_test") };
+	String child_outputs[] = { STRING_LITERAL("build/directory_output_test/child.txt") };
+	Bob_Task_Desc tasks[2] = {
+		{
+			.command_line = STRING_LITERAL("cmd /c if not exist build\\directory_output_test mkdir build\\directory_output_test"),
+			.outputs = STRING_ARRAY_FROM(directory_outputs),
+		},
+		{
+			.command_line = STRING_LITERAL("cmd /c echo child>build\\directory_output_test\\child.txt"),
+			.outputs = STRING_ARRAY_FROM(child_outputs),
+		},
+	};
+	Bob_Platform_File_Info before;
+	Bob_Platform_File_Info after;
+	Bob *graph;
+	Bob_Node *prepare;
+	Bob_Node *write_child;
+
+	CHECK(platform_remove_tree(directory));
+	graph = bob_create();
+	CHECK(graph != NULL);
+	prepare = add_node(graph, "prepare output directory");
+	write_child = add_node(graph, "write child output");
+	CHECK_OK(bob_add_dependency(graph, write_child, prepare));
+	CHECK(run_tasks(graph, tasks, 2, 1));
+	bob_destroy(graph);
+	CHECK(bob_platform_file_info(string_from_cstring(child), &before));
+
+	Sleep(20);
+	graph = bob_create();
+	CHECK(graph != NULL);
+	prepare = add_node(graph, "prepare output directory");
+	write_child = add_node(graph, "write child output");
+	CHECK_OK(bob_add_dependency(graph, write_child, prepare));
+	CHECK(run_tasks(graph, tasks, 2, 1));
+	bob_destroy(graph);
+	CHECK(bob_platform_file_info(string_from_cstring(child), &after));
+	CHECK(after.modified_unix_ms == before.modified_unix_ms);
+	CHECK(platform_remove_tree(directory));
+	return true;
 }
 
 static b32 test_task_fingerprint_rebuilds(void)
@@ -2103,6 +2149,7 @@ static int run_all_tests(void)
     run_test("builder failure", test_builder_propagates_failure);
     run_test("missing executable", test_builder_reports_missing_executable);
     run_test("incremental output", test_builder_skips_existing_output);
+	run_test("directory output", test_directory_output_stays_clean);
 	run_test("task fingerprints", test_task_fingerprint_rebuilds);
 	run_test("task working directory", test_task_working_directory);
     run_test("newer input", test_newer_input_rebuilds);
