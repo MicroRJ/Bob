@@ -35,7 +35,7 @@ ELF_FUNCTION(l_bob_build)
 	Script_Options options = script_options_resolve(build.options, script->command_line_options);
 	logger_set_verbosity(options.verbosity);
 	Profile_Scope scope = profile_scope_begin("builder");
-	b32 succeeded = bob_build(build.bob, (Bob_Build_Options){
+	b32 succeeded = bob_build(build.bob, (Bob_Build_Params){
 		.worker_count = options.worker_count,
 		.explain = script->command_line_options.explain,
 	});
@@ -364,7 +364,7 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 		elf_i32 task_checkpoint = elf_get_top(state);
 		elf_push_ref(state, task_tables.items[i]);
 		elf_i32 description = elf_abs_index(state, -1);
-		Bob_Task task = {0};
+		Bob_Task_Desc task = {0};
 		elf_get_field(state, description, "name");
 		task.name = copy_stack_string(scratch.arena, state, -1);
 		elf_pop(state, 1);

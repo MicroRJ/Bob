@@ -2,12 +2,26 @@
 #define BOB_H
 
 #include "base.h"
+#include "bob_atom.h"
 
 #define BOB_VERSION "0.1.0-dev"
 
 typedef struct Bob Bob;
 typedef struct Bob_Node Bob_Node;
 typedef struct Bob_Node_Context Bob_Node_Context;
+
+typedef struct Bob_Path
+{
+	Bob_Atom atom;
+}
+Bob_Path;
+
+typedef struct Bob_Path_Array
+{
+	Bob_Path *items;
+	u32       count;
+}
+Bob_Path_Array;
 
 typedef enum Bob_Error
 {
@@ -25,7 +39,7 @@ Bob_Error;
 
 #define BOB_ERROR_INVALID_NODE BOB_ERROR_INVALID_TASK
 
-typedef enum Bob_Node_State
+typedef enum Bob_Node_Status
 {
 	BOB_NODE_PENDING,
 	BOB_NODE_READY,
@@ -34,20 +48,11 @@ typedef enum Bob_Node_State
 	BOB_NODE_FAILED,
 	BOB_NODE_BLOCKED,
 }
-Bob_Node_State;
+Bob_Node_Status;
 
-typedef Bob_Node_State Bob_Task_State;
-
-#define BOB_TASK_PENDING   BOB_NODE_PENDING
-#define BOB_TASK_READY     BOB_NODE_READY
-#define BOB_TASK_RUNNING   BOB_NODE_RUNNING
-#define BOB_TASK_SUCCEEDED BOB_NODE_SUCCEEDED
-#define BOB_TASK_FAILED    BOB_NODE_FAILED
-#define BOB_TASK_BLOCKED   BOB_NODE_BLOCKED
-
+/* Output allocated from the node context arena remains valid until bob_destroy. */
 typedef struct Bob_Node_Result
 {
-	/* Output allocated from the node context arena remains valid until bob_destroy. */
 	void *output;
 	b32   succeeded;
 	b32   changed;
@@ -55,7 +60,6 @@ typedef struct Bob_Node_Result
 Bob_Node_Result;
 
 typedef Bob_Node_Result Bob_Node_Function(Bob_Node_Context *context, void *user_data);
-typedef void Bob_Node_Completed_Function(Bob_Node *node, Bob_Node_Result result, void *user_data);
 
 struct Bob_Node_Context
 {
@@ -65,43 +69,50 @@ struct Bob_Node_Context
 	void     *execution_data;
 };
 
-typedef struct Bob_Node_Description
+typedef struct Bob_Node_Desc
 {
 	String             name;
 	Bob_Node_Function *function;
 	void              *user_data;
 }
-Bob_Node_Description;
+Bob_Node_Desc;
 
-typedef struct Bob_Execute_Options
+typedef void Bob_Node_Completed_Function(Bob_Node *node, Bob_Node_Result result, void *user_data);
+typedef struct Bob_Exec_Params
 {
 	u32                          worker_count;
 	void                        *user_data;
 	Bob_Node_Completed_Function *completed;
 }
-Bob_Execute_Options;
+Bob_Exec_Params;
 
 Bob *bob_create(void);
 void bob_destroy(Bob *bob);
 /* Graph-lifetime storage. Available only before the graph is prepared. */
 void *bob_allocate(Bob *bob, u64 size, u64 alignment);
 String bob_copy_string(Bob *bob, String string);
-Bob_Error bob_add_node(Bob *bob, Bob_Node_Description description, Bob_Node **node_out);
-Bob_Error bob_set_node(Bob *bob, Bob_Node *node, Bob_Node_Description description);
+Bob_Atom bob_intern(Bob *bob, String value);
+String bob_atom_string(const Bob *bob, Bob_Atom atom);
+b32 bob_path_resolve(Bob *bob, Bob_Path directory, String source, Bob_Path *result);
+String bob_path_string(const Bob *bob, Bob_Path path);
+b32 bob_path_is_valid(Bob_Path path);
+Bob_Path bob_build_root(const Bob *bob);
+Bob_Error bob_add_node(Bob *bob, Bob_Node_Desc description, Bob_Node **node_out);
+Bob_Error bob_set_node(Bob *bob, Bob_Node *node, Bob_Node_Desc description);
 Bob_Error bob_set_node_action(Bob *bob, Bob_Node *node, Bob_Node_Function *function, void *user_data);
 Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency);
 Bob_Error bob_prepare(Bob *bob);
 b32 bob_take_ready(Bob *bob, Bob_Node **node_out);
 Bob_Error bob_complete_result(Bob *bob, Bob_Node *node, Bob_Node_Result result);
 Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded);
-b32 bob_execute(Bob *bob, Bob_Execute_Options options);
+b32 bob_execute(Bob *bob, Bob_Exec_Params options);
 b32 bob_is_prepared(const Bob *bob);
 b32 bob_is_finished(const Bob *bob);
 b32 bob_has_failed(const Bob *bob);
 u32 bob_node_count(const Bob *bob);
 Bob_Node *bob_node_at(const Bob *bob, u32 index);
 const char *bob_node_name(const Bob_Node *node);
-Bob_Node_State bob_node_state(const Bob_Node *node);
+Bob_Node_Status bob_node_state(const Bob_Node *node);
 Bob_Node_Result bob_node_result(const Bob_Node *node);
 Bob_Node_Function *bob_node_function(const Bob_Node *node);
 void *bob_node_user_data(const Bob_Node *node);

@@ -2,6 +2,7 @@ core_sources := {
 	{ name = "base",               path = "src/base.c"                      },
 	{ name = "logger",             path = "src/logger.c"                    },
 	{ name = "profiler",           path = "src/profiler.c"                  },
+	{ name = "bob_atom",           path = "src/lib/bob_atom.c"              },
 	{ name = "bob",                path = "src/lib/bob.c"                   },
 	{ name = "bob_build",          path = "src/lib/bob_build.c"             },
 	{ name = "build_state",        path = "src/lib/build_state.c"           },
@@ -13,16 +14,24 @@ core_sources := {
 	{ name = "platform",           path = "src/platform_adapter.c"          },
 }
 
+blake3_sources := {
+	{ name = "blake3",          path = "blake3/c/blake3.c"          },
+	{ name = "blake3_dispatch", path = "blake3/c/blake3_dispatch.c" },
+	{ name = "blake3_portable", path = "blake3/c/blake3_portable.c" },
+}
+
 cc := "clang-cl"
 
 include_dirs := {
 	"src",
 	"src/lib",
+	"blake3/c",
 	"elf/include",
 	"platform/include",
 }
 
 compile_options := " /nologo /std:c11 /W4 /WX /Zi /Od"
+blake3_compile_options := " /DBLAKE3_NO_SSE2 /DBLAKE3_NO_SSE41 /DBLAKE3_NO_AVX2 /DBLAKE3_NO_AVX512 /DBLAKE3_USE_NEON=0"
 
 
 
@@ -55,7 +64,7 @@ compile_source := fun(options) {
 	pdb := f"build/obj/${options.name}.pdb"
 	task := {
 		name = f"compile ${options.name}",
-		command_line = f"${cc}${compile_options}${include_options} /c ${options.source} /Fo${object} /Fd${pdb}",
+		command_line = f"${cc}${compile_options}${options.extra_options}${include_options} /c ${options.source} /Fo${object} /Fd${pdb}",
 		inputs = { options.source },
 		outputs = { object },
 		include_dirs = include_dirs,
@@ -70,6 +79,16 @@ for source := core_sources[...] ? {
 	compiled := compile_source({
 		name = source.name,
 		source = source.path,
+		extra_options = "",
+	})
+	common_tasks:add(compiled.task)
+	common_objects:add(compiled.object)
+}
+for source := blake3_sources[...] ? {
+	compiled := compile_source({
+		name = source.name,
+		source = source.path,
+		extra_options = blake3_compile_options,
 	})
 	common_tasks:add(compiled.task)
 	common_objects:add(compiled.object)
@@ -93,6 +112,7 @@ build_platform := {
 bob_compiled := compile_source({
 	name = "bob_main",
 	source = "src/bob_main.c",
+	extra_options = "",
 })
 bob_dependencies := common_tasks:clone():extend({
 	bob_compiled.task,
@@ -118,7 +138,7 @@ build_bob := {
 }
 
 tests_compiled := compile_source({
-	name = "tests", source = "tests/tests.c",
+	name = "tests", source = "tests/tests.c", extra_options = "",
 })
 test_dependencies := common_tasks:clone():extend({
 	tests_compiled.task,

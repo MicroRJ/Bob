@@ -26,7 +26,7 @@ static int run_build(Script *script, Cmd_Options command_line_options)
 
    {
       Profile_Scope scope = profile_scope_begin("builder");
-      exit_code = bob_build(build.bob, (Bob_Build_Options){
+      exit_code = bob_build(build.bob, (Bob_Build_Params){
 			.worker_count = options.worker_count,
 			.explain = command_line_options.explain,
 		}) ? 0 : 1;

@@ -16,6 +16,7 @@ typedef enum Bob_Rebuild_Reason
 	BOB_REBUILD_OUTPUT_MISSING,
 	BOB_REBUILD_INPUT_MISSING,
 	BOB_REBUILD_STATE_MISSING,
+	BOB_REBUILD_STATE_CHANGED,
 	BOB_REBUILD_DEPENDENCY_MISSING,
 	BOB_REBUILD_DEPENDENCY_CHANGED,
 	BOB_REBUILD_INPUT_NEWER,
@@ -34,19 +35,22 @@ Bob_Rebuild_Decision;
 
 typedef struct Bob_Build_Task
 {
-	Bob_Task         task;
+	Bob_Task_Desc    task;
 	Compiler_Command compiler;
-	String_Array     inputs;
-	String_Array     outputs;
+	Bob_Path_Array   inputs;
+	Bob_Path_Array   outputs;
+	Bob_Path_Array   include_directories;
 	String           execution_command_line;
-	String           execution_directory;
-	String           dependency_file;
+	Bob_Path         execution_directory;
+	Bob_Path         dependency_file;
 	b32              tracks_dependencies;
 }
 Bob_Build_Task;
 
 typedef struct Bob_Build_Completion
 {
+	// TODO(RJ) remove bob from here!
+	Bob                        *bob;
 	Bob_Node                   *node;
 	Bob_Build_Task             *task;
 	Bob_Platform_Process_Result process;
@@ -59,28 +63,30 @@ Bob_Build_Completion;
 
 typedef struct Bob_Builder
 {
-	Build_State state;
-	Build_State updates;
-	Build_State removals;
-	Arena              state_arena;
-	Arena              update_arena;
-	b32                dependency_tracking;
-	b32                explain;
-	b32                state_changed;
-	b32                internal_error;
+	Bob           *bob;
+	Bob_Path       state_path;
+	Build_State    state;
+	Arena          state_arena;
+	Platform_Mutex state_mutex;
+	b32            state_mutex_initialized;
+	b32            dependency_tracking;
+	b32            state_changed;
+	b32            explain;
+	b32            internal_error;
 }
 Bob_Builder;
 
 static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_data);
 
-static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
+static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
 	const Bob_Node *node,
 	const Bob_Build_Task *build_task)
 {
-	const String_Array *inputs = &build_task->inputs;
-	const String_Array *outputs = &build_task->outputs;
+	const Bob_Path_Array *inputs = &build_task->inputs;
+	const Bob_Path_Array *outputs = &build_task->outputs;
 	u64 oldest_output = UINT64_MAX;
 	u64 newest_input = 0;
+	u64 primary_output_stamp = 0;
 	String oldest_output_path = {0};
 	String newest_input_path = {0};
 
@@ -90,52 +96,52 @@ static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
 	};
 	for (u32 i = 0; i < outputs->count; ++i) {
 		Bob_Platform_File_Info info;
-		if (!bob_platform_file_info(outputs->items[i], &info)) {
+		String path = bob_path_string(builder->bob, outputs->items[i]);
+		if (!bob_platform_file_info(path, &info)) {
 			return (Bob_Rebuild_Decision){
 				.reason = BOB_REBUILD_OUTPUT_MISSING,
-				.path = outputs->items[i],
+				.path = path,
 				.rebuild = true,
 			};
 		}
 		if ((u64)info.modified_unix_ms < oldest_output) {
 			oldest_output = (u64)info.modified_unix_ms;
-			oldest_output_path = outputs->items[i];
+			oldest_output_path = path;
 		}
+		if (i == 0) primary_output_stamp = (u64)info.modified_unix_ms;
 	}
 	for (u32 i = 0; i < inputs->count; ++i) {
 		Bob_Platform_File_Info info;
-		if (!bob_platform_file_info(inputs->items[i], &info)) {
+		String path = bob_path_string(builder->bob, inputs->items[i]);
+		if (!bob_platform_file_info(path, &info)) {
 			return (Bob_Rebuild_Decision){
 				.reason = BOB_REBUILD_INPUT_MISSING,
-				.path = inputs->items[i],
+				.path = path,
 				.rebuild = true,
 			};
 		}
 		if ((u64)info.modified_unix_ms > newest_input) {
 			newest_input = (u64)info.modified_unix_ms;
-			newest_input_path = inputs->items[i];
+			newest_input_path = path;
 		}
 	}
 
 	if (build_task->tracks_dependencies) {
-		const Build_State_Task *state_task = build_state_find(
-			&builder->state, outputs->items[0]);
-		if (!state_task) return (Bob_Rebuild_Decision){
-			.reason = BOB_REBUILD_STATE_MISSING,
-			.path = outputs->items[0],
-			.rebuild = true,
-		};
-		for (u32 i = 0; i < state_task->dependencies.count; ++i) {
+		Bob_Rebuild_Decision state_decision = {0};
+		Bob_Path_Array state_dependencies = {0};
+		platform_lock_mutex(&builder->state_mutex);
+		Bob_Path output_path = outputs->items[0];
+		String output = bob_path_string(builder->bob, output_path);
+		const Build_State_Task *state_task = build_state_find(&builder->state, output_path);
+		if (!state_task) state_decision = (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
+		else if (state_task->output_stamp != primary_output_stamp) state_decision = (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_CHANGED, .path = output, .rebuild = true };
+		else state_dependencies = state_task->dependencies;
+		platform_unlock_mutex(&builder->state_mutex);
+		if (state_decision.rebuild) return state_decision;
+		for (u32 i = 0; i < state_dependencies.count; ++i) {
 			Bob_Platform_File_Info info;
-			String dependency = build_state_path_table_get(&builder->state.paths,
-				state_task->dependencies.items[i]);
-			if (!dependency.data || !bob_platform_file_info(dependency, &info)) {
-				return (Bob_Rebuild_Decision){
-					.reason = BOB_REBUILD_DEPENDENCY_MISSING,
-					.path = dependency,
-					.rebuild = true,
-				};
-			}
+			String dependency = bob_path_string(builder->bob, state_dependencies.items[i]);
+			if (!dependency.data || !bob_platform_file_info(dependency, &info)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_DEPENDENCY_MISSING, .path = dependency, .rebuild = true };
 			if ((u64)info.modified_unix_ms > newest_input) {
 				newest_input = (u64)info.modified_unix_ms;
 				newest_input_path = dependency;
@@ -166,70 +172,19 @@ static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
 	};
 }
 
-static b32 path_is_absolute(String path)
-{
-	return path.size > 0 && (path.data[0] == '/' || path.data[0] == '\\' ||
-		(path.size > 1 && path.data[1] == ':'));
-}
-
-static b32 resolve_task_path(Arena *arena, String directory, String path,
-	String *result)
-{
-	Scratch scratch;
-	void *start;
-	String joined;
-	b32 succeeded;
-	if (!directory.data) {
-		*result = path;
-		return true;
-	}
-	if (path_is_absolute(path)) {
-		return bob_platform_absolute_path(arena, path, result);
-	}
-	scratch = begin_different_scratch(arena);
-	start = arena_top(scratch.arena);
-	arena_append_str(scratch.arena, directory);
-	if (directory.size && directory.data[directory.size - 1] != '/' &&
-		directory.data[directory.size - 1] != '\\') {
-		arena_append_char(scratch.arena, '/');
-	}
-	arena_append_str(scratch.arena, path);
-	joined = arena_string_from(scratch.arena, start);
-	arena_finalize_string(scratch.arena, joined);
-	succeeded = bob_platform_absolute_path(arena, joined, result);
-	end_scratch(scratch);
-	return succeeded;
-}
-
-static b32 resolve_dependency_paths(Arena *arena, String directory,
-	String_Array *dependencies)
-{
-	String_Array resolved = {0};
-	if (!directory.data || dependencies->count == 0) return true;
-	resolved.items = arena_push_zero_aligned(arena,
-		(u64)dependencies->count * sizeof(*resolved.items), _Alignof(String));
-	if (!resolved.items) return false;
-	for (u32 i = 0; i < dependencies->count; ++i) {
-		if (!resolve_task_path(arena, directory, dependencies->items[i],
-			&resolved.items[i])) return false;
-		++resolved.count;
-	}
-	*dependencies = resolved;
-	return true;
-}
-
-static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task,
-	Bob_Build_Completion *completion)
+static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task, Bob_Build_Completion *completion)
 {
 	Scratch scratch = begin_different_scratch(context->arena);
+	String dependency_file = bob_path_string(context->bob, task->dependency_file);
+	String execution_directory = bob_path_string(context->bob, task->execution_directory);
 	completion->dependency_tracking = task->tracks_dependencies;
 	if (completion->dependency_tracking) {
-		platform_remove_file(task->dependency_file.data);
+		platform_remove_file(dependency_file.data);
 	}
 
 	bob_platform_run_command(task->execution_command_line, context->arena,
 		(Bob_Platform_Process_Options){
-			.working_directory = task->execution_directory,
+			.working_directory = execution_directory,
 			.capture_stderr = true,
 		}, &completion->process);
 	if (completion->dependency_tracking) {
@@ -237,11 +192,9 @@ static void run_command(Bob_Node_Context *context, const Bob_Build_Task *task,
 		b32 process_succeeded = completion->process.error_code == 0 &&
 			completion->process.exit_code == 0;
 		completion->dependency_state_valid = process_succeeded &&
-			bob_platform_read_entire_file(scratch.arena, task->dependency_file, &contents) &&
-			make_depfile_parse(context->arena, contents, &completion->dependencies) &&
-			resolve_dependency_paths(context->arena, task->execution_directory,
-				&completion->dependencies);
-		platform_remove_file(task->dependency_file.data);
+			bob_platform_read_entire_file(scratch.arena, dependency_file, &contents) &&
+			make_depfile_parse(context->arena, contents, &completion->dependencies);
+		platform_remove_file(dependency_file.data);
 	}
 	end_scratch(scratch);
 }
@@ -253,9 +206,9 @@ static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_d
 	Bob_Build_Completion *completion;
 	b32 succeeded;
 
-	completion = arena_push_zero_aligned(context->arena, sizeof(*completion),
-		_Alignof(Bob_Build_Completion));
+	completion = arena_push_zero_aligned(context->arena, sizeof(*completion), _Alignof(Bob_Build_Completion));
 	if (!completion || !builder || !task) return (Bob_Node_Result){0};
+	completion->bob = context->bob;
 	completion->node = context->node;
 	completion->task = task;
 	{
@@ -297,6 +250,9 @@ static void report_explanation(const Bob_Build_Completion *completion)
 	case BOB_REBUILD_STATE_MISSING:
 		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because dependency state is missing: %s", name, decision->path.data);
 		break;
+	case BOB_REBUILD_STATE_CHANGED:
+		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because recorded state does not match the output: %s", name, decision->path.data);
+		break;
 	case BOB_REBUILD_DEPENDENCY_MISSING:
 		logger_log(LOG_LEVEL_INFO, "explain", "%s: rebuilding because recorded dependency is missing: %s", name, decision->path.data);
 		break;
@@ -314,7 +270,7 @@ static void report_explanation(const Bob_Build_Completion *completion)
 static void report_completion(const Bob_Build_Completion *completion)
 {
 	const Bob_Build_Task *build_task = completion->task;
-	const Bob_Task *task = &build_task->task;
+	const Bob_Task_Desc *task = &build_task->task;
 	String command_line = task->command_line;
 	b32 succeeded = !completion->decision.rebuild ||
 		(completion->process.error_code == 0 && completion->process.exit_code == 0);
@@ -339,7 +295,6 @@ static void report_completion(const Bob_Build_Completion *completion)
 	}
 	if (completion->process.error_code != 0) {
 		Scratch scratch = begin_scratch();
-		String working_directory;
 		logger_log(LOG_LEVEL_ERROR, bob_task_name(completion->node), "%s",
 			completion->process.launched ? "process error" : "failed to start process");
 		logger_log_at(1, LOG_LEVEL_ERROR, "command", "%s", command_line.data);
@@ -360,13 +315,8 @@ static void report_completion(const Bob_Build_Completion *completion)
 				"found" : "not found in current directory or PATH");
 		}
 		else logger_log(LOG_LEVEL_ERROR, "executable", "unable to parse from command");
-		if (build_task->execution_directory.data) {
-			logger_log(LOG_LEVEL_ERROR, "working-directory", "%s",
-				build_task->execution_directory.data);
-		}
-		else if (bob_platform_current_directory(scratch.arena, &working_directory)) {
-			logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", working_directory.data);
-		}
+		String execution_directory = bob_path_string(completion->bob, build_task->execution_directory);
+		logger_log(LOG_LEVEL_ERROR, "working-directory", "%s", execution_directory.data);
 		end_scratch(scratch);
 	}
 	else if (completion->process.exit_code != 0) {
@@ -376,23 +326,52 @@ static void report_completion(const Bob_Build_Completion *completion)
 	}
 }
 
+static b32 resolve_dependency_paths(Bob *bob, Arena *arena, Bob_Path directory, String_Array source, Bob_Path_Array *result)
+{
+	*result = (Bob_Path_Array){0};
+	if (source.count == 0) return true;
+	result->items = arena_push_zero_aligned(arena, (u64)source.count * sizeof(*result->items), _Alignof(Bob_Path));
+	if (!result->items) return false;
+	for (u32 i = 0; i < source.count; ++i) {
+		if (!bob_path_resolve(bob, directory, source.items[i], result->items + result->count)) return false;
+		++result->count;
+	}
+	return true;
+}
+
 static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Completion *completion, b32 succeeded)
 {
-	String output;
-	if (!completion->dependency_tracking) return;
-	output = completion->task->outputs.items[0];
-	builder->state_changed = true;
+	Bob_Path output_path;
+	String state_path;
+	if (!completion->dependency_tracking || builder->internal_error) return;
+	output_path = completion->task->outputs.items[0];
+	state_path = bob_path_string(builder->bob, builder->state_path);
+	platform_lock_mutex(&builder->state_mutex);
 	if (!succeeded || !completion->dependency_state_valid) {
-		if (!build_state_set(&builder->update_arena, &builder->removals,
-			output, (String_Array){0})) builder->internal_error = true;
+		if (!build_state_append_remove(state_path, &builder->state, output_path)) builder->internal_error = true;
+		else builder->state_changed = true;
+		platform_unlock_mutex(&builder->state_mutex);
 		if (succeeded && !completion->dependency_state_valid) {
 			log_warning("could not read compiler dependencies for %s",
 				bob_task_name(completion->node));
 		}
 		return;
 	}
-	if (!build_state_set(&builder->update_arena, &builder->updates,
-		output, completion->dependencies)) builder->internal_error = true;
+	Scratch scratch = begin_scratch();
+	Bob_Path_Array dependencies;
+	if (!resolve_dependency_paths(builder->bob, scratch.arena, completion->task->execution_directory, completion->dependencies, &dependencies)) {
+		builder->internal_error = true;
+		platform_unlock_mutex(&builder->state_mutex);
+		end_scratch(scratch);
+		return;
+	}
+	Bob_Platform_File_Info info;
+	String output = bob_path_string(builder->bob, output_path);
+	u64 output_stamp = bob_platform_file_info(output, &info) ? (u64)info.modified_unix_ms : 0;
+	if (!build_state_append_set(&builder->state_arena, state_path, builder->bob, &builder->state, output_path, dependencies, output_stamp)) builder->internal_error = true;
+	else builder->state_changed = true;
+	platform_unlock_mutex(&builder->state_mutex);
+	end_scratch(scratch);
 }
 
 static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *user_data)
@@ -414,52 +393,7 @@ static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *u
 	collect_dependency_state(builder, completion, result.succeeded);
 }
 
-static b32 merge_dependency_state(Bob_Builder *builder)
-{
-	for (u32 i = 0; i < builder->removals.task_count; ++i) {
-		String output = build_state_path_table_get(&builder->removals.paths,
-			builder->removals.tasks[i].output);
-		if (!output.data) return false;
-		build_state_remove(&builder->state, output);
-	}
-	for (u32 i = 0; i < builder->updates.task_count; ++i) {
-		const Build_State_Task *update = builder->updates.tasks + i;
-		Scratch scratch = begin_scratch();
-		String output = build_state_path_table_get(&builder->updates.paths,
-			update->output);
-		String_Array dependencies = {0};
-		if (!output.data) {
-			end_scratch(scratch);
-			return false;
-		}
-		if (update->dependencies.count) {
-			dependencies.items = arena_push_zero_aligned(scratch.arena,
-				(u64)update->dependencies.count * sizeof(*dependencies.items),
-				_Alignof(String));
-			if (!dependencies.items) {
-				end_scratch(scratch);
-				return false;
-			}
-		}
-		for (u32 dependency = 0; dependency < update->dependencies.count;
-			++dependency) {
-			String path = build_state_path_table_get(&builder->updates.paths,
-				update->dependencies.items[dependency]);
-			if (!path.data) {
-				end_scratch(scratch);
-				return false;
-			}
-			dependencies.items[dependencies.count++] = path;
-		}
-		b32 updated = build_state_set(&builder->state_arena,
-			&builder->state, output, dependencies);
-		end_scratch(scratch);
-		if (!updated) return false;
-	}
-	return true;
-}
-
-static b32 valid_task(const Bob_Task *task)
+static b32 valid_task(const Bob_Task_Desc *task)
 {
 	return task && task->command_line.data &&
 		(!task->inputs.count || task->inputs.items) &&
@@ -467,13 +401,15 @@ static b32 valid_task(const Bob_Task *task)
 		(!task->include_directories.count || task->include_directories.items);
 }
 
-b32 bob_build(Bob *bob, Bob_Build_Options options)
+b32 bob_build(Bob *bob, Bob_Build_Params options)
 {
 	Bob_Builder builder = {0};
 	Build_State_Load_Result load_result = BUILD_STATE_LOAD_MISSING;
 	b32 result;
 
 	if (!bob || options.worker_count == 0) return false;
+	builder.bob = bob;
+	if (!bob_path_resolve(bob, bob_build_root(bob), STRING_LITERAL(BOB_BUILD_STATE_PATH), &builder.state_path)) return false;
 	builder.explain = options.explain;
 	for (u32 i = 0; i < bob_node_count(bob); ++i) {
 		Bob_Node *node = bob_node_at(bob, i);
@@ -486,45 +422,49 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 		}
 	}
 	builder.state_arena = arena_create(MEGABYTES(64));
-	builder.update_arena = arena_create(MEGABYTES(64));
 	arena_set_name(&builder.state_arena, "build state");
-	arena_set_name(&builder.update_arena, "build state updates");
-	if (!builder.state_arena.data || !builder.update_arena.data) {
+	if (!builder.state_arena.data) {
 		result = false;
 		goto cleanup;
 	}
+	platform_init_mutex(&builder.state_mutex);
+	builder.state_mutex_initialized = true;
 	if (builder.dependency_tracking) {
-		load_result = build_state_load(&builder.state_arena,
-			STRING_LITERAL(BOB_BUILD_STATE_PATH), &builder.state);
+		String state_path = bob_path_string(bob, builder.state_path);
+		load_result = build_state_load(&builder.state_arena, bob, state_path, &builder.state);
 		if (load_result == BUILD_STATE_LOAD_ERROR) {
 			log_warning("could not load Bob build state");
+			result = false;
+			goto cleanup;
 		}
 		else if (load_result == BUILD_STATE_LOAD_INVALID) {
 			log_warning("ignoring invalid Bob build state");
 			builder.state = (Build_State){0};
-			builder.state_changed = true;
 		}
-		else if (load_result == BUILD_STATE_LOAD_RECOVERED) {
-			builder.state_changed = true;
+		if (load_result != BUILD_STATE_LOAD_OK) {
+			if (!build_state_save(state_path, bob, &builder.state)) {
+				log_warning("could not prepare Bob build state");
+				result = false;
+				goto cleanup;
+			}
 		}
 	}
 
-	result = bob_execute(bob, (Bob_Execute_Options){
+	result = bob_execute(bob, (Bob_Exec_Params){
 		.worker_count = options.worker_count,
 		.user_data = &builder,
 		.completed = build_task_completed,
 	});
-	if (builder.internal_error || !merge_dependency_state(&builder)) result = false;
-	if (builder.dependency_tracking && builder.state_changed) {
-		if (!build_state_save(STRING_LITERAL(BOB_BUILD_STATE_PATH),
-			&builder.state)) {
-			log_warning("could not save Bob build state");
+	if (builder.internal_error) result = false;
+	if (result && builder.dependency_tracking && builder.state_changed) {
+		if (!build_state_save(bob_path_string(bob, builder.state_path), bob, &builder.state)) {
+			log_warning("could not compact Bob build state");
 			result = false;
 		}
 	}
 
 cleanup:
-	arena_destroy(&builder.update_arena);
+	if (builder.state_mutex_initialized) platform_destroy_mutex(&builder.state_mutex);
 	arena_destroy(&builder.state_arena);
 	return result;
 }
@@ -540,8 +480,7 @@ static b32 copy_string_array(Bob *bob, String_Array source, String_Array *result
 {
 	if (source.count == 0) return true;
 	if (!source.items) return false;
-	result->items = bob_allocate(bob,
-		(u64)source.count * sizeof(*result->items), _Alignof(String));
+	result->items = bob_allocate(bob, (u64)source.count * sizeof(*result->items), _Alignof(String));
 	if (!result->items) return false;
 	for (u32 i = 0; i < source.count; ++i) {
 		if (!source.items[i].data) return false;
@@ -552,34 +491,23 @@ static b32 copy_string_array(Bob *bob, String_Array source, String_Array *result
 	return true;
 }
 
-static b32 resolve_task_paths(Bob *bob, Arena *scratch, String directory,
-	String_Array source, String_Array *result)
+static b32 resolve_task_paths(Bob *bob, Bob_Path directory, String_Array source, Bob_Path_Array *result)
 {
-	if (!directory.data) {
-		*result = source;
-		return true;
-	}
-	*result = (String_Array){0};
+	*result = (Bob_Path_Array){0};
 	if (source.count == 0) return true;
-	result->items = bob_allocate(bob,
-		(u64)source.count * sizeof(*result->items), _Alignof(String));
+	result->items = bob_allocate(bob, (u64)source.count * sizeof(*result->items), _Alignof(Bob_Path));
 	if (!result->items) return false;
 	for (u32 i = 0; i < source.count; ++i) {
-		String resolved;
-		if (!resolve_task_path(scratch, directory, source.items[i], &resolved)) {
-			return false;
-		}
-		result->items[i] = bob_copy_string(bob, resolved);
-		if (!result->items[i].data) return false;
+		if (!bob_path_resolve(bob, directory, source.items[i], result->items + i)) return false;
 		++result->count;
 	}
 	return true;
 }
 
-static Bob_Build_Task *build_task_create(Bob *bob, Bob_Task task, String fallback_name)
+static Bob_Build_Task *build_task_create(Bob *bob, Bob_Task_Desc task, String fallback_name)
 {
 	Bob_Build_Task *copy = bob_allocate(bob, sizeof(*copy), _Alignof(Bob_Build_Task));
-	Bob_Task *description;
+	Bob_Task_Desc *description;
 	Scratch scratch;
 	Compiler_Command compiler;
 	b32 valid = false;
@@ -598,19 +526,11 @@ static Bob_Build_Task *build_task_create(Bob *bob, Bob_Task task, String fallbac
 			&description->include_directories)) return NULL;
 
 	scratch = begin_scratch();
-	copy->inputs = description->inputs;
-	copy->outputs = description->outputs;
-	if (description->working_directory.data) {
-		String absolute_directory;
-		if (!bob_platform_absolute_path(scratch.arena,
-			description->working_directory, &absolute_directory)) goto done;
-		copy->execution_directory = bob_copy_string(bob, absolute_directory);
-		if (!copy->execution_directory.data ||
-			!resolve_task_paths(bob, scratch.arena, copy->execution_directory,
-				description->inputs, &copy->inputs) ||
-			!resolve_task_paths(bob, scratch.arena, copy->execution_directory,
-				description->outputs, &copy->outputs)) goto done;
-	}
+	copy->execution_directory = bob_build_root(bob);
+	if (description->working_directory.data && !bob_path_resolve(bob, copy->execution_directory, description->working_directory, &copy->execution_directory)) goto done;
+	if (!resolve_task_paths(bob, copy->execution_directory, description->inputs, &copy->inputs) ||
+		!resolve_task_paths(bob, copy->execution_directory, description->outputs, &copy->outputs) ||
+		!resolve_task_paths(bob, copy->execution_directory, description->include_directories, &copy->include_directories)) goto done;
 	if (!compiler_command_parse(scratch.arena, description->command_line, &compiler)) {
 		goto done;
 	}
@@ -625,13 +545,12 @@ static Bob_Build_Task *build_task_create(Bob *bob, Bob_Task task, String fallbac
 	if (copy->tracks_dependencies) {
 		String augmented;
 		void *start = arena_top(scratch.arena);
-		arena_append_str(scratch.arena, copy->outputs.items[0]);
+		arena_append_str(scratch.arena, bob_path_string(bob, copy->outputs.items[0]));
 		arena_append_text(scratch.arena, ".d.tmp");
-		copy->dependency_file = bob_copy_string(bob,
-			arena_string_from(scratch.arena, start));
-		if (!copy->dependency_file.data ||
+		String dependency_file = arena_string_from(scratch.arena, start);
+		if (!bob_path_resolve(bob, copy->execution_directory, dependency_file, &copy->dependency_file) ||
 			!compiler_command_add_dependencies(scratch.arena, &copy->compiler,
-				description->command_line, copy->dependency_file, &augmented)) goto done;
+				description->command_line, bob_path_string(bob, copy->dependency_file), &augmented)) goto done;
 		copy->execution_command_line = bob_copy_string(bob, augmented);
 		if (!copy->execution_command_line.data) goto done;
 	}
@@ -642,21 +561,21 @@ done:
 	return valid ? copy : NULL;
 }
 
-Bob_Error bob_add_task(Bob *bob, Bob_Task task, Bob_Node **node_out)
+Bob_Error bob_add_task(Bob *bob, Bob_Task_Desc desc, Bob_Node **node_out)
 {
-	Bob_Build_Task *copy;
-	if (!bob || !task.name.data || !node_out) return BOB_ERROR_INVALID_TASK;
+	Bob_Build_Task *task;
+	if (!bob || !desc.name.data || !node_out) return BOB_ERROR_INVALID_TASK;
 	if (bob_is_prepared(bob)) return BOB_ERROR_ALREADY_PREPARED;
-	copy = build_task_create(bob, task, (String){0});
-	if (!copy) return BOB_ERROR_OUT_OF_MEMORY;
-	return bob_add_node(bob, (Bob_Node_Description){
-		.name = copy->task.name,
+	task = build_task_create(bob, desc, (String){0});
+	if (!task) return BOB_ERROR_OUT_OF_MEMORY;
+	return bob_add_node(bob, (Bob_Node_Desc){
+		.name = task->task.name,
 		.function = build_task_action,
-		.user_data = copy,
+		.user_data = task,
 	}, node_out);
 }
 
-Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task task)
+Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task_Desc task)
 {
 	Bob_Build_Task *copy;
 	Bob_Error result;
@@ -672,7 +591,7 @@ found:
 	fallback_name = string_from_cstring(bob_node_name(node));
 	copy = build_task_create(bob, task, fallback_name);
 	if (!copy) return BOB_ERROR_OUT_OF_MEMORY;
-	result = bob_set_node(bob, node, (Bob_Node_Description){
+	result = bob_set_node(bob, node, (Bob_Node_Desc){
 		.name = copy->task.name,
 		.function = build_task_action,
 		.user_data = copy,
@@ -690,12 +609,12 @@ const char *bob_task_name(const Bob_Node *node)
 	return bob_node_name(node);
 }
 
-Bob_Task_State bob_task_state(const Bob_Node *node)
+Bob_Node_Status bob_task_state(const Bob_Node *node)
 {
 	return bob_node_state(node);
 }
 
-const Bob_Task *bob_get_task(const Bob_Node *node)
+const Bob_Task_Desc *bob_get_task_desc(const Bob_Node *node)
 {
 	const Bob_Build_Task *task;
 	if (!node || bob_node_function(node) != build_task_action) return NULL;

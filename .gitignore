@@ -4,6 +4,9 @@ build/
 # Bob build state
 .bob/
 
+# Local tooling
+.codex-staging/
+
 # Visual Studio
 .vs/
 *.suo
