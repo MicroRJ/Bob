@@ -1,5 +1,6 @@
 #include "bob_build.h"
 #include "build_state.h"
+#include "build_state_binary.h"
 #include "script.h"
 #include "compiler_command.h"
 #include "make_depfile.h"
@@ -259,6 +260,282 @@ static b32 test_build_state_files(void)
 	arena_destroy(&io_arena);
 	arena_destroy(&state_arena);
 	return true;
+}
+
+static b32 test_build_state_path_table(void)
+{
+	Arena arena = arena_create(MEGABYTES(2));
+	Build_State_Path_Table table = {0};
+	Build_State_Path_Id alpha;
+	Build_State_Path_Id beta;
+	Build_State_Path_Id first_collision;
+	Build_State_Path_Id second_collision;
+	char collision_paths[16][64] = {0};
+	b32 occupied_buckets[16] = {0};
+	char first_path[64] = {0};
+	char second_path[64] = {0};
+
+	arena_set_name(&arena, "build state path table test");
+	CHECK(arena.data != NULL);
+	CHECK(build_state_path_table_find(&table, STRING_LITERAL("alpha")) ==
+		BUILD_STATE_PATH_ID_NONE);
+	CHECK(build_state_path_table_intern(&arena, &table, (String){0}) ==
+		BUILD_STATE_PATH_ID_NONE);
+
+	alpha = build_state_path_table_intern(&arena, &table, STRING_LITERAL("alpha"));
+	beta = build_state_path_table_intern(&arena, &table, STRING_LITERAL("beta"));
+	CHECK(alpha == 1 && beta == 2);
+	CHECK(build_state_path_table_intern(&arena, &table, STRING_LITERAL("alpha")) == alpha);
+	CHECK(table.path_count == 2 && table.slot_count == 2);
+	CHECK(string_equal(build_state_path_table_get(&table, alpha), STRING_LITERAL("alpha")));
+	CHECK(!build_state_path_table_get(&table, BUILD_STATE_PATH_ID_NONE).data);
+	CHECK(!build_state_path_table_get(&table, 3).data);
+
+	for (u32 i = 0; i < 1000 && !second_path[0]; ++i) {
+		char candidate[64];
+		int length = snprintf(candidate, sizeof(candidate), "collision/%u.h", i);
+		u32 bucket;
+		CHECK(length > 0 && (size_t)length < sizeof(candidate));
+		bucket = (u32)build_state_path_hash(string_from_data(candidate, length)) & 15;
+		if (occupied_buckets[bucket]) {
+			memcpy(first_path, collision_paths[bucket],
+				strlen(collision_paths[bucket]) + 1);
+			memcpy(second_path, candidate, (size_t)length + 1);
+		}
+		else {
+			occupied_buckets[bucket] = true;
+			memcpy(collision_paths[bucket], candidate, (size_t)length + 1);
+		}
+	}
+	CHECK(first_path[0] && second_path[0]);
+	CHECK((build_state_path_hash(string_from_cstring(first_path)) & 15) ==
+		(build_state_path_hash(string_from_cstring(second_path)) & 15));
+	first_collision = build_state_path_table_intern(&arena, &table,
+		string_from_cstring(first_path));
+	second_collision = build_state_path_table_intern(&arena, &table,
+		string_from_cstring(second_path));
+	CHECK(first_collision != BUILD_STATE_PATH_ID_NONE);
+	CHECK(second_collision != BUILD_STATE_PATH_ID_NONE);
+	CHECK(first_collision != second_collision);
+	CHECK(build_state_path_table_find(&table, string_from_cstring(first_path)) ==
+		first_collision);
+	CHECK(build_state_path_table_find(&table, string_from_cstring(second_path)) ==
+		second_collision);
+
+	for (u32 i = 0; i < 1024; ++i) {
+		char path[64];
+		int length = snprintf(path, sizeof(path), "growth/path_%04u.h", i);
+		CHECK(length > 0 && (size_t)length < sizeof(path));
+		CHECK(build_state_path_table_intern(&arena, &table,
+			string_from_data(path, length)) != BUILD_STATE_PATH_ID_NONE);
+	}
+	CHECK(table.path_count == 1028);
+	CHECK(table.slot_count == table.path_count);
+	CHECK(table.path_capacity >= table.path_count);
+	CHECK(table.slot_capacity >= table.slot_count);
+	CHECK((table.slot_capacity & (table.slot_capacity - 1)) == 0);
+	CHECK((u64)table.slot_count * 4 <= (u64)table.slot_capacity * 3);
+	CHECK(build_state_path_table_find(&table, STRING_LITERAL("alpha")) == alpha);
+	CHECK(string_equal(build_state_path_table_get(&table, alpha), STRING_LITERAL("alpha")));
+	for (u32 i = 0; i < 1024; ++i) {
+		char path[64];
+		int length = snprintf(path, sizeof(path), "growth/path_%04u.h", i);
+		Build_State_Path_Id id;
+		CHECK(length > 0 && (size_t)length < sizeof(path));
+		id = build_state_path_table_find(&table, string_from_data(path, length));
+		CHECK(id != BUILD_STATE_PATH_ID_NONE);
+		CHECK(string_equal(build_state_path_table_get(&table, id),
+			string_from_data(path, length)));
+	}
+
+	arena_destroy(&arena);
+	return true;
+}
+
+static b32 test_build_state_binary_tasks(void)
+{
+	Arena arena = arena_create(KILOBYTES(256));
+	Build_State_Binary state = {0};
+	String first_dependencies[] = {
+		STRING_LITERAL("src/main.c"),
+		STRING_LITERAL("include/common.h"),
+	};
+	String replacement_dependencies[] = {
+		STRING_LITERAL("include/common.h"),
+		STRING_LITERAL("include/next.h"),
+	};
+	Build_State_Binary_Task *task;
+	Build_State_Path_Id output_id;
+
+	arena_set_name(&arena, "binary build state task test");
+	CHECK(arena.data != NULL);
+	CHECK(!build_state_binary_find(&state, STRING_LITERAL("build/main.o")));
+	CHECK(!build_state_binary_set(&arena, &state, (String){0},
+		STRING_ARRAY_FROM(first_dependencies)));
+	CHECK(!build_state_binary_set(&arena, &state, STRING_LITERAL("build/main.o"),
+		(String_Array){ .count = 1 }));
+	CHECK(state.task_count == 0 && state.paths.path_count == 0);
+
+	CHECK(build_state_binary_set(&arena, &state, STRING_LITERAL("build/main.o"),
+		STRING_ARRAY_FROM(first_dependencies)));
+	CHECK(state.task_count == 1);
+	CHECK(state.paths.path_count == 3);
+	task = build_state_binary_find(&state, STRING_LITERAL("build/main.o"));
+	CHECK(task != NULL);
+	output_id = task->output;
+	CHECK(string_equal(build_state_path_table_get(&state.paths, task->output),
+		STRING_LITERAL("build/main.o")));
+	CHECK(task->dependencies.count == 2);
+	CHECK(string_equal(build_state_path_table_get(&state.paths,
+		task->dependencies.items[0]), STRING_LITERAL("src/main.c")));
+	CHECK(string_equal(build_state_path_table_get(&state.paths,
+		task->dependencies.items[1]), STRING_LITERAL("include/common.h")));
+
+	CHECK(build_state_binary_set(&arena, &state, STRING_LITERAL("build/main.o"),
+		STRING_ARRAY_FROM(replacement_dependencies)));
+	CHECK(state.task_count == 1);
+	CHECK(state.paths.path_count == 4);
+	task = build_state_binary_find(&state, STRING_LITERAL("build/main.o"));
+	CHECK(task != NULL && task->output == output_id);
+	CHECK(task->dependencies.count == 2);
+	CHECK(string_equal(build_state_path_table_get(&state.paths,
+		task->dependencies.items[0]), STRING_LITERAL("include/common.h")));
+	CHECK(string_equal(build_state_path_table_get(&state.paths,
+		task->dependencies.items[1]), STRING_LITERAL("include/next.h")));
+
+	CHECK(!build_state_binary_remove(&state, STRING_LITERAL("build/missing.o")));
+	CHECK(build_state_binary_set(&arena, &state, STRING_LITERAL("build/second.o"),
+		(String_Array){0}));
+	CHECK(state.task_count == 2);
+	CHECK(build_state_binary_remove(&state, STRING_LITERAL("build/main.o")));
+	CHECK(state.task_count == 1);
+	CHECK(!build_state_binary_find(&state, STRING_LITERAL("build/main.o")));
+	CHECK(build_state_binary_find(&state, STRING_LITERAL("build/second.o")) != NULL);
+	CHECK(state.paths.path_count == 5);
+
+	arena_destroy(&arena);
+	return true;
+}
+
+static b32 test_build_state_stress(void)
+{
+	enum { TASK_COUNT = 1886, DEPENDENCY_COUNT = 300 };
+	Arena source_arena = arena_create(MEGABYTES(1));
+	Arena update_arena = arena_create(MEGABYTES(256));
+	Arena state_arena = arena_create(MEGABYTES(256));
+	Arena serialization_arena = arena_create(MEGABYTES(256));
+	Arena interned_arena = arena_create(MEGABYTES(16));
+	Build_State updates = {0};
+	Build_State state = {0};
+	Build_State_Binary interned = {0};
+	String_Array dependencies = {0};
+	String source = {0};
+	u64 frequency = platform_counter_frequency();
+	u64 collection_started;
+	u64 collection_finished;
+	u64 merge_finished;
+	u64 serialization_finished;
+	u64 interning_finished;
+	b32 result = false;
+
+	arena_set_name(&source_arena, "build state stress source");
+	arena_set_name(&update_arena, "build state stress updates");
+	arena_set_name(&state_arena, "build state stress merged state");
+	arena_set_name(&serialization_arena, "build state stress serialization");
+	arena_set_name(&interned_arena, "build state stress interned state");
+
+#define CHECK_STRESS(condition)                                                 \
+	do {                                                                         \
+		if (!(condition)) {                                                        \
+			printf("  FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition);          \
+			goto cleanup;                                                           \
+		}                                                                          \
+	} while (0)
+
+	CHECK_STRESS(source_arena.data && update_arena.data && state_arena.data &&
+		serialization_arena.data && interned_arena.data);
+	dependencies.items = arena_push_zero_aligned(&source_arena,
+		DEPENDENCY_COUNT * sizeof(*dependencies.items), _Alignof(String));
+	CHECK_STRESS(dependencies.items != NULL);
+	for (u32 i = 0; i < DEPENDENCY_COUNT; ++i) {
+		char path[256];
+		int length = snprintf(path, sizeof(path),
+			"G:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\include\\synthetic\\header_%04u.h",
+			i);
+		CHECK_STRESS(length > 0 && (size_t)length < sizeof(path));
+		dependencies.items[i] = arena_push_string_copy(&source_arena,
+			string_from_data(path, (u64)length));
+		CHECK_STRESS(dependencies.items[i].data != NULL);
+		++dependencies.count;
+	}
+
+	collection_started = platform_counter();
+	for (u32 i = 0; i < TASK_COUNT; ++i) {
+		char output[128];
+		int length = snprintf(output, sizeof(output),
+			"build\\godot\\synthetic_%04u.windows.template_debug.x86_64.o", i);
+		CHECK_STRESS(length > 0 && (size_t)length < sizeof(output));
+		CHECK_STRESS(build_state_set(&update_arena, &updates,
+			string_from_data(output, (u64)length), dependencies));
+	}
+	collection_finished = platform_counter();
+	CHECK_STRESS(updates.count == TASK_COUNT);
+	CHECK_STRESS(update_arena.used > MEGABYTES(64));
+
+	for (u32 i = 0; i < updates.count; ++i) {
+		CHECK_STRESS(build_state_set(&state_arena, &state,
+			updates.tasks[i].output, updates.tasks[i].dependencies));
+	}
+	merge_finished = platform_counter();
+	CHECK_STRESS(state.count == TASK_COUNT);
+	CHECK_STRESS(state_arena.used > MEGABYTES(64));
+	CHECK_STRESS(build_state_write(&serialization_arena, &state, &source));
+	serialization_finished = platform_counter();
+	CHECK_STRESS(source.size > MEGABYTES(64));
+	for (u32 i = 0; i < TASK_COUNT; ++i) {
+		char output[128];
+		int length = snprintf(output, sizeof(output),
+			"build\\godot\\synthetic_%04u.windows.template_debug.x86_64.o", i);
+		CHECK_STRESS(length > 0 && (size_t)length < sizeof(output));
+		CHECK_STRESS(build_state_binary_set(&interned_arena, &interned,
+			string_from_data(output, (u64)length), dependencies));
+	}
+	interning_finished = platform_counter();
+	CHECK_STRESS(interned.task_count == TASK_COUNT);
+	CHECK_STRESS(interned.paths.path_count == TASK_COUNT + DEPENDENCY_COUNT);
+
+	printf("\n  build-state stress measurements\n");
+	printf("    tasks: %u\n", (u32)TASK_COUNT);
+	printf("    dependency references: %u\n",
+		(u32)(TASK_COUNT * DEPENDENCY_COUNT));
+	printf("    unique dependency paths: %u\n", (u32)DEPENDENCY_COUNT);
+	printf("    path reuse: %.1fx\n", (double)TASK_COUNT);
+	printf("    collected updates: %.2f MiB (%.2f s)\n",
+		(double)update_arena.used / (double)MEGABYTES(1),
+		(double)(collection_finished - collection_started) / (double)frequency);
+	printf("    merged state: %.2f MiB (%.2f s)\n",
+		(double)state_arena.used / (double)MEGABYTES(1),
+		(double)(merge_finished - collection_finished) / (double)frequency);
+	printf("    serialized text: %.2f MiB (%.2f s)\n",
+		(double)source.size / (double)MEGABYTES(1),
+		(double)(serialization_finished - merge_finished) / (double)frequency);
+	printf("    simultaneous state memory: %.2f MiB\n",
+		(double)(update_arena.used + state_arena.used + serialization_arena.used) /
+			(double)MEGABYTES(1));
+	printf("    interned binary model: %.2f MiB (%.2f s)\n",
+		(double)interned_arena.used / (double)MEGABYTES(1),
+		(double)(interning_finished - serialization_finished) / (double)frequency);
+	printf("    unique interned paths: %u\n", interned.paths.path_count);
+	result = true;
+
+cleanup:
+	arena_destroy(&interned_arena);
+	arena_destroy(&serialization_arena);
+	arena_destroy(&state_arena);
+	arena_destroy(&update_arena);
+	arena_destroy(&source_arena);
+#undef CHECK_STRESS
+	return result;
 }
 
 static b32 test_make_depfile(void)
@@ -1378,6 +1655,15 @@ static b32 test_compiler_command(void)
 	CHECK(!compiler_command_add_dependencies(&arena, &command,
 		STRING_LITERAL("gcc -MMD -c source.c"),
 		STRING_LITERAL("object.d"), &augmented));
+	CHECK(compiler_command_parse(&arena,
+		STRING_LITERAL("x86_64-w64-mingw32-gcc -c source.c -o object.o"), &command));
+	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
+	CHECK(compiler_command_can_add_make_dependencies(&command));
+	CHECK(compiler_command_parse(&arena,
+		STRING_LITERAL("C:\\toolchain\\aarch64-linux-gnu-g++.exe -c source.cpp -o object.o"), &command));
+	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
+	CHECK(compiler_command_parse(&arena, STRING_LITERAL("notgcc -c source.c"), &command));
+	CHECK(command.kind == COMPILER_KIND_UNKNOWN && command.compiles);
 	arena_destroy(&arena);
 	return true;
 }
@@ -1480,9 +1766,11 @@ static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
     run_test("option resolution", test_option_resolution);
-    run_test("compiler command", test_compiler_command);
-    run_test("build state", test_build_state);
-    run_test("build state files", test_build_state_files);
+	run_test("compiler command", test_compiler_command);
+	run_test("build state", test_build_state);
+	run_test("build state files", test_build_state_files);
+	run_test("build state path table", test_build_state_path_table);
+	run_test("binary build state tasks", test_build_state_binary_tasks);
     run_test("Make depfile", test_make_depfile);
     run_test("thread-local scratch", test_thread_local_scratch);
     run_test("vcvars cache", test_vcvars_cache_application);
@@ -1541,9 +1829,14 @@ int main(int argument_count, char **arguments)
     if (argument_count == 2 && strcmp(arguments[1], "--build-example") == 0) {
         return build_example();
     }
-    if (argument_count == 2 && strcmp(arguments[1], "--test") == 0) {
-        return run_all_tests();
-    }
+	if (argument_count == 2 && strcmp(arguments[1], "--test") == 0) {
+		return run_all_tests();
+	}
+	if (argument_count == 2 && strcmp(arguments[1], "--stress") == 0) {
+		run_test("build state stress", test_build_state_stress);
+		printf("\n%d/%d stress tests passed\n", tests_run - tests_failed, tests_run);
+		return tests_failed ? 1 : 0;
+	}
     if (argument_count == 2 && strcmp(arguments[1], "--build-task-table") == 0) {
         if (!CreateDirectoryA("build\\example", NULL) &&
             GetLastError() != ERROR_ALREADY_EXISTS) {
@@ -1555,6 +1848,6 @@ int main(int argument_count, char **arguments)
         return build_tasks_from_file(STRING_LITERAL("build.elf"));
     }
 
-    fprintf(stderr, "usage: bob [--test]\n");
+	fprintf(stderr, "usage: bob [--test|--stress]\n");
     return 2;
 }

@@ -453,6 +453,8 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 	}
 	builder.state_arena = arena_create(MEGABYTES(64));
 	builder.update_arena = arena_create(MEGABYTES(64));
+	arena_set_name(&builder.state_arena, "build state");
+	arena_set_name(&builder.update_arena, "build state updates and serialization");
 	if (!builder.state_arena.data || !builder.update_arena.data) {
 		result = false;
 		goto cleanup;

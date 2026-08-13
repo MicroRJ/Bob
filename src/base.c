@@ -16,6 +16,11 @@ Arena arena_create(u64 capacity)
 	return arena;
 }
 
+void arena_set_name(Arena *arena, const char *name)
+{
+	if (arena) arena->name = name;
+}
+
 void arena_destroy(Arena *arena)
 {
 	if (!arena) return;
@@ -58,6 +63,19 @@ void *arena_reserve_aligned(Arena *arena, u64 size, u64 alignment)
 	padding = (alignment - top % alignment) % alignment;
 	if (padding > arena->capacity - arena->used ||
 	size > arena->capacity - arena->used - padding) {
+		fprintf(stderr,
+			"arena capacity exceeded: %s\n"
+			"  capacity: %llu bytes\n"
+			"  committed: %llu bytes\n"
+			"  used: %llu bytes\n"
+			"  requested: %llu bytes\n"
+			"  alignment: %llu bytes\n",
+			arena->name ? arena->name : "<unnamed>",
+			(unsigned long long)arena->capacity,
+			(unsigned long long)arena->committed,
+			(unsigned long long)arena->used,
+			(unsigned long long)size,
+			(unsigned long long)alignment);
 		assert(!"arena capacity exceeded");
 	return NULL;
 }
@@ -220,7 +238,10 @@ Scratch begin_different_scratch(Arena *conflict)
 	for (u32 i = 0; i < SCRATCH_ARENA_COUNT; ++i) {
 		Arena *arena = global_scratch_arenas + i;
 		if (arena == conflict) continue;
-		if (!arena->data) *arena = arena_create(0);
+		if (!arena->data) {
+			*arena = arena_create(0);
+			arena_set_name(arena, "thread scratch");
+		}
 		assert(arena->data);
 		return (Scratch){ arena, arena->used };
 	}

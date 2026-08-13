@@ -1,4 +1,5 @@
 #include "build_state.h"
+#include "build_state_binary.h"
 #include "elf.h"
 #include "platform_adapter.h"
 #include "platform.h"

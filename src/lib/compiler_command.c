@@ -14,16 +14,25 @@ static String executable_name(String path)
 	return path;
 }
 
+static b32 compiler_name_matches(String name, String compiler)
+{
+	if (string_equal_insensitive(name, compiler)) return true;
+	if (name.size <= compiler.size ||
+		name.data[name.size - compiler.size - 1] != '-') return false;
+	return string_equal_insensitive(
+		string_slice(name, name.size - compiler.size, compiler.size), compiler);
+}
+
 static Compiler_Kind compiler_kind_from_executable(String executable)
 {
 	String name = executable_name(executable);
-	if (string_equal_insensitive(name, STRING_LITERAL("clang-cl"))) return COMPILER_KIND_CLANG_CL;
-	if (string_equal_insensitive(name, STRING_LITERAL("clang")) ||
-		string_equal_insensitive(name, STRING_LITERAL("clang++"))) return COMPILER_KIND_CLANG;
-	if (string_equal_insensitive(name, STRING_LITERAL("gcc")) ||
-		string_equal_insensitive(name, STRING_LITERAL("g++")) ||
-		string_equal_insensitive(name, STRING_LITERAL("cc")) ||
-		string_equal_insensitive(name, STRING_LITERAL("c++"))) return COMPILER_KIND_GCC;
+	if (compiler_name_matches(name, STRING_LITERAL("clang-cl"))) return COMPILER_KIND_CLANG_CL;
+	if (compiler_name_matches(name, STRING_LITERAL("clang")) ||
+		compiler_name_matches(name, STRING_LITERAL("clang++"))) return COMPILER_KIND_CLANG;
+	if (compiler_name_matches(name, STRING_LITERAL("gcc")) ||
+		compiler_name_matches(name, STRING_LITERAL("g++")) ||
+		compiler_name_matches(name, STRING_LITERAL("cc")) ||
+		compiler_name_matches(name, STRING_LITERAL("c++"))) return COMPILER_KIND_GCC;
 	if (string_equal_insensitive(name, STRING_LITERAL("cl"))) return COMPILER_KIND_MSVC;
 	return COMPILER_KIND_UNKNOWN;
 }

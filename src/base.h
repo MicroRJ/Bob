@@ -46,6 +46,7 @@ typedef struct Arena {
 	u64 committed;
 	u64 used;
 	u8 *data;
+	const char *name;
 } Arena;
 
 typedef struct Scratch {
@@ -73,6 +74,7 @@ typedef struct String_Array {
 extern THREAD_LOCAL Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
 
 Arena arena_create(u64 capacity);
+void arena_set_name(Arena *arena, const char *name);
 void arena_destroy(Arena *arena);
 void arena_reset(Arena *arena);
 u64 arena_mark(Arena *arena);

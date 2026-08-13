@@ -107,6 +107,7 @@ Bob *bob_create(void)
 	Arena arena = arena_create(0);
 	Bob *bob;
 	if (!arena.data) return NULL;
+	arena_set_name(&arena, "Bob graph");
 	bob = arena_push_zero_aligned(&arena, sizeof(*bob), _Alignof(Bob));
 	if (!bob) {
 		arena_destroy(&arena);
@@ -551,14 +552,14 @@ b32 bob_execute(Bob *bob, Bob_Execute_Options options)
 	executor.synchronization_initialized = true;
 	for (u32 i = 0; i < executor.worker_count; ++i) {
 		Bob_Worker *worker = executor.workers + i;
-		Platform_Thread_Start_Result start;
 		worker->executor = &executor;
 		worker->output = bob->execution_arenas + i;
 		*worker->output = arena_create(MEGABYTES(256));
+		arena_set_name(worker->output, "worker output");
 		internal_error = !worker->output->data;
 		if (internal_error) goto cleanup;
 		++bob->execution_arena_count;
-		start = platform_start_thread(worker_main, worker);
+		Platform_Thread_Start_Result start = platform_start_thread(worker_main, worker);
 		internal_error = start.error != PLATFORM_ERROR_NONE;
 		if (internal_error) goto cleanup;
 		worker->thread = start.thread;

@@ -5,6 +5,7 @@ core_sources := {
 	{ name = "bob",                path = "src/lib/bob.c"                   },
 	{ name = "bob_build",          path = "src/lib/bob_build.c"             },
 	{ name = "build_state",        path = "src/lib/build_state.c"           },
+	{ name = "build_state_binary", path = "src/lib/build_state_binary.c"    },
 	{ name = "compiler_command",   path = "src/lib/compiler_command.c"       },
 	{ name = "make_depfile",       path = "src/lib/make_depfile.c"           },
 	{ name = "vcvars_cache",       path = "src/lib/vcvars_cache.c"          },
@@ -147,6 +148,15 @@ run_tests := {
 	dependencies = { build_tests },
 }
 
+run_stress_tests := {
+	name = "run stress tests",
+	command_line = "build\\tests.exe --stress",
+	inputs = { "build/tests.exe" },
+	outputs = {},
+	include_dirs = {},
+	dependencies = { build_tests },
+}
+
 options := {
 	workers   = 4,
 	verbosity = 0,
@@ -164,6 +174,13 @@ entries.build = fun() {
 entries.test = fun() {
 	ret bob.build({
 		targets = { run_tests },
+		options = options,
+	})
+}
+
+entries.stress = fun() {
+	ret bob.build({
+		targets = { run_stress_tests },
 		options = options,
 	})
 }
