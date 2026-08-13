@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-13
+
+- Replaced the textual `.bob/state.elf` dependency cache with a checksummed binary `.bob/state` snapshot. Paths are interned and tasks store compact path IDs, substantially reducing state memory, file size, and save/load time.
+
 ## 2026-08-11
 
 - Added per-task working directories. Relative inputs and outputs are resolved from the task directory, and commands run there without changing Bob's process directory.

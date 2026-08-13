@@ -1,5 +1,5 @@
 #include "bob_build.h"
-#include "build_state.h"
+#include "build_state_binary.h"
 #include "compiler_command.h"
 #include "logger.h"
 #include "make_depfile.h"
@@ -7,7 +7,7 @@
 #include "platform.h"
 #include "profiler.h"
 
-#define BOB_BUILD_STATE_PATH ".bob/state.elf"
+#define BOB_BUILD_STATE_PATH ".bob/state"
 
 typedef enum Bob_Rebuild_Reason
 {
@@ -59,15 +59,15 @@ Bob_Build_Completion;
 
 typedef struct Bob_Builder
 {
-	Build_State state;
-	Build_State updates;
-	Build_State removals;
-	Arena       state_arena;
-	Arena       update_arena;
-	b32         dependency_tracking;
-	b32         explain;
-	b32         state_changed;
-	b32         internal_error;
+	Build_State_Binary state;
+	Build_State_Binary updates;
+	Build_State_Binary removals;
+	Arena              state_arena;
+	Arena              update_arena;
+	b32                dependency_tracking;
+	b32                explain;
+	b32                state_changed;
+	b32                internal_error;
 }
 Bob_Builder;
 
@@ -118,8 +118,8 @@ static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
 	}
 
 	if (build_task->tracks_dependencies) {
-		Build_State_Task *state_task = build_state_find(
-			(Build_State *)&builder->state, outputs->items[0]);
+		const Build_State_Binary_Task *state_task = build_state_binary_find(
+			&builder->state, outputs->items[0]);
 		if (!state_task) return (Bob_Rebuild_Decision){
 			.reason = BOB_REBUILD_STATE_MISSING,
 			.path = outputs->items[0],
@@ -127,16 +127,18 @@ static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
 		};
 		for (u32 i = 0; i < state_task->dependencies.count; ++i) {
 			Bob_Platform_File_Info info;
-			if (!bob_platform_file_info(state_task->dependencies.items[i], &info)) {
+			String dependency = build_state_path_table_get(&builder->state.paths,
+				state_task->dependencies.items[i]);
+			if (!dependency.data || !bob_platform_file_info(dependency, &info)) {
 				return (Bob_Rebuild_Decision){
 					.reason = BOB_REBUILD_DEPENDENCY_MISSING,
-					.path = state_task->dependencies.items[i],
+					.path = dependency,
 					.rebuild = true,
 				};
 			}
 			if ((u64)info.modified_unix_ms > newest_input) {
 				newest_input = (u64)info.modified_unix_ms;
-				newest_input_path = state_task->dependencies.items[i];
+				newest_input_path = dependency;
 			}
 		}
 	}
@@ -381,7 +383,7 @@ static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Compl
 	output = completion->task->outputs.items[0];
 	builder->state_changed = true;
 	if (!succeeded || !completion->dependency_state_valid) {
-		if (!build_state_set(&builder->update_arena, &builder->removals,
+		if (!build_state_binary_set(&builder->update_arena, &builder->removals,
 			output, (String_Array){0})) builder->internal_error = true;
 		if (succeeded && !completion->dependency_state_valid) {
 			log_warning("could not read compiler dependencies for %s",
@@ -389,7 +391,7 @@ static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Compl
 		}
 		return;
 	}
-	if (!build_state_set(&builder->update_arena, &builder->updates,
+	if (!build_state_binary_set(&builder->update_arena, &builder->updates,
 		output, completion->dependencies)) builder->internal_error = true;
 }
 
@@ -414,13 +416,45 @@ static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *u
 
 static b32 merge_dependency_state(Bob_Builder *builder)
 {
-	for (u32 i = 0; i < builder->removals.count; ++i) {
-		build_state_remove(&builder->state, builder->removals.tasks[i].output);
+	for (u32 i = 0; i < builder->removals.task_count; ++i) {
+		String output = build_state_path_table_get(&builder->removals.paths,
+			builder->removals.tasks[i].output);
+		if (!output.data) return false;
+		build_state_binary_remove(&builder->state, output);
 	}
-	for (u32 i = 0; i < builder->updates.count; ++i) {
-		Build_State_Task *update = builder->updates.tasks + i;
-		if (!build_state_set(&builder->state_arena, &builder->state,
-			update->output, update->dependencies)) return false;
+	for (u32 i = 0; i < builder->updates.task_count; ++i) {
+		const Build_State_Binary_Task *update = builder->updates.tasks + i;
+		Scratch scratch = begin_scratch();
+		String output = build_state_path_table_get(&builder->updates.paths,
+			update->output);
+		String_Array dependencies = {0};
+		if (!output.data) {
+			end_scratch(scratch);
+			return false;
+		}
+		if (update->dependencies.count) {
+			dependencies.items = arena_push_zero_aligned(scratch.arena,
+				(u64)update->dependencies.count * sizeof(*dependencies.items),
+				_Alignof(String));
+			if (!dependencies.items) {
+				end_scratch(scratch);
+				return false;
+			}
+		}
+		for (u32 dependency = 0; dependency < update->dependencies.count;
+			++dependency) {
+			String path = build_state_path_table_get(&builder->updates.paths,
+				update->dependencies.items[dependency]);
+			if (!path.data) {
+				end_scratch(scratch);
+				return false;
+			}
+			dependencies.items[dependencies.count++] = path;
+		}
+		b32 updated = build_state_binary_set(&builder->state_arena,
+			&builder->state, output, dependencies);
+		end_scratch(scratch);
+		if (!updated) return false;
 	}
 	return true;
 }
@@ -454,20 +488,20 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 	builder.state_arena = arena_create(MEGABYTES(64));
 	builder.update_arena = arena_create(MEGABYTES(64));
 	arena_set_name(&builder.state_arena, "build state");
-	arena_set_name(&builder.update_arena, "build state updates and serialization");
+	arena_set_name(&builder.update_arena, "build state updates");
 	if (!builder.state_arena.data || !builder.update_arena.data) {
 		result = false;
 		goto cleanup;
 	}
 	if (builder.dependency_tracking) {
-		load_result = build_state_load(&builder.state_arena,
+		load_result = build_state_binary_load(&builder.state_arena,
 			STRING_LITERAL(BOB_BUILD_STATE_PATH), &builder.state);
 		if (load_result == BUILD_STATE_LOAD_ERROR) {
 			log_warning("could not load Bob build state");
 		}
 		else if (load_result == BUILD_STATE_LOAD_INVALID) {
 			log_warning("ignoring invalid Bob build state");
-			builder.state = (Build_State){0};
+			builder.state = (Build_State_Binary){0};
 			builder.state_changed = true;
 		}
 	}
@@ -478,12 +512,14 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 		.completed = build_task_completed,
 	});
 	if (builder.internal_error || !merge_dependency_state(&builder)) result = false;
-	if (builder.dependency_tracking && builder.state_changed &&
-		!build_state_save(&builder.update_arena, STRING_LITERAL(BOB_BUILD_STATE_PATH),
+	if (builder.dependency_tracking && builder.state_changed) {
+		builder.state.generation = builder.state.generation == UINT64_MAX ?
+			1 : builder.state.generation + 1;
+		if (!build_state_binary_save(STRING_LITERAL(BOB_BUILD_STATE_PATH),
 			&builder.state)) {
-		platform_remove_file(BOB_BUILD_STATE_PATH);
-		log_warning("could not save Bob build state");
-		result = false;
+			log_warning("could not save Bob build state");
+			result = false;
+		}
 	}
 
 cleanup:

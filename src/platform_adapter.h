@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 typedef struct Bob_Platform_File_Info {
+	u64 size;
    i64 modified_unix_ms;
 } Bob_Platform_File_Info;
 

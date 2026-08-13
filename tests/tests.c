@@ -1,5 +1,4 @@
 #include "bob_build.h"
-#include "build_state.h"
 #include "build_state_binary.h"
 #include "script.h"
 #include "compiler_command.h"
@@ -94,170 +93,145 @@ static b32 string_array_matches(String_Array actual, const char **expected, u32 
 	return true;
 }
 
-static b32 string_array_contains(String_Array array, String value)
+static u32 test_crc32c(const void *data, u64 size)
 {
-	for (u32 i = 0; i < array.count; ++i) {
-		if (string_equal(array.items[i], value)) return true;
+	const u8 *bytes = data;
+	u32 crc = UINT32_MAX;
+	for (u64 i = 0; i < size; ++i) {
+		crc ^= bytes[i];
+		for (u32 bit = 0; bit < 8; ++bit) {
+			u32 mask = 0U - (crc & 1U);
+			crc = (crc >> 1) ^ (0x82F63B78U & mask);
+		}
+	}
+	return ~crc;
+}
+
+static void test_store_u32(u8 *data, u32 value)
+{
+	data[0] = (u8)value;
+	data[1] = (u8)(value >> 8);
+	data[2] = (u8)(value >> 16);
+	data[3] = (u8)(value >> 24);
+}
+
+static b32 binary_task_contains_path(const Build_State_Binary *state,
+	const Build_State_Binary_Task *task, String path)
+{
+	if (!state || !task) return false;
+	for (u32 i = 0; i < task->dependencies.count; ++i) {
+		if (string_equal(build_state_path_table_get(&state->paths,
+			task->dependencies.items[i]), path)) return true;
 	}
 	return false;
 }
 
-static b32 test_build_state(void)
+static b32 test_build_state_snapshot(void)
 {
+	static const char malformed[] = "not a Bob state";
 	Arena state_arena = arena_create(KILOBYTES(64));
-	Arena source_arena = arena_create(KILOBYTES(64));
-	Arena parsed_arena = arena_create(KILOBYTES(64));
-	Build_State state = {0};
-	Build_State parsed = {0};
-	String source;
-	String first_dependencies[] = {
-		STRING_LITERAL("src\\main file.c"),
-		STRING_LITERAL("include\\quoted\"name.h"),
-		STRING_LITERAL("include/line\nbreak.h"),
-	};
-	String updated_dependencies[] = {
-		STRING_LITERAL("src\\updated.c"),
-	};
-	const char *first_expected[] = {
-		"src\\main file.c",
-		"include\\quoted\"name.h",
-		"include/line\nbreak.h",
-	};
-	const char *updated_expected[] = { "src\\updated.c" };
-	Build_State_Task *task;
-	u64 mark;
-
-	CHECK(state_arena.data && source_arena.data && parsed_arena.data);
-	CHECK(build_state_set(&state_arena, &state,
-		STRING_LITERAL("build\\obj\\main file.obj"),
-		STRING_ARRAY_FROM(first_dependencies)));
-	CHECK(build_state_set(&state_arena, &state,
-		STRING_LITERAL("build/obj/empty.obj"), (String_Array){0}));
-	CHECK(state.count == 2);
-	CHECK(build_state_write(&source_arena, &state, &source));
-	CHECK(string_is_terminated(source));
-	CHECK(build_state_parse(&parsed_arena, source, &parsed));
-	CHECK(parsed.count == 2);
-
-	task = build_state_find(&parsed, STRING_LITERAL("build\\obj\\main file.obj"));
-	CHECK(task != NULL);
-	CHECK(string_array_matches(task->dependencies, first_expected, ARRAY_COUNT(first_expected)));
-	task = build_state_find(&parsed, STRING_LITERAL("build/obj/empty.obj"));
-	CHECK(task != NULL && task->dependencies.count == 0);
-	CHECK(build_state_find(&parsed, STRING_LITERAL("build/obj/missing.obj")) == NULL);
-
-	CHECK(build_state_set(&parsed_arena, &parsed,
-		STRING_LITERAL("build\\obj\\main file.obj"),
-		STRING_ARRAY_FROM(updated_dependencies)));
-	CHECK(parsed.count == 2);
-	task = build_state_find(&parsed, STRING_LITERAL("build\\obj\\main file.obj"));
-	CHECK(task != NULL);
-	CHECK(string_array_matches(task->dependencies, updated_expected, ARRAY_COUNT(updated_expected)));
-	CHECK(build_state_remove(&parsed, STRING_LITERAL("build/obj/empty.obj")));
-	CHECK(parsed.count == 1);
-	CHECK(build_state_find(&parsed, STRING_LITERAL("build/obj/empty.obj")) == NULL);
-	CHECK(!build_state_remove(&parsed, STRING_LITERAL("build/obj/missing.obj")));
-
-	mark = arena_mark(&parsed_arena);
-	{
-		Build_State invalid = {0};
-		CHECK(!build_state_parse(&parsed_arena,
-			STRING_LITERAL("{ version = 2, tasks = {} }"), &invalid));
-		CHECK(arena_mark(&parsed_arena) == mark);
-		CHECK(invalid.count == 0);
-	}
-	{
-		Build_State invalid = {0};
-		CHECK(!build_state_parse(&parsed_arena,
-			STRING_LITERAL("{ version = 1, tasks = { { output = 7, dependencies = {} } } }"),
-			&invalid));
-		CHECK(arena_mark(&parsed_arena) == mark);
-	}
-	{
-		Build_State invalid = {0};
-		CHECK(!build_state_parse(&parsed_arena,
-			STRING_LITERAL(
-				"{ version = 1, tasks = {"
-				"{ output = \"same.obj\", dependencies = {} },"
-				"{ output = \"same.obj\", dependencies = {} } } }"),
-			&invalid));
-		CHECK(arena_mark(&parsed_arena) == mark);
-	}
-
-	arena_destroy(&parsed_arena);
-	arena_destroy(&source_arena);
-	arena_destroy(&state_arena);
-	return true;
-}
-
-static b32 test_build_state_files(void)
-{
-	static const char malformed[] = "{ version = 1, tasks = 7 }";
-	Arena state_arena = arena_create(KILOBYTES(64));
-	Arena io_arena = arena_create(KILOBYTES(64));
 	Arena loaded_arena = arena_create(KILOBYTES(64));
-	Build_State state = {0};
-	Build_State loaded = {0};
-	String first_dependencies[] = {
-		STRING_LITERAL("src/first.c"),
-		STRING_LITERAL("include/first.h"),
+	Arena io_arena = arena_create(KILOBYTES(64));
+	Build_State_Binary state = { .generation = 42 };
+	Build_State_Binary loaded = {0};
+	String dependencies[] = {
+		STRING_LITERAL("src/main file.c"),
+		STRING_LITERAL("include/quoted\"name.h"),
 	};
-	String second_dependencies[] = {
-		STRING_LITERAL("src/second.c"),
-	};
-	const char *first_expected[] = { "src/first.c", "include/first.h" };
-	const char *second_expected[] = { "src/second.c" };
-	String root = STRING_LITERAL("build\\build_state_files");
-	String path = STRING_LITERAL("build\\build_state_files\\nested\\state.elf");
-	String temporary = STRING_LITERAL("build\\build_state_files\\nested\\state.elf.tmp");
-	String missing = STRING_LITERAL("build\\build_state_files\\missing.elf");
-	String directory = STRING_LITERAL("build\\build_state_files\\nested\\directory");
-	String directory_temporary = STRING_LITERAL("build\\build_state_files\\nested\\directory.tmp");
-	Build_State_Task *task;
+	String root = STRING_LITERAL("build\\build_state_snapshot");
+	String path = STRING_LITERAL("build\\build_state_snapshot\\nested\\state");
+	String temporary = STRING_LITERAL("build\\build_state_snapshot\\nested\\state.tmp");
+	String missing = STRING_LITERAL("build\\build_state_snapshot\\missing");
+	String directory = STRING_LITERAL("build\\build_state_snapshot\\nested\\directory");
+	String directory_temporary = STRING_LITERAL("build\\build_state_snapshot\\nested\\directory.tmp");
+	const Build_State_Binary_Task *task;
 	Bob_Platform_File_Info info;
-	u64 io_mark;
+	String bytes;
 
-	CHECK(state_arena.data && io_arena.data && loaded_arena.data);
+	CHECK(state_arena.data && loaded_arena.data && io_arena.data);
 	CHECK(platform_remove_tree(root.data));
-	CHECK(build_state_set(&state_arena, &state, STRING_LITERAL("build/obj/file.obj"),
-		STRING_ARRAY_FROM(first_dependencies)));
-
-	io_mark = arena_mark(&io_arena);
-	CHECK(build_state_save(&io_arena, path, &state));
-	CHECK(arena_mark(&io_arena) == io_mark);
+	CHECK(build_state_binary_set(&state_arena, &state,
+		STRING_LITERAL("build/obj/main file.obj"),
+		STRING_ARRAY_FROM(dependencies)));
+	CHECK(build_state_binary_set(&state_arena, &state,
+		STRING_LITERAL("build/obj/empty.obj"), (String_Array){0}));
+	CHECK(build_state_binary_save(path, &state));
 	CHECK(bob_platform_file_info(path, &info));
 	CHECK(!bob_platform_file_info(temporary, &info));
-	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_OK);
-	task = build_state_find(&loaded, STRING_LITERAL("build/obj/file.obj"));
-	CHECK(task != NULL);
-	CHECK(string_array_matches(task->dependencies, first_expected, ARRAY_COUNT(first_expected)));
-
-	CHECK(build_state_set(&state_arena, &state, STRING_LITERAL("build/obj/file.obj"),
-		STRING_ARRAY_FROM(second_dependencies)));
-	CHECK(build_state_save(&io_arena, path, &state));
-	arena_reset(&loaded_arena);
-	loaded = (Build_State){0};
-	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_OK);
-	task = build_state_find(&loaded, STRING_LITERAL("build/obj/file.obj"));
-	CHECK(task != NULL);
-	CHECK(string_array_matches(task->dependencies, second_expected, ARRAY_COUNT(second_expected)));
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_OK);
+	CHECK(loaded.generation == 42 && loaded.task_count == 2);
+	task = build_state_binary_find(&loaded,
+		STRING_LITERAL("build/obj/main file.obj"));
+	CHECK(task != NULL && task->dependencies.count == 2);
+	CHECK(binary_task_contains_path(&loaded, task, dependencies[0]));
+	CHECK(binary_task_contains_path(&loaded, task, dependencies[1]));
+	task = build_state_binary_find(&loaded, STRING_LITERAL("build/obj/empty.obj"));
+	CHECK(task != NULL && task->dependencies.count == 0);
 
 	arena_reset(&loaded_arena);
-	loaded = (Build_State){ .count = 7 };
-	CHECK(build_state_load(&loaded_arena, missing, &loaded) == BUILD_STATE_LOAD_MISSING);
-	CHECK(loaded.count == 0);
+	loaded = (Build_State_Binary){ .task_count = 7 };
+	CHECK(build_state_binary_load(&loaded_arena, missing, &loaded) ==
+		BUILD_STATE_LOAD_MISSING);
+	CHECK(loaded.task_count == 0);
 	CHECK(bob_platform_write_entire_file(path, malformed, sizeof(malformed) - 1));
-	CHECK(build_state_load(&loaded_arena, path, &loaded) == BUILD_STATE_LOAD_INVALID);
-	CHECK(loaded.count == 0);
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_INVALID);
+
+	CHECK(build_state_binary_save(path, &state));
+	arena_reset(&io_arena);
+	CHECK(bob_platform_read_entire_file(&io_arena, path, &bytes));
+	CHECK(bytes.size > BUILD_STATE_SNAPSHOT_HEADER_SIZE);
+	CHECK(bob_platform_write_entire_file(path, bytes.data, bytes.size - 1));
+	arena_reset(&loaded_arena);
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_INVALID);
+
+	CHECK(build_state_binary_save(path, &state));
+	arena_reset(&io_arena);
+	CHECK(bob_platform_read_entire_file(&io_arena, path, &bytes));
+	bytes.data[bytes.size - 1] ^= 0x5A;
+	CHECK(bob_platform_write_entire_file(path, bytes.data, bytes.size));
+	arena_reset(&loaded_arena);
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_INVALID);
+
+	CHECK(build_state_binary_save(path, &state));
+	arena_reset(&io_arena);
+	CHECK(bob_platform_read_entire_file(&io_arena, path, &bytes));
+	test_store_u32((u8 *)bytes.data + 8, BUILD_STATE_BINARY_VERSION + 1);
+	CHECK(bob_platform_write_entire_file(path, bytes.data, bytes.size));
+	arena_reset(&loaded_arena);
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_INVALID);
+
+	CHECK(build_state_binary_save(path, &state));
+	arena_reset(&io_arena);
+	CHECK(bob_platform_read_entire_file(&io_arena, path, &bytes));
+	u64 task_offset = BUILD_STATE_SNAPSHOT_HEADER_SIZE;
+	for (u32 i = 0; i < state.paths.path_count; ++i) {
+		task_offset += 4 + state.paths.paths[i].value.size;
+	}
+	CHECK(task_offset + 8 <= bytes.size);
+	test_store_u32((u8 *)bytes.data + task_offset + 4,
+		BUILD_STATE_PATH_ID_NONE);
+	u32 checksum = test_crc32c(
+		(u8 *)bytes.data + BUILD_STATE_SNAPSHOT_HEADER_SIZE,
+		bytes.size - BUILD_STATE_SNAPSHOT_HEADER_SIZE);
+	test_store_u32((u8 *)bytes.data + 40, checksum);
+	CHECK(bob_platform_write_entire_file(path, bytes.data, bytes.size));
+	arena_reset(&loaded_arena);
+	CHECK(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_INVALID);
 
 	CHECK(bob_platform_create_directory(directory));
-	CHECK(build_state_load(&loaded_arena, directory, &loaded) == BUILD_STATE_LOAD_ERROR);
-	CHECK(!build_state_save(&io_arena, directory, &state));
+	CHECK(build_state_binary_load(&loaded_arena, directory, &loaded) ==
+		BUILD_STATE_LOAD_ERROR);
+	CHECK(!build_state_binary_save(directory, &state));
 	CHECK(!bob_platform_file_info(directory_temporary, &info));
-
 	CHECK(platform_remove_tree(root.data));
-	arena_destroy(&loaded_arena);
 	arena_destroy(&io_arena);
+	arena_destroy(&loaded_arena);
 	arena_destroy(&state_arena);
 	return true;
 }
@@ -364,7 +338,7 @@ static b32 test_build_state_binary_tasks(void)
 		STRING_LITERAL("include/common.h"),
 		STRING_LITERAL("include/next.h"),
 	};
-	Build_State_Binary_Task *task;
+	const Build_State_Binary_Task *task;
 	Build_State_Path_Id output_id;
 
 	arena_set_name(&arena, "binary build state task test");
@@ -421,28 +395,24 @@ static b32 test_build_state_stress(void)
 {
 	enum { TASK_COUNT = 1886, DEPENDENCY_COUNT = 300 };
 	Arena source_arena = arena_create(MEGABYTES(1));
-	Arena update_arena = arena_create(MEGABYTES(256));
-	Arena state_arena = arena_create(MEGABYTES(256));
-	Arena serialization_arena = arena_create(MEGABYTES(256));
-	Arena interned_arena = arena_create(MEGABYTES(16));
-	Build_State updates = {0};
-	Build_State state = {0};
-	Build_State_Binary interned = {0};
+	Arena state_arena = arena_create(MEGABYTES(16));
+	Arena loaded_arena = arena_create(MEGABYTES(16));
+	Build_State_Binary state = { .generation = 7 };
+	Build_State_Binary loaded = {0};
 	String_Array dependencies = {0};
-	String source = {0};
+	String root = STRING_LITERAL("build\\build_state_stress");
+	String path = STRING_LITERAL("build\\build_state_stress\\state");
+	Bob_Platform_File_Info info;
 	u64 frequency = platform_counter_frequency();
-	u64 collection_started;
-	u64 collection_finished;
-	u64 merge_finished;
-	u64 serialization_finished;
-	u64 interning_finished;
+	u64 construction_started;
+	u64 construction_finished;
+	u64 save_finished;
+	u64 load_finished;
 	b32 result = false;
 
 	arena_set_name(&source_arena, "build state stress source");
-	arena_set_name(&update_arena, "build state stress updates");
-	arena_set_name(&state_arena, "build state stress merged state");
-	arena_set_name(&serialization_arena, "build state stress serialization");
-	arena_set_name(&interned_arena, "build state stress interned state");
+	arena_set_name(&state_arena, "build state stress state");
+	arena_set_name(&loaded_arena, "build state stress loaded state");
 
 #define CHECK_STRESS(condition)                                                 \
 	do {                                                                         \
@@ -452,8 +422,8 @@ static b32 test_build_state_stress(void)
 		}                                                                          \
 	} while (0)
 
-	CHECK_STRESS(source_arena.data && update_arena.data && state_arena.data &&
-		serialization_arena.data && interned_arena.data);
+	CHECK_STRESS(source_arena.data && state_arena.data && loaded_arena.data);
+	CHECK_STRESS(platform_remove_tree(root.data));
 	dependencies.items = arena_push_zero_aligned(&source_arena,
 		DEPENDENCY_COUNT * sizeof(*dependencies.items), _Alignof(String));
 	CHECK_STRESS(dependencies.items != NULL);
@@ -469,40 +439,31 @@ static b32 test_build_state_stress(void)
 		++dependencies.count;
 	}
 
-	collection_started = platform_counter();
+	construction_started = platform_counter();
 	for (u32 i = 0; i < TASK_COUNT; ++i) {
 		char output[128];
 		int length = snprintf(output, sizeof(output),
 			"build\\godot\\synthetic_%04u.windows.template_debug.x86_64.o", i);
 		CHECK_STRESS(length > 0 && (size_t)length < sizeof(output));
-		CHECK_STRESS(build_state_set(&update_arena, &updates,
+		CHECK_STRESS(build_state_binary_set(&state_arena, &state,
 			string_from_data(output, (u64)length), dependencies));
 	}
-	collection_finished = platform_counter();
-	CHECK_STRESS(updates.count == TASK_COUNT);
-	CHECK_STRESS(update_arena.used > MEGABYTES(64));
-
-	for (u32 i = 0; i < updates.count; ++i) {
-		CHECK_STRESS(build_state_set(&state_arena, &state,
-			updates.tasks[i].output, updates.tasks[i].dependencies));
-	}
-	merge_finished = platform_counter();
-	CHECK_STRESS(state.count == TASK_COUNT);
-	CHECK_STRESS(state_arena.used > MEGABYTES(64));
-	CHECK_STRESS(build_state_write(&serialization_arena, &state, &source));
-	serialization_finished = platform_counter();
-	CHECK_STRESS(source.size > MEGABYTES(64));
-	for (u32 i = 0; i < TASK_COUNT; ++i) {
-		char output[128];
-		int length = snprintf(output, sizeof(output),
-			"build\\godot\\synthetic_%04u.windows.template_debug.x86_64.o", i);
-		CHECK_STRESS(length > 0 && (size_t)length < sizeof(output));
-		CHECK_STRESS(build_state_binary_set(&interned_arena, &interned,
-			string_from_data(output, (u64)length), dependencies));
-	}
-	interning_finished = platform_counter();
-	CHECK_STRESS(interned.task_count == TASK_COUNT);
-	CHECK_STRESS(interned.paths.path_count == TASK_COUNT + DEPENDENCY_COUNT);
+	construction_finished = platform_counter();
+	CHECK_STRESS(state.task_count == TASK_COUNT);
+	CHECK_STRESS(state.paths.path_count == TASK_COUNT + DEPENDENCY_COUNT);
+	CHECK_STRESS(build_state_binary_save(path, &state));
+	save_finished = platform_counter();
+	CHECK_STRESS(bob_platform_file_info(path, &info));
+	CHECK_STRESS(build_state_binary_load(&loaded_arena, path, &loaded) ==
+		BUILD_STATE_LOAD_OK);
+	load_finished = platform_counter();
+	CHECK_STRESS(loaded.generation == state.generation);
+	CHECK_STRESS(loaded.task_count == TASK_COUNT);
+	CHECK_STRESS(loaded.paths.path_count == TASK_COUNT + DEPENDENCY_COUNT);
+	CHECK_STRESS(build_state_binary_find(&loaded,
+		STRING_LITERAL("build\\godot\\synthetic_0000.windows.template_debug.x86_64.o")) != NULL);
+	CHECK_STRESS(build_state_binary_find(&loaded,
+		STRING_LITERAL("build\\godot\\synthetic_1885.windows.template_debug.x86_64.o")) != NULL);
 
 	printf("\n  build-state stress measurements\n");
 	printf("    tasks: %u\n", (u32)TASK_COUNT);
@@ -510,29 +471,22 @@ static b32 test_build_state_stress(void)
 		(u32)(TASK_COUNT * DEPENDENCY_COUNT));
 	printf("    unique dependency paths: %u\n", (u32)DEPENDENCY_COUNT);
 	printf("    path reuse: %.1fx\n", (double)TASK_COUNT);
-	printf("    collected updates: %.2f MiB (%.2f s)\n",
-		(double)update_arena.used / (double)MEGABYTES(1),
-		(double)(collection_finished - collection_started) / (double)frequency);
-	printf("    merged state: %.2f MiB (%.2f s)\n",
+	printf("    in-memory state: %.2f MiB (%.2f s to construct)\n",
 		(double)state_arena.used / (double)MEGABYTES(1),
-		(double)(merge_finished - collection_finished) / (double)frequency);
-	printf("    serialized text: %.2f MiB (%.2f s)\n",
-		(double)source.size / (double)MEGABYTES(1),
-		(double)(serialization_finished - merge_finished) / (double)frequency);
-	printf("    simultaneous state memory: %.2f MiB\n",
-		(double)(update_arena.used + state_arena.used + serialization_arena.used) /
-			(double)MEGABYTES(1));
-	printf("    interned binary model: %.2f MiB (%.2f s)\n",
-		(double)interned_arena.used / (double)MEGABYTES(1),
-		(double)(interning_finished - serialization_finished) / (double)frequency);
-	printf("    unique interned paths: %u\n", interned.paths.path_count);
+		(double)(construction_finished - construction_started) / (double)frequency);
+	printf("    binary snapshot: %.2f MiB (%.2f s to save)\n",
+		(double)info.size / (double)MEGABYTES(1),
+		(double)(save_finished - construction_finished) / (double)frequency);
+	printf("    loaded state: %.2f MiB (%.2f s to load)\n",
+		(double)loaded_arena.used / (double)MEGABYTES(1),
+		(double)(load_finished - save_finished) / (double)frequency);
+	printf("    unique interned paths: %u\n", state.paths.path_count);
 	result = true;
 
 cleanup:
-	arena_destroy(&interned_arena);
-	arena_destroy(&serialization_arena);
+	platform_remove_tree(root.data);
+	arena_destroy(&loaded_arena);
 	arena_destroy(&state_arena);
-	arena_destroy(&update_arena);
 	arena_destroy(&source_arena);
 #undef CHECK_STRESS
 	return result;
@@ -1437,8 +1391,8 @@ static b32 test_compiler_dependency_state(void)
 		.inputs = STRING_ARRAY_FROM(inputs),
 		.outputs = STRING_ARRAY_FROM(outputs),
 	};
-	Build_State state = {0};
-	Build_State_Task *state_task;
+	Build_State_Binary state = {0};
+	const Build_State_Binary_Task *state_task;
 	Bob_Platform_File_Info before;
 	Bob_Platform_File_Info after;
 	b32 changed_directory = false;
@@ -1470,13 +1424,13 @@ static b32 test_compiler_dependency_state(void)
 		STRING_LITERAL("work/object.obj"), &absolute_output));
 
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "capture compiler dependencies"));
-	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
-		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
-	state_task = build_state_find(&state, absolute_output);
+	CHECK_DEPENDENCY_STATE(build_state_binary_load(&state_arena,
+		STRING_LITERAL(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
+	state_task = build_state_binary_find(&state, absolute_output);
 	CHECK_DEPENDENCY_STATE(state_task != NULL);
-	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
+	CHECK_DEPENDENCY_STATE(binary_task_contains_path(&state, state_task,
 		absolute_source));
-	CHECK_DEPENDENCY_STATE(string_array_contains(state_task->dependencies,
+	CHECK_DEPENDENCY_STATE(binary_task_contains_path(&state, state_task,
 		absolute_header));
 	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &before));
 
@@ -1493,13 +1447,13 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(before.modified_unix_ms != after.modified_unix_ms);
 
 	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\header.h", "#define VALUE 3\n", 100ULL));
-	CHECK_DEPENDENCY_STATE(platform_remove_file(".bob\\state.elf"));
+	CHECK_DEPENDENCY_STATE(platform_remove_file(".bob\\state"));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild missing compiler state"));
 	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &after));
 	CHECK_DEPENDENCY_STATE(after.modified_unix_ms != before.modified_unix_ms);
 
-	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(STRING_LITERAL(".bob/state.elf"),
+	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(STRING_LITERAL(".bob/state"),
 		malformed, sizeof(malformed) - 1));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild malformed compiler state"));
@@ -1509,10 +1463,10 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(platform_remove_file("work\\header.h"));
 	CHECK_DEPENDENCY_STATE(!run_single_task(&task, "rebuild missing compiler dependency"));
 	arena_reset(&state_arena);
-	state = (Build_State){0};
-	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena,
-		STRING_LITERAL(".bob/state.elf"), &state) == BUILD_STATE_LOAD_OK);
-	CHECK_DEPENDENCY_STATE(build_state_find(&state, absolute_output) == NULL);
+	state = (Build_State_Binary){0};
+	CHECK_DEPENDENCY_STATE(build_state_binary_load(&state_arena,
+		STRING_LITERAL(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
+	CHECK_DEPENDENCY_STATE(build_state_binary_find(&state, absolute_output) == NULL);
 	CHECK_DEPENDENCY_STATE(!bob_platform_file_info(
 		STRING_LITERAL("work/object.obj.d.tmp"), &after));
 	result = true;
@@ -1767,8 +1721,7 @@ static int run_all_tests(void)
     run_test("arena and strings", test_arena_and_strings);
     run_test("option resolution", test_option_resolution);
 	run_test("compiler command", test_compiler_command);
-	run_test("build state", test_build_state);
-	run_test("build state files", test_build_state_files);
+	run_test("build state snapshot", test_build_state_snapshot);
 	run_test("build state path table", test_build_state_path_table);
 	run_test("binary build state tasks", test_build_state_binary_tasks);
     run_test("Make depfile", test_make_depfile);

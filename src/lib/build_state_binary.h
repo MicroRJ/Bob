@@ -7,6 +7,7 @@
 
 #define BUILD_STATE_SNAPSHOT_MAGIC      "BOBSTATE"
 #define BUILD_STATE_SNAPSHOT_MAGIC_SIZE 8
+#define BUILD_STATE_SNAPSHOT_HEADER_SIZE 48
 
 #define BUILD_STATE_JOURNAL_MAGIC      "BOBJRNL"
 #define BUILD_STATE_JOURNAL_MAGIC_SIZE 8
@@ -71,9 +72,21 @@ typedef struct Build_State_Binary
 }
 Build_State_Binary;
 
-Build_State_Binary_Task *build_state_binary_find(Build_State_Binary *state, String output);
+typedef enum Build_State_Load_Result
+{
+	BUILD_STATE_LOAD_OK,
+	BUILD_STATE_LOAD_MISSING,
+	BUILD_STATE_LOAD_INVALID,
+	BUILD_STATE_LOAD_ERROR,
+}
+Build_State_Load_Result;
+
+const Build_State_Binary_Task *build_state_binary_find(const Build_State_Binary *state, String output);
 b32 build_state_binary_set(Arena *arena, Build_State_Binary *state, String output, String_Array dependencies);
 b32 build_state_binary_remove(Build_State_Binary *state, String output);
+Build_State_Load_Result build_state_binary_load(
+	Arena *arena, String path, Build_State_Binary *state);
+b32 build_state_binary_save(String path, const Build_State_Binary *state);
 
 // These structures describe decoded fields. Files are encoded and decoded
 // field by field in little-endian order; native C structure layouts are never
@@ -92,12 +105,9 @@ typedef struct Build_State_Snapshot_Header
 }
 Build_State_Snapshot_Header;
 
-// Snapshot paths are sorted. Each path reuses a byte prefix from the path
-// immediately before it and stores only its remaining suffix.
 typedef struct Build_State_Snapshot_Path_Header
 {
-	u32 shared_prefix_size;
-	u32 suffix_size;
+	u32 size;
 }
 Build_State_Snapshot_Path_Header;
 
