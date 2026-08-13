@@ -1,5 +1,5 @@
 #include "bob_build.h"
-#include "build_state_binary.h"
+#include "build_state.h"
 #include "compiler_command.h"
 #include "logger.h"
 #include "make_depfile.h"
@@ -59,9 +59,9 @@ Bob_Build_Completion;
 
 typedef struct Bob_Builder
 {
-	Build_State_Binary state;
-	Build_State_Binary updates;
-	Build_State_Binary removals;
+	Build_State state;
+	Build_State updates;
+	Build_State removals;
 	Arena              state_arena;
 	Arena              update_arena;
 	b32                dependency_tracking;
@@ -118,7 +118,7 @@ static Bob_Rebuild_Decision task_rebuild_decision(const Bob_Builder *builder,
 	}
 
 	if (build_task->tracks_dependencies) {
-		const Build_State_Binary_Task *state_task = build_state_binary_find(
+		const Build_State_Task *state_task = build_state_find(
 			&builder->state, outputs->items[0]);
 		if (!state_task) return (Bob_Rebuild_Decision){
 			.reason = BOB_REBUILD_STATE_MISSING,
@@ -383,7 +383,7 @@ static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Compl
 	output = completion->task->outputs.items[0];
 	builder->state_changed = true;
 	if (!succeeded || !completion->dependency_state_valid) {
-		if (!build_state_binary_set(&builder->update_arena, &builder->removals,
+		if (!build_state_set(&builder->update_arena, &builder->removals,
 			output, (String_Array){0})) builder->internal_error = true;
 		if (succeeded && !completion->dependency_state_valid) {
 			log_warning("could not read compiler dependencies for %s",
@@ -391,7 +391,7 @@ static void collect_dependency_state(Bob_Builder *builder, const Bob_Build_Compl
 		}
 		return;
 	}
-	if (!build_state_binary_set(&builder->update_arena, &builder->updates,
+	if (!build_state_set(&builder->update_arena, &builder->updates,
 		output, completion->dependencies)) builder->internal_error = true;
 }
 
@@ -420,10 +420,10 @@ static b32 merge_dependency_state(Bob_Builder *builder)
 		String output = build_state_path_table_get(&builder->removals.paths,
 			builder->removals.tasks[i].output);
 		if (!output.data) return false;
-		build_state_binary_remove(&builder->state, output);
+		build_state_remove(&builder->state, output);
 	}
 	for (u32 i = 0; i < builder->updates.task_count; ++i) {
-		const Build_State_Binary_Task *update = builder->updates.tasks + i;
+		const Build_State_Task *update = builder->updates.tasks + i;
 		Scratch scratch = begin_scratch();
 		String output = build_state_path_table_get(&builder->updates.paths,
 			update->output);
@@ -451,7 +451,7 @@ static b32 merge_dependency_state(Bob_Builder *builder)
 			}
 			dependencies.items[dependencies.count++] = path;
 		}
-		b32 updated = build_state_binary_set(&builder->state_arena,
+		b32 updated = build_state_set(&builder->state_arena,
 			&builder->state, output, dependencies);
 		end_scratch(scratch);
 		if (!updated) return false;
@@ -494,14 +494,17 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 		goto cleanup;
 	}
 	if (builder.dependency_tracking) {
-		load_result = build_state_binary_load(&builder.state_arena,
+		load_result = build_state_load(&builder.state_arena,
 			STRING_LITERAL(BOB_BUILD_STATE_PATH), &builder.state);
 		if (load_result == BUILD_STATE_LOAD_ERROR) {
 			log_warning("could not load Bob build state");
 		}
 		else if (load_result == BUILD_STATE_LOAD_INVALID) {
 			log_warning("ignoring invalid Bob build state");
-			builder.state = (Build_State_Binary){0};
+			builder.state = (Build_State){0};
+			builder.state_changed = true;
+		}
+		else if (load_result == BUILD_STATE_LOAD_RECOVERED) {
 			builder.state_changed = true;
 		}
 	}
@@ -513,9 +516,7 @@ b32 bob_build(Bob *bob, Bob_Build_Options options)
 	});
 	if (builder.internal_error || !merge_dependency_state(&builder)) result = false;
 	if (builder.dependency_tracking && builder.state_changed) {
-		builder.state.generation = builder.state.generation == UINT64_MAX ?
-			1 : builder.state.generation + 1;
-		if (!build_state_binary_save(STRING_LITERAL(BOB_BUILD_STATE_PATH),
+		if (!build_state_save(STRING_LITERAL(BOB_BUILD_STATE_PATH),
 			&builder.state)) {
 			log_warning("could not save Bob build state");
 			result = false;
