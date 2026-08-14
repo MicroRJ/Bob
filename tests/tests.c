@@ -1148,8 +1148,13 @@ Generic_Action_Test;
 
 struct Generic_Execution_Test
 {
-	u32 completed;
-	b32 valid;
+	Bob_Node *dependent;
+	Bob_Node *started_nodes[3];
+	Bob_Node *completed_nodes[3];
+	u32       callback_thread;
+	u32       started;
+	u32       completed;
+	b32       valid;
 };
 
 static Bob_Node_Result generic_test_action(Bob_Node_Context *context, void *user_data)
@@ -1174,11 +1179,35 @@ static Bob_Node_Result generic_test_action(Bob_Node_Context *context, void *user
 	};
 }
 
-static void generic_test_completed(Bob_Node *node, Bob_Node_Result result, void *user_data)
+static void generic_test_event(Bob_Event event, void *user_data)
 {
 	Generic_Execution_Test *execution = user_data;
-	if (!node || !result.succeeded || !result.output) execution->valid = false;
-	++execution->completed;
+	if (platform_current_thread_id() != execution->callback_thread || !event.node) execution->valid = false;
+	if (event.type == BOB_EVENT_STARTED) {
+		if (event.result.output || event.result.succeeded || event.result.changed) execution->valid = false;
+		for (u32 i = 0; i < execution->started; ++i) {
+			if (execution->started_nodes[i] == event.node) execution->valid = false;
+		}
+		if (execution->started < ARRAY_COUNT(execution->started_nodes)) execution->started_nodes[execution->started] = event.node;
+		else execution->valid = false;
+		if (event.node == execution->dependent && execution->completed != 2) execution->valid = false;
+		++execution->started;
+	}
+	else if (event.type == BOB_EVENT_COMPLETED) {
+		b32 was_started = false;
+		if (!event.result.succeeded || !event.result.output) execution->valid = false;
+		for (u32 i = 0; i < execution->started && i < ARRAY_COUNT(execution->started_nodes); ++i) {
+			if (execution->started_nodes[i] == event.node) was_started = true;
+		}
+		for (u32 i = 0; i < execution->completed && i < ARRAY_COUNT(execution->completed_nodes); ++i) {
+			if (execution->completed_nodes[i] == event.node) execution->valid = false;
+		}
+		if (!was_started) execution->valid = false;
+		if (execution->completed < ARRAY_COUNT(execution->completed_nodes)) execution->completed_nodes[execution->completed] = event.node;
+		else execution->valid = false;
+		++execution->completed;
+	}
+	else execution->valid = false;
 }
 
 static Bob_Node_Result generic_test_failure(Bob_Node_Context *context, void *user_data)
@@ -1195,7 +1224,10 @@ static b32 test_generic_graph_actions(void)
 	Bob_Node *left = NULL;
 	Bob_Node *right = NULL;
 	Bob_Node *sum = NULL;
-	Generic_Execution_Test execution = { .valid = true };
+	Generic_Execution_Test execution = {
+		.callback_thread = platform_current_thread_id(),
+		.valid = true,
+	};
 	Generic_Action_Test actions[] = {
 		{ .execution = &execution, .value = 3, .changed = true },
 		{ .execution = &execution, .value = 5, .changed = false },
@@ -1228,12 +1260,13 @@ static b32 test_generic_graph_actions(void)
 	}, &sum));
 	CHECK_OK(bob_add_dependency(graph, sum, left));
 	CHECK_OK(bob_add_dependency(graph, sum, right));
+	execution.dependent = sum;
 	CHECK(bob_execute(graph, (Bob_Exec_Params){
 		.worker_count = 2,
 		.user_data = &execution,
-		.completed = generic_test_completed,
+		.event = generic_test_event,
 	}));
-	CHECK(execution.valid && execution.completed == 3);
+	CHECK(execution.valid && execution.started == 3 && execution.completed == 3);
 	CHECK(actions[0].valid && actions[0].calls == 1);
 	CHECK(actions[1].valid && actions[1].calls == 1);
 	CHECK(actions[2].valid && actions[2].calls == 1);

@@ -517,12 +517,13 @@ static void collect_build_state(Bob_Builder *builder, const Bob_Build_Completion
 	end_scratch(scratch);
 }
 
-static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *user_data)
+static void build_task_event(Bob_Event event, void *user_data)
 {
 	Bob_Builder *builder = user_data;
 	Bob_Build_Completion *completion;
-	if (!node || bob_node_function(node) != build_task_action) return;
-	completion = result.output;
+	if (event.type != BOB_EVENT_COMPLETED) return;
+	if (!event.node || bob_node_function(event.node) != build_task_action) return;
+	completion = event.result.output;
 	if (!completion) {
 		builder->internal_error = true;
 		return;
@@ -533,7 +534,7 @@ static void build_task_completed(Bob_Node *node, Bob_Node_Result result, void *u
 		report_completion(completion);
 		profile_scope_end(&scope);
 	}
-	collect_build_state(builder, completion, result.succeeded);
+	collect_build_state(builder, completion, event.result.succeeded);
 }
 
 static b32 valid_task(const Bob_Task_Desc *task)
@@ -600,7 +601,7 @@ b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 	result = bob_execute(bob, (Bob_Exec_Params){
 		.worker_count = options.worker_count,
 		.user_data = &builder,
-		.completed = build_task_completed,
+		.event = build_task_event,
 	});
 	if (builder.internal_error) result = false;
 	if (result && builder.state_tracking && builder.state_changed) {

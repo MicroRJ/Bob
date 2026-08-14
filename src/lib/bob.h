@@ -63,12 +63,29 @@ typedef struct Bob_Node_Desc
 }
 Bob_Node_Desc;
 
-typedef void Bob_Node_Completed_Function(Bob_Node *node, Bob_Node_Result result, void *user_data);
+typedef enum Bob_Event_Type
+{
+	BOB_EVENT_STARTED,
+	BOB_EVENT_COMPLETED,
+}
+Bob_Event_Type;
+
+typedef struct Bob_Event
+{
+	Bob_Event_Type  type;
+	Bob_Node       *node;
+	/* Meaningful only for BOB_EVENT_COMPLETED. */
+	Bob_Node_Result result;
+}
+Bob_Event;
+
+typedef void Bob_Event_Function(Bob_Event event, void *user_data);
+
 typedef struct Bob_Exec_Params
 {
-	u32                          worker_count;
-	void                        *user_data;
-	Bob_Node_Completed_Function *completed;
+	u32                 worker_count;
+	void               *user_data;
+	Bob_Event_Function *event;
 }
 Bob_Exec_Params;
 

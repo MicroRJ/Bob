@@ -43,7 +43,7 @@ static b32 build_state_encode_bytes(Build_State_Encoder *encoder, const void *da
 static b32 build_state_encode_u32(Build_State_Encoder *encoder, u32 value)
 {
 	u8 bytes[4] = {
-		(u8)value,
+		(u8)(value >> 0),
 		(u8)(value >> 8),
 		(u8)(value >> 16),
 		(u8)(value >> 24),
@@ -54,7 +54,7 @@ static b32 build_state_encode_u32(Build_State_Encoder *encoder, u32 value)
 static b32 build_state_encode_u64(Build_State_Encoder *encoder, u64 value)
 {
 	u8 bytes[8] = {
-		(u8)value,
+		(u8)(value >> 0),
 		(u8)(value >> 8),
 		(u8)(value >> 16),
 		(u8)(value >> 24),

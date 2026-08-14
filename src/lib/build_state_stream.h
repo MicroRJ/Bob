@@ -3,10 +3,10 @@
 
 #include "build_state.h"
 
-#define BUILD_STATE_STREAM_VERSION     3
-#define BUILD_STATE_STREAM_MAGIC       "BOBSTATE"
-#define BUILD_STATE_STREAM_MAGIC_SIZE  8
-#define BUILD_STATE_STREAM_HEADER_SIZE 16
+#define BUILD_STATE_STREAM_VERSION            3
+#define BUILD_STATE_STREAM_MAGIC              "BOBSTATE"
+#define BUILD_STATE_STREAM_MAGIC_SIZE         8
+#define BUILD_STATE_STREAM_HEADER_SIZE        16
 #define BUILD_STATE_STREAM_RECORD_HEADER_SIZE 8
 
 typedef enum Build_State_Load_Result

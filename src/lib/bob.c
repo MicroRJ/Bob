@@ -330,6 +330,7 @@ Bob_Node *bob_node_at(const Bob *bob, u32 index)
 	return bob && index < bob->node_count ? bob->nodes[index] : NULL;
 }
 
+// TODO(RJ) why is this returning a raw c string
 const char *bob_node_name(const Bob_Node *node)
 {
 	return node ? node->name.data : NULL;
@@ -383,13 +384,6 @@ const char *bob_error_string(Bob_Error result)
 
 typedef struct Bob_Executor Bob_Executor;
 
-typedef struct Bob_Completion
-{
-	Bob_Node        *node;
-	Bob_Node_Result  result;
-}
-Bob_Completion;
-
 typedef struct Bob_Worker
 {
 	Bob_Executor   *executor;
@@ -408,11 +402,13 @@ struct Bob_Executor
 	u32                   running;
 	Bob_Node            **work;
 	u32                   work_count;
-	Bob_Completion       *completions;
-	u32                   completion_count;
+	Bob_Event            *events;
+	u32                   event_capacity;
+	u32                   event_head;
+	u32                   event_count;
 	Platform_Mutex        mutex;
 	Platform_Condition    work_available;
-	Platform_Condition    completion_available;
+	Platform_Condition    event_available;
 	b32                   synchronization_initialized;
 	b32                   stopping;
 };
@@ -423,7 +419,26 @@ static void request_stop_locked(Bob_Executor *executor)
 {
 	executor->stopping = true;
 	platform_broadcast_condition(&executor->work_available);
-	platform_broadcast_condition(&executor->completion_available);
+	platform_broadcast_condition(&executor->event_available);
+}
+
+static b32 enqueue_event_locked(Bob_Executor *executor, Bob_Event event)
+{
+	if (executor->event_count == executor->event_capacity) return false;
+	u32 index = (executor->event_head + executor->event_count) % executor->event_capacity;
+	executor->events[index] = event;
+	++executor->event_count;
+	platform_signal_condition(&executor->event_available);
+	return true;
+}
+
+static b32 dequeue_event_locked(Bob_Executor *executor, Bob_Event *event)
+{
+	if (executor->event_count == 0) return false;
+	*event = executor->events[executor->event_head];
+	executor->event_head = (executor->event_head + 1) % executor->event_capacity;
+	--executor->event_count;
+	return true;
 }
 
 static u32 worker_main(void *data)
@@ -433,7 +448,7 @@ static u32 worker_main(void *data)
 	for (;;)
 	{
 		Bob_Node *node;
-		Bob_Completion completion;
+		Bob_Event completion;
 		Bob_Node_Context context;
 
 		platform_lock_mutex(&executor->mutex);
@@ -450,9 +465,19 @@ static u32 worker_main(void *data)
 		}
 
 		node = executor->work[--executor->work_count];
+		if (!enqueue_event_locked(executor, (Bob_Event){ .type = BOB_EVENT_STARTED, .node = node }))
+		{
+			log_fatal("executor event queue exhausted");
+			request_stop_locked(executor);
+			platform_unlock_mutex(&executor->mutex);
+			break;
+		}
 		platform_unlock_mutex(&executor->mutex);
 
-		completion = (Bob_Completion){ .node = node };
+		completion = (Bob_Event){
+			.type = BOB_EVENT_COMPLETED,
+			.node = node,
+		};
 		context = (Bob_Node_Context){
 			.bob = executor->bob,
 			.node = node,
@@ -467,8 +492,10 @@ static u32 worker_main(void *data)
 		if (!completion.result.succeeded) completion.result.changed = false;
 
 		platform_lock_mutex(&executor->mutex);
-		executor->completions[executor->completion_count++] = completion;
-		platform_signal_condition(&executor->completion_available);
+		if (!enqueue_event_locked(executor, completion)) {
+			log_fatal("executor event queue exhausted");
+			request_stop_locked(executor);
+		}
 		platform_unlock_mutex(&executor->mutex);
 	}
 	destroy_global_scratch();
@@ -539,14 +566,19 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	scratch = begin_scratch();
 	executor.workers = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.workers), _Alignof(Bob_Worker));
 	executor.work = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.work), _Alignof(Bob_Node *));
-	executor.completions = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.completions), _Alignof(Bob_Completion));
+	if (executor.worker_count > UINT32_MAX / 2) {
+		internal_error = true;
+		goto cleanup;
+	}
+	executor.event_capacity = executor.worker_count * 2;
+	executor.events = arena_push_zero_aligned(scratch.arena, executor.event_capacity * sizeof(*executor.events), _Alignof(Bob_Event));
 	bob->execution_arenas = arena_push_zero_aligned(&bob->arena, executor.worker_count * sizeof(*bob->execution_arenas), _Alignof(Arena));
-	internal_error = !executor.workers || !executor.work || !executor.completions || !bob->execution_arenas;
+	internal_error = !executor.workers || !executor.work || !executor.events || !bob->execution_arenas;
 	if (internal_error) goto cleanup;
 
 	platform_init_mutex(&executor.mutex);
 	platform_init_condition(&executor.work_available);
-	platform_init_condition(&executor.completion_available);
+	platform_init_condition(&executor.event_available);
 	executor.synchronization_initialized = true;
 	for (u32 i = 0; i < executor.worker_count; ++i) {
 		Bob_Worker *worker = executor.workers + i;
@@ -565,8 +597,8 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	}
 
 	while (!internal_error && !bob_is_finished(bob)) {
-		Bob_Completion completion = {0};
-		b32 has_completion = false;
+		Bob_Event event = {0};
+		b32 has_event = false;
 		dispatch_ready(&executor);
 		if (bob_is_finished(bob)) break;
 		if (executor.running == 0) {
@@ -574,33 +606,35 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 			break;
 		}
 		platform_lock_mutex(&executor.mutex);
-		while (!executor.stopping && executor.completion_count == 0) {
-			if (platform_wait_condition(&executor.completion_available, &executor.mutex).error) {
-				log_fatal("failed waiting for worker completion");
+		while (!executor.stopping && executor.event_count == 0) {
+			if (platform_wait_condition(&executor.event_available, &executor.mutex).error) {
+				log_fatal("failed waiting for worker event");
 				request_stop_locked(&executor);
 			}
 		}
-		if (executor.completion_count > 0) {
-			completion = executor.completions[--executor.completion_count];
-			has_completion = true;
-		}
+		has_event = dequeue_event_locked(&executor, &event);
 		platform_unlock_mutex(&executor.mutex);
-		if (!has_completion) {
+		if (!has_event) {
 			internal_error = true;
 			break;
 		}
-		if (bob_complete_result(bob, completion.node, completion.result) != BOB_OK) internal_error = true;
-		-- executor.running;
-		if (!internal_error) dispatch_ready(&executor);
-		if (executor.options.completed) {
-			executor.options.completed(completion.node, completion.result, executor.options.user_data);
+		if (event.type == BOB_EVENT_COMPLETED) {
+			if (bob_complete_result(bob, event.node, event.result) != BOB_OK) internal_error = true;
+			--executor.running;
+			if (!internal_error) dispatch_ready(&executor);
+		}
+		else if (event.type != BOB_EVENT_STARTED) {
+			internal_error = true;
+		}
+		if (executor.options.event) {
+			executor.options.event(event, executor.options.user_data);
 		}
 	}
 
 	cleanup:
 	stop_workers(&executor);
 	if (executor.synchronization_initialized) {
-		platform_destroy_condition(&executor.completion_available);
+		platform_destroy_condition(&executor.event_available);
 		platform_destroy_condition(&executor.work_available);
 		platform_destroy_mutex(&executor.mutex);
 	}
