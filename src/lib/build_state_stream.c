@@ -106,16 +106,16 @@ static u32 build_state_crc32c(const void *data, u64 size)
 	return ~crc;
 }
 
-static b32 build_state_stream_size(const Bob *bob, const Build_State *state, u64 *stream_size)
+static b32 build_state_stream_size(const Bob_Build *build, const Build_State *state, u64 *stream_size)
 {
 	u64 size = BUILD_STATE_STREAM_HEADER_SIZE;
-	if (!bob || !state || !stream_size) return false;
+	if (!build || !state || !stream_size) return false;
 	if (state->paths.path_count && !state->paths.paths) return false;
 	if (state->task_count && !state->tasks) return false;
 
 	for (u32 i = 0; i < state->paths.path_count; ++i) {
 		Bob_Path handle = state->paths.paths[i];
-		String path = bob_path_string(bob, handle);
+		String path = bob_path_string(build, handle);
 		u64 content_size = 8;
 		if (!path.data || path.size == 0 || path.size > UINT32_MAX) return false;
 		if (!bob_path_is_valid(handle)) return false;
@@ -207,14 +207,14 @@ static b32 build_state_stream_encode_remove(Build_State_Encoder *encoder, Build_
 	return build_state_stream_finish_record(encoder, &content, checksum_offset);
 }
 
-static b32 build_state_stream_encode_unlocked(Arena *arena, const Bob *bob, const Build_State *state, String *stream)
+static b32 build_state_stream_encode_unlocked(Arena *arena, const Bob_Build *build, const Build_State *state, String *stream)
 {
 	u64 mark;
 	u64 stream_size;
 	Build_State_Encoder encoder = {0};
-	if (!arena || !bob || !stream) return false;
+	if (!arena || !build || !stream) return false;
 	*stream = (String){0};
-	if (!build_state_stream_size(bob, state, &stream_size) || stream_size > SIZE_MAX) return false;
+	if (!build_state_stream_size(build, state, &stream_size) || stream_size > SIZE_MAX) return false;
 	mark = arena_mark(arena);
 	encoder.data = arena_push(arena, stream_size);
 	encoder.size = stream_size;
@@ -225,7 +225,7 @@ static b32 build_state_stream_encode_unlocked(Arena *arena, const Bob *bob, cons
 	if (!build_state_encode_u32(&encoder, BUILD_STATE_STREAM_HEADER_SIZE)) goto failure;
 
 	for (u32 i = 0; i < state->paths.path_count; ++i) {
-		if (!build_state_stream_encode_intern(&encoder, bob_path_string(bob, state->paths.paths[i]))) goto failure;
+		if (!build_state_stream_encode_intern(&encoder, bob_path_string(build, state->paths.paths[i]))) goto failure;
 	}
 
 	for (u32 i = 0; i < state->task_count; ++i) {
@@ -241,16 +241,16 @@ failure:
 	return false;
 }
 
-b32 build_state_stream_encode(Arena *arena, const Bob *bob, Build_State *state, String *stream)
+b32 build_state_stream_encode(Arena *arena, const Bob_Build *build, Build_State *state, String *stream)
 {
 	if (!state || !state->initialized) return false;
 	platform_lock_mutex(&state->mutex);
-	b32 result = build_state_stream_encode_unlocked(arena, bob, state, stream);
+	b32 result = build_state_stream_encode_unlocked(arena, build, state, stream);
 	platform_unlock_mutex(&state->mutex);
 	return result;
 }
 
-static Build_State_Stream_Result build_state_stream_replay_unlocked(Arena *arena, Bob *bob, String stream, Build_State *state)
+static Build_State_Stream_Result build_state_stream_replay_unlocked(Arena *arena, Bob_Build *build, String stream, Build_State *state)
 {
 	u64 mark;
 	Build_State decoded = {0};
@@ -258,7 +258,7 @@ static Build_State_Stream_Result build_state_stream_replay_unlocked(Arena *arena
 	const u8 *magic;
 	u32 version;
 	u32 header_size;
-	if (!arena || !bob || !state) return BUILD_STATE_STREAM_ERROR;
+	if (!arena || !build || !state) return BUILD_STATE_STREAM_ERROR;
 	build_state_replace_unlocked(state, &(Build_State){0});
 	if (!stream.data || stream.size < BUILD_STATE_STREAM_HEADER_SIZE) return BUILD_STATE_STREAM_INVALID;
 	mark = arena_mark(arena);
@@ -295,7 +295,7 @@ static Build_State_Stream_Result build_state_stream_replay_unlocked(Arena *arena
 			if (!build_state_decode_u32(&content, &path_size)) goto invalid;
 			if (path_size == 0 || path_size != content.size - content.cursor) goto invalid;
 			if (!build_state_decode_bytes(&content, &path_data, path_size)) goto invalid;
-			if (!bob_path_resolve(bob, bob_build_root(bob), string_from_data((void *)path_data, path_size), &path)) goto error;
+			if (!bob_path_resolve(build, bob_build_root(build), string_from_data((void *)path_data, path_size), &path)) goto error;
 			if (!build_state_add_replayed_path(arena, &decoded, path)) goto error;
 		} break;
 
@@ -369,11 +369,11 @@ error:
 	return BUILD_STATE_STREAM_ERROR;
 }
 
-Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob *bob, String stream, Build_State *state)
+Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob_Build *build, String stream, Build_State *state)
 {
 	if (!state || !state->initialized) return BUILD_STATE_STREAM_ERROR;
 	platform_lock_mutex(&state->mutex);
-	Build_State_Stream_Result result = build_state_stream_replay_unlocked(arena, bob, stream, state);
+	Build_State_Stream_Result result = build_state_stream_replay_unlocked(arena, build, stream, state);
 	platform_unlock_mutex(&state->mutex);
 	return result;
 }
@@ -391,7 +391,7 @@ static b32 build_state_append_bytes(String path, const void *data, u64 size)
 	return result;
 }
 
-static b32 build_state_append_set_unlocked(Arena *arena, String path, const Bob *bob, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint)
+static b32 build_state_append_set_unlocked(Arena *arena, String path, const Bob_Build *build, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint)
 {
 	u32 first_new_path;
 	u32 task_index;
@@ -399,7 +399,7 @@ static b32 build_state_append_set_unlocked(Arena *arena, String path, const Bob 
 	Scratch scratch;
 	Build_State_Encoder encoder = {0};
 	Build_State_Task *task;
-	if (!arena || !bob || !state || !string_is_terminated(path) || path.size == 0) return false;
+	if (!arena || !build || !state || !string_is_terminated(path) || path.size == 0) return false;
 	first_new_path = state->paths.path_count;
 	if (!build_state_set_unlocked(arena, state, output, dependencies, fingerprint)) return false;
 	task_index = build_state_task_index(state, output);
@@ -408,7 +408,7 @@ static b32 build_state_append_set_unlocked(Arena *arena, String path, const Bob 
 	task->output_stamp = output_stamp;
 
 	for (u32 i = first_new_path; i < state->paths.path_count; ++i) {
-		String new_path = bob_path_string(bob, state->paths.paths[i]);
+		String new_path = bob_path_string(build, state->paths.paths[i]);
 		if (!build_state_size_add(&append_size, 1, BUILD_STATE_STREAM_RECORD_HEADER_SIZE + 8)) return false;
 		if (!build_state_size_add(&append_size, 1, new_path.size)) return false;
 	}
@@ -423,7 +423,7 @@ static b32 build_state_append_set_unlocked(Arena *arena, String path, const Bob 
 		return false;
 	}
 	for (u32 i = first_new_path; i < state->paths.path_count; ++i) {
-		if (!build_state_stream_encode_intern(&encoder, bob_path_string(bob, state->paths.paths[i]))) goto failure;
+		if (!build_state_stream_encode_intern(&encoder, bob_path_string(build, state->paths.paths[i]))) goto failure;
 	}
 	if (!build_state_stream_encode_set(&encoder, state, task)) goto failure;
 	if (encoder.cursor != encoder.size || !build_state_append_bytes(path, encoder.data, encoder.size)) goto failure;
@@ -435,11 +435,11 @@ failure:
 	return false;
 }
 
-b32 build_state_append_set(Arena *arena, String path, const Bob *bob, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint)
+b32 build_state_append_set(Arena *arena, String path, const Bob_Build *build, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint)
 {
 	if (!state || !state->initialized) return false;
 	platform_lock_mutex(&state->mutex);
-	b32 result = build_state_append_set_unlocked(arena, path, bob, state, output, dependencies, output_stamp, fingerprint);
+	b32 result = build_state_append_set_unlocked(arena, path, build, state, output, dependencies, output_stamp, fingerprint);
 	platform_unlock_mutex(&state->mutex);
 	return result;
 }
@@ -477,7 +477,7 @@ static String build_state_parent_directory(String path)
 	return (String){0};
 }
 
-static b32 build_state_save_unlocked(String path, const Bob *bob, const Build_State *state)
+static b32 build_state_save_unlocked(String path, const Bob_Build *build, const Build_State *state)
 {
 	u64 stream_size;
 	u64 arena_capacity = 64;
@@ -488,7 +488,7 @@ static b32 build_state_save_unlocked(String path, const Bob *bob, const Build_St
 	b32 result = false;
 
 	if (!string_is_terminated(path) || path.size == 0) return false;
-	if (!build_state_stream_size(bob, state, &stream_size) || stream_size > SIZE_MAX) return false;
+	if (!build_state_stream_size(build, state, &stream_size) || stream_size > SIZE_MAX) return false;
 	if (!build_state_size_add(&arena_capacity, 1, stream_size)) return false;
 	if (!build_state_size_add(&arena_capacity, 3, path.size)) return false;
 	arena = arena_create(arena_capacity);
@@ -506,7 +506,7 @@ static b32 build_state_save_unlocked(String path, const Bob *bob, const Build_St
 		temporary = arena_string_from(&arena, start);
 		arena_finalize_string(&arena, temporary);
 	}
-	if (!build_state_stream_encode_unlocked(&arena, bob, state, &stream)) goto done;
+	if (!build_state_stream_encode_unlocked(&arena, build, state, &stream)) goto done;
 	if (!bob_platform_write_entire_file(temporary, stream.data, (size_t)stream.size)) goto done;
 	if (!platform_move_file(temporary.data, path.data, true)) goto done;
 	result = true;
@@ -517,23 +517,23 @@ done:
 	return result;
 }
 
-b32 build_state_save(String path, const Bob *bob, Build_State *state)
+b32 build_state_save(String path, const Bob_Build *build, Build_State *state)
 {
 	if (!state || !state->initialized) return false;
 	platform_lock_mutex(&state->mutex);
-	b32 result = build_state_save_unlocked(path, bob, state);
+	b32 result = build_state_save_unlocked(path, build, state);
 	platform_unlock_mutex(&state->mutex);
 	return result;
 }
 
-static Build_State_Load_Result build_state_load_unlocked(Arena *arena, Bob *bob, String path, Build_State *state)
+static Build_State_Load_Result build_state_load_unlocked(Arena *arena, Bob_Build *build, String path, Build_State *state)
 {
 	Bob_Platform_File_Info info;
 	Arena source_arena = {0};
 	String source;
 	Build_State_Load_Result result;
 	Build_State_Stream_Result stream_result;
-	if (!arena || !bob || !state || !string_is_terminated(path) || path.size == 0) return BUILD_STATE_LOAD_ERROR;
+	if (!arena || !build || !state || !string_is_terminated(path) || path.size == 0) return BUILD_STATE_LOAD_ERROR;
 	build_state_replace_unlocked(state, &(Build_State){0});
 	if (!bob_platform_file_info(path, &info)) return BUILD_STATE_LOAD_MISSING;
 	if (info.size == UINT64_MAX) return BUILD_STATE_LOAD_ERROR;
@@ -544,7 +544,7 @@ static Build_State_Load_Result build_state_load_unlocked(Arena *arena, Bob *bob,
 		arena_destroy(&source_arena);
 		return BUILD_STATE_LOAD_ERROR;
 	}
-	stream_result = build_state_stream_replay_unlocked(arena, bob, source, state);
+	stream_result = build_state_stream_replay_unlocked(arena, build, source, state);
 	switch (stream_result) {
 	case BUILD_STATE_STREAM_OK: result = BUILD_STATE_LOAD_OK; break;
 	case BUILD_STATE_STREAM_TRUNCATED: result = BUILD_STATE_LOAD_RECOVERED; break;
@@ -555,11 +555,11 @@ static Build_State_Load_Result build_state_load_unlocked(Arena *arena, Bob *bob,
 	return result;
 }
 
-Build_State_Load_Result build_state_load(Arena *arena, Bob *bob, String path, Build_State *state)
+Build_State_Load_Result build_state_load(Arena *arena, Bob_Build *build, String path, Build_State *state)
 {
 	if (!state || !state->initialized) return BUILD_STATE_LOAD_ERROR;
 	platform_lock_mutex(&state->mutex);
-	Build_State_Load_Result result = build_state_load_unlocked(arena, bob, path, state);
+	Build_State_Load_Result result = build_state_load_unlocked(arena, build, path, state);
 	platform_unlock_mutex(&state->mutex);
 	return result;
 }

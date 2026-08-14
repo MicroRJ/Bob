@@ -1,0 +1,26 @@
+Bob quick start
+
+Requirements
+
+    Windows x64
+    Visual Studio C++ build tools
+    clang-cl available from the command line
+
+From this directory, run:
+
+    ..\bob.exe
+
+Bob compiles and links the example in parallel where possible. Run it with:
+
+    ..\bob.exe run
+
+Run the build again to see the no-op case:
+
+    ..\bob.exe
+
+Then edit message.h or message.c and ask Bob to explain the next build:
+
+    ..\bob.exe --explain
+
+The build description is build.elf. Bob's persistent incremental state lives
+in .bob/state, and generated files live in build/.

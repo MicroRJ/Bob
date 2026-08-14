@@ -39,11 +39,11 @@ typedef enum Build_State_Stream_Result
 }
 Build_State_Stream_Result;
 
-b32 build_state_stream_encode(Arena *arena, const Bob *bob, Build_State *state, String *stream);
-Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob *bob, String stream, Build_State *state);
-b32 build_state_append_set(Arena *arena, String path, const Bob *bob, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint);
+b32 build_state_stream_encode(Arena *arena, const Bob_Build *build, Build_State *state, String *stream);
+Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob_Build *build, String stream, Build_State *state);
+b32 build_state_append_set(Arena *arena, String path, const Bob_Build *build, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint);
 b32 build_state_append_remove(String path, Build_State *state, Bob_Path output);
-b32 build_state_save(String path, const Bob *bob, Build_State *state);
-Build_State_Load_Result build_state_load(Arena *arena, Bob *bob, String path, Build_State *state);
+b32 build_state_save(String path, const Bob_Build *build, Build_State *state);
+Build_State_Load_Result build_state_load(Arena *arena, Bob_Build *build, String path, Build_State *state);
 
 #endif

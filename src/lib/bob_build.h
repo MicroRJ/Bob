@@ -5,6 +5,8 @@
 
 #define BOB_FINGERPRINT_SIZE 32
 
+typedef struct Bob_Build Bob_Build;
+
 typedef struct Bob_Fingerprint
 {
 	u8 bytes[BOB_FINGERPRINT_SIZE];
@@ -31,12 +33,17 @@ typedef struct Bob_Build_Params
 }
 Bob_Build_Params;
 
-b32 bob_build(Bob *bob, Bob_Build_Params options);
+Bob_Build *bob_build_create(void);
+void bob_build_destroy(Bob_Build *build);
+Bob *bob_build_graph(Bob_Build *build);
+const Bob *bob_build_graph_const(const Bob_Build *build);
 
-Bob_Error bob_add_task(Bob *bob, Bob_Task_Desc task, Bob_Node **node_out);
-Bob_Error bob_set_task(Bob *bob, Bob_Node *node, Bob_Task_Desc task);
+b32 bob_build(Bob_Build *build, Bob_Build_Params options);
 
-u32 bob_task_count(const Bob *bob);
+Bob_Error bob_add_task(Bob_Build *build, Bob_Task_Desc task, Bob_Node **node_out);
+Bob_Error bob_set_task(Bob_Build *build, Bob_Node *node, Bob_Task_Desc task);
+
+u32 bob_task_count(const Bob_Build *build);
 const char *bob_task_name(const Bob_Node *node);
 Bob_Node_Status bob_task_state(const Bob_Node *node);
 

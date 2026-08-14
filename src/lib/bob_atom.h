@@ -1,7 +1,11 @@
 #ifndef BOB_ATOM_H
 #define BOB_ATOM_H
 
+// NOTE(RJ)
+// Atoms are just interned strings
+
 #include "base.h"
+
 
 typedef struct Bob_Atom
 {

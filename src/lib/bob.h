@@ -2,26 +2,12 @@
 #define BOB_H
 
 #include "base.h"
-#include "bob_atom.h"
 
 #define BOB_VERSION "0.1.0-dev"
 
 typedef struct Bob Bob;
 typedef struct Bob_Node Bob_Node;
 typedef struct Bob_Node_Context Bob_Node_Context;
-
-typedef struct Bob_Path
-{
-	Bob_Atom atom;
-}
-Bob_Path;
-
-typedef struct Bob_Path_Array
-{
-	Bob_Path *items;
-	u32       count;
-}
-Bob_Path_Array;
 
 typedef enum Bob_Error
 {
@@ -91,12 +77,6 @@ void bob_destroy(Bob *bob);
 /* Graph-lifetime storage. Available only before the graph is prepared. */
 void *bob_allocate(Bob *bob, u64 size, u64 alignment);
 String bob_copy_string(Bob *bob, String string);
-Bob_Atom bob_intern(Bob *bob, String value);
-String bob_atom_string(const Bob *bob, Bob_Atom atom);
-b32 bob_path_resolve(Bob *bob, Bob_Path directory, String source, Bob_Path *result);
-String bob_path_string(const Bob *bob, Bob_Path path);
-b32 bob_path_is_valid(Bob_Path path);
-Bob_Path bob_build_root(const Bob *bob);
 Bob_Error bob_add_node(Bob *bob, Bob_Node_Desc description, Bob_Node **node_out);
 Bob_Error bob_set_node(Bob *bob, Bob_Node *node, Bob_Node_Desc description);
 Bob_Error bob_set_node_action(Bob *bob, Bob_Node *node, Bob_Node_Function *function, void *user_data);

@@ -35,12 +35,12 @@ ELF_FUNCTION(l_bob_build)
 	Script_Options options = script_options_resolve(build.options, script->command_line_options);
 	logger_set_verbosity(options.verbosity);
 	Profile_Scope scope = profile_scope_begin("builder");
-	b32 succeeded = bob_build(build.bob, (Bob_Build_Params){
+	b32 succeeded = bob_build(build.build, (Bob_Build_Params){
 		.worker_count = options.worker_count,
 		.explain = script->command_line_options.explain,
 	});
 	profile_scope_end(&scope);
-	bob_destroy(build.bob);
+	bob_build_destroy(build.build);
 	if (!succeeded) {
 		script_set_error(script, "build failed");
 		script->failed = true;
@@ -353,8 +353,8 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 		elf_set_top(state, task_checkpoint);
 	}
 
-	result->bob = bob_create();
-	if (!result->bob) {
+	result->build = bob_build_create();
+	if (!result->build) {
 		snprintf(result->error, sizeof(result->error), "out of memory");
 		goto cleanup;
 	}
@@ -397,7 +397,7 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 		if (!copy_string_array_field(state, scratch.arena, description, "outputs", task.name, &task.outputs, result->error, sizeof(result->error))) goto cleanup;
 		if (!copy_string_array_field(state, scratch.arena, description, "include_dirs", task.name, &task.include_directories, result->error, sizeof(result->error))) goto cleanup;
 		Bob_Node *node;
-		Bob_Error bob_error = bob_add_task(result->bob, task, &node);
+		Bob_Error bob_error = bob_add_task(result->build, task, &node);
 		if (bob_error != BOB_OK) {
 			snprintf(result->error, sizeof(result->error), "unable to add task '%s': %s", task.name.data, bob_error_string(bob_error));
 			goto cleanup;
@@ -427,9 +427,10 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 				snprintf(result->error, sizeof(result->error), "unable to resolve dependency for task %u", i);
 				goto cleanup;
 			}
-			Bob_Node *node = bob_node_at(result->bob, i);
-			Bob_Node *dependency_node = bob_node_at(result->bob, resolved);
-			Bob_Error bob_error = bob_add_dependency(result->bob, node, dependency_node);
+			Bob *graph = bob_build_graph(result->build);
+			Bob_Node *node = bob_node_at(graph, i);
+			Bob_Node *dependency_node = bob_node_at(graph, resolved);
+			Bob_Error bob_error = bob_add_dependency(graph, node, dependency_node);
 			if (bob_error != BOB_OK) {
 				snprintf(result->error, sizeof(result->error), "unable to add dependency to '%s': %s", bob_task_name(node), bob_error_string(bob_error));
 				goto cleanup;
@@ -447,7 +448,7 @@ cleanup:
 	{
 		char error[sizeof(result->error)];
 		memcpy(error, result->error, sizeof(error));
-		bob_destroy(result->bob);
+		bob_build_destroy(result->build);
 		memset(result, 0, sizeof(*result));
 		memcpy(result->error, error, sizeof(error));
 	}

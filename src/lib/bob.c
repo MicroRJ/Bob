@@ -21,15 +21,13 @@ struct Bob_Node
 	String             name;
 	Bob_Node_Function *function;
 	void              *user_data;
-	Bob_Node_Result     result;
-	Bob_Node_Status     state;
+	Bob_Node_Result    result;
+	Bob_Node_Status    state;
 };
 
 struct Bob
 {
 	Arena          arena;
-	Bob_Interner  *interner;
-	Bob_Path       build_root;
 	Bob_Node     **nodes;
 	u32            node_count;
 	u32            node_capacity;
@@ -67,102 +65,6 @@ static b32 bob_reserve(Bob *bob, void **memory, u32 element_size, u32 count, u32
 	return true;
 }
 
-Bob_Atom bob_intern(Bob *bob, String value)
-{
-	return bob ? bob_interner_intern(bob->interner, value) : (Bob_Atom){0};
-}
-
-String bob_atom_string(const Bob *bob, Bob_Atom atom)
-{
-	return bob ? bob_interner_string(bob->interner, atom) : (String){0};
-}
-
-static b32 bob_path_is_absolute(String path)
-{
-	return path.size > 0 && (path.data[0] == '/' || path.data[0] == '\\' ||
-		(path.size >= 3 && path.data[1] == ':' && (path.data[2] == '/' || path.data[2] == '\\')));
-}
-
-static b32 bob_path_platform_absolute(Arena *arena, String path, String *result)
-{
-	String terminated = path;
-	if (!string_is_terminated(terminated)) {
-		terminated = arena_push_string_copy(arena, path);
-		if (!terminated.data) return false;
-	}
-	Platform_String_Result query = platform_get_absolute_path(terminated.data, NULL, 0);
-	if (query.error || query.required_capacity == 0) return false;
-	char *data = arena_reserve(arena, query.required_capacity);
-	if (!data) return false;
-	Platform_String_Result filled = platform_get_absolute_path(terminated.data, data, query.required_capacity);
-	if (filled.error || !arena_push(arena, query.required_capacity)) return false;
-	*result = string_from_data(data, filled.size);
-	return true;
-}
-
-static String bob_path_normalize_separators(String path)
-{
-	u64 write = 0;
-	for (u64 read = 0; read < path.size; ++read) {
-		char character = path.data[read] == '\\' ? '/' : path.data[read];
-		b32 preserve_unc_prefix = write < 2 && read < 2 && character == '/';
-		if (character == '/' && write > 0 && path.data[write - 1] == '/' && !preserve_unc_prefix) continue;
-		path.data[write++] = character;
-	}
-	if (write >= 2 && path.data[1] == ':' && path.data[0] >= 'a' && path.data[0] <= 'z') path.data[0] -= 'a' - 'A';
-	b32 root = write == 1 && path.data[0] == '/';
-	b32 drive_root = write == 3 && path.data[1] == ':' && path.data[2] == '/';
-	if (write > 0 && path.data[write - 1] == '/' && !root && !drive_root) --write;
-	path.data[write] = 0;
-	path.size = write;
-	return path;
-}
-
-b32 bob_path_resolve(Bob *bob, Bob_Path directory, String source, Bob_Path *result)
-{
-	if (!bob || !result || !source.data || source.size == 0) return false;
-	Scratch scratch = begin_scratch();
-	String candidate = source;
-	if (!bob_path_is_absolute(source)) {
-		String base = bob_path_string(bob, directory);
-		if (!base.data) goto failure;
-		void *start = arena_top(scratch.arena);
-		arena_append_str(scratch.arena, base);
-		if (base.size && base.data[base.size - 1] != '/') arena_append_char(scratch.arena, '/');
-		arena_append_str(scratch.arena, source);
-		candidate = arena_string_from(scratch.arena, start);
-		arena_finalize_string(scratch.arena, candidate);
-	}
-	String absolute;
-	if (!bob_path_platform_absolute(scratch.arena, candidate, &absolute)) goto failure;
-	absolute = bob_path_normalize_separators(absolute);
-	if (!absolute.data || absolute.size == 0) goto failure;
-	Bob_Atom atom = bob_intern(bob, absolute);
-	if (!atom.id) goto failure;
-	*result = (Bob_Path){ atom };
-	end_scratch(scratch);
-	return true;
-
-failure:
-	end_scratch(scratch);
-	return false;
-}
-
-String bob_path_string(const Bob *bob, Bob_Path path)
-{
-	return bob_atom_string(bob, path.atom);
-}
-
-b32 bob_path_is_valid(Bob_Path path)
-{
-	return bob_atom_is_valid(path.atom);
-}
-
-Bob_Path bob_build_root(const Bob *bob)
-{
-	return bob ? bob->build_root : (Bob_Path){0};
-}
-
 void *bob_allocate(Bob *bob, u64 size, u64 alignment)
 {
 	if (!bob || bob->prepared || alignment == 0) return NULL;
@@ -193,6 +95,7 @@ static b32 valid_node(const Bob *bob, const Bob_Node *node)
 	return false;
 }
 
+// Add the node to the ready queue, nodes in the ready queue can be consumed by the executor next
 static void enqueue_ready(Bob *bob, Bob_Node *node)
 {
 	/* A node is enqueued at most once, so node_count slots are sufficient. */
@@ -204,8 +107,6 @@ Bob *bob_create(void)
 {
 	Arena arena = arena_create(0);
 	Bob *bob;
-	Scratch scratch;
-	String directory;
 	if (!arena.data) return NULL;
 	arena_set_name(&arena, "Bob graph");
 	bob = arena_push_zero_aligned(&arena, sizeof(*bob), _Alignof(Bob));
@@ -214,28 +115,7 @@ Bob *bob_create(void)
 		return NULL;
 	}
 	bob->arena = arena;
-	bob->interner = bob_interner_create(&bob->arena);
-	if (!bob->interner) {
-		arena_destroy(&arena);
-		return NULL;
-	}
-	scratch = begin_scratch();
-	Platform_String_Result query = platform_get_current_directory(NULL, 0);
-	if (query.error || query.required_capacity == 0) goto failure;
-	char *data = arena_reserve(scratch.arena, query.required_capacity);
-	if (!data) goto failure;
-	Platform_String_Result filled = platform_get_current_directory(data, query.required_capacity);
-	if (filled.error || !arena_push(scratch.arena, query.required_capacity)) goto failure;
-	directory = string_from_data(data, filled.size);
-	if (!bob_path_resolve(bob, (Bob_Path){0}, directory, &bob->build_root)) goto failure;
-	end_scratch(scratch);
 	return bob;
-
-failure:
-	end_scratch(scratch);
-	bob_interner_destroy(bob->interner);
-	arena_destroy(&arena);
-	return NULL;
 }
 
 void bob_destroy(Bob *bob)
@@ -245,7 +125,6 @@ void bob_destroy(Bob *bob)
 	for (u32 i = 0; i < bob->execution_arena_count; ++i) {
 		arena_destroy(bob->execution_arenas + i);
 	}
-	bob_interner_destroy(bob->interner);
 	arena = bob->arena;
 	arena_destroy(&arena);
 }
@@ -320,46 +199,46 @@ Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency)
 
 static Bob_Error validate_acyclic(Bob *bob)
 {
-	u64 mark;
-	Bob_Node **queue;
-	u32 head = 0;
-	u32 count = 0;
-	u32 visited = 0;
+
 	if (bob->node_count == 0) return BOB_OK;
-	mark = arena_mark(&bob->arena);
-	queue = bob_push(bob, bob->node_count * sizeof(*queue), _Alignof(Bob_Node *));
+	u64 mark = arena_mark(&bob->arena);
+	Bob_Node **queue = bob_push(bob, bob->node_count * sizeof(*queue), _Alignof(Bob_Node *));
 	if (!queue) {
 		arena_restore(&bob->arena, mark);
 		return BOB_ERROR_OUT_OF_MEMORY;
 	}
+
+	u32 queue_count = 0;
+	// collect leaf nodes, nodes without dependencies
 	for (u32 i = 0; i < bob->node_count; ++i) {
 		Bob_Node *node = bob->nodes[i];
 		node->unfinished_dependencies = node->dependencies.count;
-		if (node->unfinished_dependencies == 0) queue[count++] = node;
+		if (node->unfinished_dependencies == 0) queue[queue_count ++] = node;
 	}
-	while (head < count) {
-		Bob_Node *node = queue[head++];
-		++visited;
-		for (u32 i = 0; i < node->dependents.count; ++i) {
-			Bob_Node *dependent = node->dependents.items[i];
-			--dependent->unfinished_dependencies;
-			if (dependent->unfinished_dependencies == 0) queue[count++] = dependent;
+
+	for (u32 i = 0; i < queue_count; i ++)
+	{
+		Bob_Node *node = queue[i];
+		for (u32 d = 0; d < node->dependents.count; ++ d) {
+			Bob_Node *dependent = node->dependents.items[d];
+			-- dependent->unfinished_dependencies;
+			if (dependent->unfinished_dependencies == 0) queue[queue_count ++] = dependent;
 		}
 	}
 	arena_restore(&bob->arena, mark);
-	return visited == bob->node_count ? BOB_OK : BOB_ERROR_CYCLE;
+	return queue_count == bob->node_count ? BOB_OK : BOB_ERROR_CYCLE;
 }
 
 Bob_Error bob_prepare(Bob *bob)
 {
-	Bob_Error result;
 	if (!bob) return BOB_ERROR_INVALID_NODE;
 	if (bob->prepared) return BOB_ERROR_ALREADY_PREPARED;
-	result = validate_acyclic(bob);
+
+	Bob_Error result = validate_acyclic(bob);
 	if (result != BOB_OK) return result;
+
 	if (bob->node_count > 0) {
-		bob->ready = bob_push(bob, bob->node_count * sizeof(*bob->ready),
-		_Alignof(Bob_Node *));
+		bob->ready = bob_push(bob, bob->node_count * sizeof(*bob->ready), _Alignof(Bob_Node *));
 		if (!bob->ready) return BOB_ERROR_OUT_OF_MEMORY;
 	}
 	bob->prepared = true;
@@ -522,14 +401,14 @@ Bob_Worker;
 struct Bob_Executor
 {
 	Bob                  *bob;
-	Bob_Exec_Params   options;
+	Bob_Exec_Params       options;
 	Bob_Worker           *workers;
 	u32                   worker_count;
 	u32                   thread_count;
 	u32                   running;
 	Bob_Node            **work;
 	u32                   work_count;
-	Bob_Completion      **completions;
+	Bob_Completion       *completions;
 	u32                   completion_count;
 	Platform_Mutex        mutex;
 	Platform_Condition    work_available;
@@ -538,6 +417,8 @@ struct Bob_Executor
 	b32                   stopping;
 };
 
+// Must have mutex access.
+// Requests stop.
 static void request_stop_locked(Bob_Executor *executor)
 {
 	executor->stopping = true;
@@ -552,8 +433,9 @@ static u32 worker_main(void *data)
 	for (;;)
 	{
 		Bob_Node *node;
-		Bob_Completion *completion;
+		Bob_Completion completion;
 		Bob_Node_Context context;
+
 		platform_lock_mutex(&executor->mutex);
 		while (!executor->stopping && executor->work_count == 0) {
 			if (platform_wait_condition(&executor->work_available, &executor->mutex).error) {
@@ -561,22 +443,16 @@ static u32 worker_main(void *data)
 				request_stop_locked(executor);
 			}
 		}
+
 		if (executor->stopping) {
 			platform_unlock_mutex(&executor->mutex);
 			break;
 		}
+
 		node = executor->work[--executor->work_count];
 		platform_unlock_mutex(&executor->mutex);
 
-		completion = arena_push_zero_aligned(worker->output, sizeof(*completion), _Alignof(Bob_Completion));
-		if (!completion) {
-			log_fatal("worker output arena exhausted");
-			platform_lock_mutex(&executor->mutex);
-			request_stop_locked(executor);
-			platform_unlock_mutex(&executor->mutex);
-			break;
-		}
-		completion->node = node;
+		completion = (Bob_Completion){ .node = node };
 		context = (Bob_Node_Context){
 			.bob = executor->bob,
 			.node = node,
@@ -585,10 +461,10 @@ static u32 worker_main(void *data)
 		};
 		{
 			Profile_Scope scope = profile_scope_begin("node action");
-			completion->result = node->function(&context, node->user_data);
+			completion.result = node->function(&context, node->user_data);
 			profile_scope_end(&scope);
 		}
-		if (!completion->result.succeeded) completion->result.changed = false;
+		if (!completion.result.succeeded) completion.result.changed = false;
 
 		platform_lock_mutex(&executor->mutex);
 		executor->completions[executor->completion_count++] = completion;
@@ -663,7 +539,7 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	scratch = begin_scratch();
 	executor.workers = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.workers), _Alignof(Bob_Worker));
 	executor.work = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.work), _Alignof(Bob_Node *));
-	executor.completions = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.completions), _Alignof(Bob_Completion *));
+	executor.completions = arena_push_zero_aligned(scratch.arena, executor.worker_count * sizeof(*executor.completions), _Alignof(Bob_Completion));
 	bob->execution_arenas = arena_push_zero_aligned(&bob->arena, executor.worker_count * sizeof(*bob->execution_arenas), _Alignof(Arena));
 	internal_error = !executor.workers || !executor.work || !executor.completions || !bob->execution_arenas;
 	if (internal_error) goto cleanup;
@@ -689,7 +565,8 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	}
 
 	while (!internal_error && !bob_is_finished(bob)) {
-		Bob_Completion *completion = NULL;
+		Bob_Completion completion = {0};
+		b32 has_completion = false;
 		dispatch_ready(&executor);
 		if (bob_is_finished(bob)) break;
 		if (executor.running == 0) {
@@ -705,17 +582,18 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 		}
 		if (executor.completion_count > 0) {
 			completion = executor.completions[--executor.completion_count];
+			has_completion = true;
 		}
 		platform_unlock_mutex(&executor.mutex);
-		if (!completion) {
+		if (!has_completion) {
 			internal_error = true;
 			break;
 		}
-		if (bob_complete_result(bob, completion->node, completion->result) != BOB_OK) internal_error = true;
+		if (bob_complete_result(bob, completion.node, completion.result) != BOB_OK) internal_error = true;
 		-- executor.running;
 		if (!internal_error) dispatch_ready(&executor);
 		if (executor.options.completed) {
-			executor.options.completed(completion->node, completion->result, executor.options.user_data);
+			executor.options.completed(completion.node, completion.result, executor.options.user_data);
 		}
 	}
 

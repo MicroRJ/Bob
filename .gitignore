@@ -1,6 +1,9 @@
 # Script_Build output
 build/
 
+# Release packages
+dist/
+
 # Bob build state
 .bob/
 

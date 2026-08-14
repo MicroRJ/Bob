@@ -104,53 +104,45 @@ static b32 test_blake3(void)
 	return true;
 }
 
-static b32 test_atoms_and_paths(void)
+static b32 test_build_paths(void)
 {
-	Bob *bob = bob_create();
-	Bob_Atom alpha;
-	Bob_Atom repeated;
-	Bob_Atom beta;
+	Bob_Build *build = bob_build_create();
+	Bob *graph;
 	Bob_Path root;
 	Bob_Path first;
 	Bob_Path second;
 	Bob_Path absolute;
 	String root_string;
 	String first_string;
-	CHECK(bob != NULL);
+	CHECK(build != NULL);
+	graph = bob_build_graph(build);
+	CHECK(graph != NULL);
 
-	alpha = bob_intern(bob, STRING_LITERAL("alpha"));
-	repeated = bob_intern(bob, STRING_LITERAL("alpha"));
-	beta = bob_intern(bob, STRING_LITERAL("beta"));
-	CHECK(bob_atom_is_valid(alpha));
-	CHECK(alpha.id == repeated.id);
-	CHECK(alpha.id != beta.id);
-	CHECK(string_equal(bob_atom_string(bob, alpha), STRING_LITERAL("alpha")));
-
-	root = bob_build_root(bob);
-	root_string = bob_path_string(bob, root);
+	root = bob_build_root(build);
+	root_string = bob_path_string(build, root);
 	CHECK(bob_path_is_valid(root));
 	CHECK(root_string.size >= 3 && root_string.data[1] == ':');
 	CHECK(root_string.data[0] >= 'A' && root_string.data[0] <= 'Z');
 	CHECK(memchr(root_string.data, '\\', (size_t)root_string.size) == NULL);
-	CHECK(bob_path_resolve(bob, root, STRING_LITERAL("build\\path-test\\temporary\\..\\file.obj"), &first));
-	CHECK(bob_path_resolve(bob, root, STRING_LITERAL(".\\build/path-test/file.obj"), &second));
+	CHECK(bob_path_resolve(build, root, STRING_LITERAL("build\\path-test\\temporary\\..\\file.obj"), &first));
+	CHECK(bob_path_resolve(build, root, STRING_LITERAL(".\\build/path-test/file.obj"), &second));
 	CHECK(first.atom.id == second.atom.id);
-	first_string = bob_path_string(bob, first);
+	first_string = bob_path_string(build, first);
 	CHECK(memchr(first_string.data, '\\', (size_t)first_string.size) == NULL);
-	CHECK(bob_path_resolve(bob, root, first_string, &absolute));
+	CHECK(bob_path_resolve(build, root, first_string, &absolute));
 	CHECK(absolute.atom.id == first.atom.id);
-	CHECK(!bob_path_resolve(bob, root, STRING_LITERAL(""), &absolute));
+	CHECK(!bob_path_resolve(build, root, STRING_LITERAL(""), &absolute));
 
-	CHECK_OK(bob_prepare(bob));
-	CHECK(bob_atom_is_valid(bob_intern(bob, STRING_LITERAL("discovered after prepare"))));
-	bob_destroy(bob);
+	CHECK_OK(bob_prepare(graph));
+	CHECK(bob_path_resolve(build, root, STRING_LITERAL("discovered after prepare"), &absolute));
+	bob_build_destroy(build);
 	return true;
 }
 
 static Bob_Node *add_node(Bob *graph, const char *name)
 {
     Bob_Node *node = NULL;
-    Bob_Error result = bob_add_task(graph, (Bob_Task_Desc){ .name = string_from_cstring(name) }, &node);
+    Bob_Error result = bob_add_node(graph, (Bob_Node_Desc){ .name = string_from_cstring(name) }, &node);
     if (result != BOB_OK) {
         printf("  unable to add node %s: %s\n", name, bob_error_string(result));
         exit(2);
@@ -218,10 +210,10 @@ static void test_update_state_stream_checksum(String stream, u64 content)
 	test_store_u32((u8 *)stream.data + header + 4, checksum);
 }
 
-static Bob_Path test_path(Bob *bob, String source)
+static Bob_Path test_path(Bob_Build *build, String source)
 {
 	Bob_Path result = {0};
-	if (bob) bob_path_resolve(bob, bob_build_root(bob), source, &result);
+	if (build) bob_path_resolve(build, bob_build_root(build), source, &result);
 	return result;
 }
 
@@ -240,7 +232,7 @@ static b32 fingerprints_equal(Bob_Fingerprint left, Bob_Fingerprint right)
 	return memcmp(left.bytes, right.bytes, BOB_FINGERPRINT_SIZE) == 0;
 }
 
-static b32 test_state_set(Arena *arena, Bob *bob, Build_State *state, String output, String_Array dependencies)
+static b32 test_state_set(Arena *arena, Bob_Build *build, Build_State *state, String output, String_Array dependencies)
 {
 	Bob_Path_Array paths = {0};
 	if (dependencies.count) {
@@ -248,14 +240,14 @@ static b32 test_state_set(Arena *arena, Bob *bob, Build_State *state, String out
 		if (!paths.items) return false;
 	}
 	for (u32 i = 0; i < dependencies.count; ++i) {
-		paths.items[paths.count] = test_path(bob, dependencies.items[i]);
+		paths.items[paths.count] = test_path(build, dependencies.items[i]);
 		if (!bob_path_is_valid(paths.items[paths.count])) return false;
 		++paths.count;
 	}
-	return build_state_set(arena, state, test_path(bob, output), paths, test_fingerprint(output));
+	return build_state_set(arena, state, test_path(build, output), paths, test_fingerprint(output));
 }
 
-static b32 test_state_append_set(Arena *arena, Bob *bob, String file, Build_State *state, String output, String_Array dependencies, u64 output_stamp, String fingerprint)
+static b32 test_state_append_set(Arena *arena, Bob_Build *build, String file, Build_State *state, String output, String_Array dependencies, u64 output_stamp, String fingerprint)
 {
 	Bob_Path_Array paths = {0};
 	if (dependencies.count) {
@@ -263,16 +255,16 @@ static b32 test_state_append_set(Arena *arena, Bob *bob, String file, Build_Stat
 		if (!paths.items) return false;
 	}
 	for (u32 i = 0; i < dependencies.count; ++i) {
-		paths.items[paths.count] = test_path(bob, dependencies.items[i]);
+		paths.items[paths.count] = test_path(build, dependencies.items[i]);
 		if (!bob_path_is_valid(paths.items[paths.count])) return false;
 		++paths.count;
 	}
-	return build_state_append_set(arena, file, bob, state, test_path(bob, output), paths, output_stamp, test_fingerprint(fingerprint));
+	return build_state_append_set(arena, file, build, state, test_path(build, output), paths, output_stamp, test_fingerprint(fingerprint));
 }
 
-static b32 state_task_contains_path(Bob *bob, const Build_State_Task_Snapshot *task, String path)
+static b32 state_task_contains_path(Bob_Build *build, const Build_State_Task_Snapshot *task, String path)
 {
-	Bob_Path expected = test_path(bob, path);
+	Bob_Path expected = test_path(build, path);
 	if (!task || !bob_path_is_valid(expected)) return false;
 	for (u32 i = 0; i < task->dependencies.count; ++i) {
 		if (task->dependencies.items[i].atom.id == expected.atom.id) return true;
@@ -283,7 +275,7 @@ static b32 state_task_contains_path(Bob *bob, const Build_State_Task_Snapshot *t
 static b32 test_build_state_file(void)
 {
 	static const char malformed[] = "not a Bob state";
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena state_arena = arena_create(KILOBYTES(64));
 	Arena loaded_arena = arena_create(KILOBYTES(64));
 	Arena io_arena = arena_create(KILOBYTES(64));
@@ -394,13 +386,13 @@ static b32 test_build_state_file(void)
 	arena_destroy(&io_arena);
 	arena_destroy(&loaded_arena);
 	arena_destroy(&state_arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 	return true;
 }
 
 static b32 test_build_state_stream(void)
 {
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena state_arena = arena_create(KILOBYTES(64));
 	Arena stream_arena = arena_create(KILOBYTES(64));
 	Arena loaded_arena = arena_create(KILOBYTES(64));
@@ -503,13 +495,13 @@ static b32 test_build_state_stream(void)
 	arena_destroy(&loaded_arena);
 	arena_destroy(&stream_arena);
 	arena_destroy(&state_arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 	return true;
 }
 
 static b32 test_build_state_append(void)
 {
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena state_arena = arena_create(KILOBYTES(64));
 	Arena loaded_arena = arena_create(KILOBYTES(64));
 	Arena io_arena = arena_create(KILOBYTES(64));
@@ -571,13 +563,13 @@ static b32 test_build_state_append(void)
 	arena_destroy(&io_arena);
 	arena_destroy(&loaded_arena);
 	arena_destroy(&state_arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 	return true;
 }
 
 static b32 test_build_state_path_map(void)
 {
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena arena = arena_create(KILOBYTES(64));
 	Build_State state = {0};
 	Bob_Path first = test_path(bob, STRING_LITERAL("build\\objects\\..\\main.obj"));
@@ -597,13 +589,13 @@ static b32 test_build_state_path_map(void)
 
 	build_state_destroy(&state);
 	arena_destroy(&arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 	return true;
 }
 
 static b32 test_build_state_tasks(void)
 {
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena arena = arena_create(KILOBYTES(256));
 	Build_State state = {0};
 	String first_dependencies[] = {
@@ -661,14 +653,14 @@ static b32 test_build_state_tasks(void)
 
 	build_state_destroy(&state);
 	arena_destroy(&arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 	return true;
 }
 
 static b32 test_build_state_stress(void)
 {
 	enum { TASK_COUNT = 1886, DEPENDENCY_COUNT = 300 };
-	Bob *bob = bob_create();
+	Bob_Build *bob = bob_build_create();
 	Arena source_arena = arena_create(MEGABYTES(1));
 	Arena state_arena = arena_create(MEGABYTES(16));
 	Arena loaded_arena = arena_create(MEGABYTES(16));
@@ -768,7 +760,7 @@ cleanup:
 	arena_destroy(&loaded_arena);
 	arena_destroy(&state_arena);
 	arena_destroy(&source_arena);
-	bob_destroy(bob);
+	bob_build_destroy(bob);
 #undef CHECK_STRESS
 	return result;
 }
@@ -844,17 +836,18 @@ static b32 test_make_depfile(void)
 	return true;
 }
 
-static b32 run_tasks(Bob *graph, const Bob_Task_Desc *tasks, u32 task_count,
+static b32 run_tasks(Bob_Build *build, const Bob_Task_Desc *tasks, u32 task_count,
                      u32 worker_count)
 {
+    Bob *graph = bob_build_graph(build);
     u32 i;
-    if (bob_task_count(graph) != task_count) return false;
+    if (bob_task_count(build) != task_count) return false;
     for (i = 0; i < task_count; ++i) {
-        if (bob_set_task(graph, bob_node_at(graph, i), tasks[i]) != BOB_OK) {
+        if (bob_set_task(build, bob_node_at(graph, i), tasks[i]) != BOB_OK) {
             return false;
         }
     }
-    return bob_build(graph, (Bob_Build_Params){ .worker_count = worker_count });
+    return bob_build(build, (Bob_Build_Params){ .worker_count = worker_count });
 }
 
 static b32 test_arena_and_strings(void)
@@ -1287,7 +1280,8 @@ static b32 get_test_executable(char *buffer, u32 buffer_size)
 
 static b32 test_builder_runs_in_parallel(void)
 {
-    Bob *graph = bob_create();
+    Bob_Build *build = bob_build_create();
+    Bob *graph = bob_build_graph(build);
     Bob_Node *a = add_node(graph, "slow a");
     Bob_Node *b = add_node(graph, "slow b");
     Bob_Node *link = add_node(graph, "link");
@@ -1322,19 +1316,20 @@ static b32 test_builder_runs_in_parallel(void)
     CHECK_OK(bob_add_dependency(graph, link, a));
     CHECK_OK(bob_add_dependency(graph, link, b));
 
-    executed = run_tasks(graph, tasks, 3, 2);
+    executed = run_tasks(build, tasks, 3, 2);
     CloseHandle(event_a);
     CloseHandle(event_b);
 
     CHECK(executed);
     CHECK(bob_is_finished(graph));
-    bob_destroy(graph);
+    bob_build_destroy(build);
     return true;
 }
 
 static b32 test_builder_propagates_failure(void)
 {
-    Bob *graph = bob_create();
+    Bob_Build *build = bob_build_create();
+    Bob *graph = bob_build_graph(build);
     Bob_Node *fail = add_node(graph, "fail");
     Bob_Node *blocked = add_node(graph, "blocked");
     Bob_Node *independent = add_node(graph, "independent");
@@ -1354,26 +1349,27 @@ static b32 test_builder_propagates_failure(void)
     tasks[2].command_line = string_from_cstring(independent_command);
     CHECK_OK(bob_add_dependency(graph, blocked, fail));
 
-    CHECK(!run_tasks(graph, tasks, 3, 2));
+    CHECK(!run_tasks(build, tasks, 3, 2));
     CHECK(bob_task_state(fail) == BOB_NODE_FAILED);
     CHECK(bob_task_state(blocked) == BOB_NODE_BLOCKED);
     CHECK(bob_task_state(independent) == BOB_NODE_SUCCEEDED);
     CHECK(bob_is_finished(graph));
-    bob_destroy(graph);
+    bob_build_destroy(build);
     return true;
 }
 
 static b32 test_builder_reports_missing_executable(void)
 {
-    Bob *graph = bob_create();
+    Bob_Build *build = bob_build_create();
+    Bob *graph = bob_build_graph(build);
     Bob_Node *missing = add_node(graph, "missing executable");
     Bob_Task_Desc task = {
         .command_line = STRING_LITERAL("bob_executable_that_does_not_exist_7f31.exe --input x.c")
     };
 
-    CHECK(!run_tasks(graph, &task, 1, 1));
+    CHECK(!run_tasks(build, &task, 1, 1));
     CHECK(bob_task_state(missing) == BOB_NODE_FAILED);
-    bob_destroy(graph);
+    bob_build_destroy(build);
     return true;
 }
 
@@ -1381,6 +1377,8 @@ static b32 test_builder_skips_existing_output(void)
 {
     const char *output_path = "build\\incremental_test.out";
     String outputs[] = { string_from_cstring(output_path) };
+    Bob_Build *first_build;
+    Bob_Build *second_build;
     Bob *first_graph;
     Bob *second_graph;
     Bob_Task_Desc task = {0};
@@ -1390,17 +1388,19 @@ static b32 test_builder_skips_existing_output(void)
     task.command_line = STRING_LITERAL("cmd /c echo built>build\\incremental_test.out");
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    first_graph = bob_create();
+    first_build = bob_build_create();
+    first_graph = bob_build_graph(first_build);
     add_node(first_graph, "create output");
-    CHECK(run_tasks(first_graph, &task, 1, 1));
+    CHECK(run_tasks(first_build, &task, 1, 1));
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &info));
-    bob_destroy(first_graph);
+    bob_build_destroy(first_build);
 
-    second_graph = bob_create();
+    second_build = bob_build_create();
+    second_graph = bob_build_graph(second_build);
     add_node(second_graph, "skip existing output");
-    CHECK(run_tasks(second_graph, &task, 1, 1));
+    CHECK(run_tasks(second_build, &task, 1, 1));
     CHECK(bob_task_state(bob_node_at(second_graph, 0)) == BOB_NODE_SUCCEEDED);
-    bob_destroy(second_graph);
+    bob_build_destroy(second_build);
 
     CHECK(DeleteFileA(output_path));
 	return true;
@@ -1424,28 +1424,31 @@ static b32 test_directory_output_stays_clean(void)
 	};
 	Bob_Platform_File_Info before;
 	Bob_Platform_File_Info after;
+	Bob_Build *build;
 	Bob *graph;
 	Bob_Node *prepare;
 	Bob_Node *write_child;
 
 	CHECK(platform_remove_tree(directory));
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	prepare = add_node(graph, "prepare output directory");
 	write_child = add_node(graph, "write child output");
 	CHECK_OK(bob_add_dependency(graph, write_child, prepare));
-	CHECK(run_tasks(graph, tasks, 2, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, tasks, 2, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(child), &before));
 
 	Sleep(20);
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	prepare = add_node(graph, "prepare output directory");
 	write_child = add_node(graph, "write child output");
 	CHECK_OK(bob_add_dependency(graph, write_child, prepare));
-	CHECK(run_tasks(graph, tasks, 2, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, tasks, 2, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(child), &after));
 	CHECK(after.modified_unix_ms == before.modified_unix_ms);
 	CHECK(platform_remove_tree(directory));
@@ -1467,42 +1470,47 @@ static b32 test_task_fingerprint_rebuilds(void)
 	Bob_Platform_File_Info unchanged;
 	Bob_Platform_File_Info command_changed;
 	Bob_Platform_File_Info metadata_changed;
+	Bob_Build *build;
 	Bob *graph;
 
 	CHECK(platform_remove_file(output_path));
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	add_node(graph, "initial fingerprint");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &first));
 
 	Sleep(20);
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	add_node(graph, "unchanged fingerprint");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &unchanged));
 	CHECK(unchanged.modified_unix_ms == first.modified_unix_ms);
 
 	Sleep(20);
 	task.command_line = STRING_LITERAL("cmd /c echo second>build\\fingerprint_test.out");
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	add_node(graph, "changed command fingerprint");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &command_changed));
 	CHECK(command_changed.modified_unix_ms != unchanged.modified_unix_ms);
 
 	Sleep(20);
 	task.include_directories = STRING_ARRAY_FROM(second_includes);
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
 	add_node(graph, "changed metadata fingerprint");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &metadata_changed));
 	CHECK(metadata_changed.modified_unix_ms != command_changed.modified_unix_ms);
 
@@ -1558,6 +1566,8 @@ static b32 test_newer_input_rebuilds(void)
     String inputs[] = { string_from_cstring(input_path) };
     String outputs[] = { string_from_cstring(output_path) };
 	Bob_Task_Desc task = {0};
+	Bob_Build *clean_build;
+	Bob_Build *dirty_build;
 	Bob *clean_graph;
 	Bob *dirty_graph;
 	Bob_Platform_File_Info output_info;
@@ -1568,17 +1578,19 @@ static b32 test_newer_input_rebuilds(void)
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    clean_graph = bob_create();
+	clean_build = bob_build_create();
+    clean_graph = bob_build_graph(clean_build);
 	add_node(clean_graph, "prime timestamp state");
-	CHECK(run_tasks(clean_graph, &task, 1, 1));
-	bob_destroy(clean_graph);
+	CHECK(run_tasks(clean_build, &task, 1, 1));
+	bob_build_destroy(clean_build);
 
 	CHECK(bob_platform_file_info(string_from_cstring(output_path), &output_info));
 	CHECK(write_test_file_at_time(input_path, (u64)output_info.modified_unix_ms + 1000));
-    dirty_graph = bob_create();
+	dirty_build = bob_build_create();
+	dirty_graph = bob_build_graph(dirty_build);
     add_node(dirty_graph, "dirty timestamps");
-    CHECK(run_tasks(dirty_graph, &task, 1, 1));
-    bob_destroy(dirty_graph);
+    CHECK(run_tasks(dirty_build, &task, 1, 1));
+    bob_build_destroy(dirty_build);
 
     CHECK(DeleteFileA(input_path));
     CHECK(DeleteFileA(output_path));
@@ -1595,6 +1607,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     String inputs[] = { string_from_cstring(input_a), string_from_cstring(input_b) };
     String outputs[] = { string_from_cstring(output_a), string_from_cstring(output_b) };
     Bob_Task_Desc task = {0};
+    Bob_Build *build;
     Bob *graph;
     Bob_Platform_File_Info info;
 
@@ -1607,34 +1620,38 @@ static b32 test_multiple_inputs_and_outputs(void)
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
-    graph = bob_create();
+	build = bob_build_create();
+    graph = bob_build_graph(build);
 	add_node(graph, "prime multiple files");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 	CHECK(DeleteFileA(marker));
 
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	add_node(graph, "clean multiple files");
-	CHECK(run_tasks(graph, &task, 1, 1));
+	CHECK(run_tasks(build, &task, 1, 1));
 	CHECK(!bob_platform_file_info(string_from_cstring(marker), &info));
-	bob_destroy(graph);
+	bob_build_destroy(build);
 
 	CHECK(bob_platform_file_info(string_from_cstring(output_a), &info));
 	CHECK(write_test_file_at_time(input_b, (u64)info.modified_unix_ms + 1000));
-    graph = bob_create();
+	build = bob_build_create();
+    graph = bob_build_graph(build);
     add_node(graph, "newest input wins");
-    CHECK(run_tasks(graph, &task, 1, 1));
+	CHECK(run_tasks(build, &task, 1, 1));
 	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
-    bob_destroy(graph);
+    bob_build_destroy(build);
 
     CHECK(DeleteFileA(output_b));
     CHECK(DeleteFileA(marker));
-    graph = bob_create();
+	build = bob_build_create();
+    graph = bob_build_graph(build);
     add_node(graph, "one output missing");
-    CHECK(run_tasks(graph, &task, 1, 1));
+	CHECK(run_tasks(build, &task, 1, 1));
 	CHECK(bob_platform_file_info(string_from_cstring(output_b), &info));
 	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
-    bob_destroy(graph);
+    bob_build_destroy(build);
 
     CHECK(DeleteFileA(input_a));
     CHECK(DeleteFileA(input_b));
@@ -1654,6 +1671,7 @@ static b32 test_dependency_rebuild_propagates(void)
     String dependency_outputs[] = { string_from_cstring(dependency_output) };
     String parent_outputs[] = { string_from_cstring(parent_output) };
     Bob_Task_Desc tasks[2] = {0};
+    Bob_Build *build;
     Bob *graph;
     Bob_Node *dependency;
     Bob_Node *parent;
@@ -1670,23 +1688,25 @@ static b32 test_dependency_rebuild_propagates(void)
 	tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
     tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
 
-    graph = bob_create();
+	build = bob_build_create();
+    graph = bob_build_graph(build);
 	dependency = add_node(graph, "prime dependency");
 	parent = add_node(graph, "prime parent");
     CHECK_OK(bob_add_dependency(graph, parent, dependency));
-	CHECK(run_tasks(graph, tasks, 2, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, tasks, 2, 1));
+	bob_build_destroy(build);
 	CHECK(DeleteFileA(marker));
 
 	CHECK(bob_platform_file_info(string_from_cstring(dependency_output), &info));
 	CHECK(write_test_file_at_time(dependency_input, (u64)info.modified_unix_ms + 1000));
-    graph = bob_create();
+	build = bob_build_create();
+    graph = bob_build_graph(build);
     dependency = add_node(graph, "dirty dependency");
     parent = add_node(graph, "propagated parent");
     CHECK_OK(bob_add_dependency(graph, parent, dependency));
-    CHECK(run_tasks(graph, tasks, 2, 1));
+	CHECK(run_tasks(build, tasks, 2, 1));
 	CHECK(bob_platform_file_info(string_from_cstring(marker), &info));
-    bob_destroy(graph);
+    bob_build_destroy(build);
 
     CHECK(DeleteFileA(dependency_input));
     CHECK(DeleteFileA(dependency_output));
@@ -1705,22 +1725,24 @@ static b32 test_transparent_dependency(void)
 	tasks[0].transparent = true;
 	tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\transparent_parent.out");
 	tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
-	Bob *graph = bob_create();
+	Bob_Build *build = bob_build_create();
+	Bob *graph = bob_build_graph(build);
 	Bob_Node *dependency = add_node(graph, "prime transparent dependency");
 	Bob_Node *parent = add_node(graph, "prime transparent parent");
 	CHECK_OK(bob_add_dependency(graph, parent, dependency));
-	CHECK(run_tasks(graph, tasks, 2, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, tasks, 2, 1));
+	bob_build_destroy(build);
 	Bob_Platform_File_Info before;
 	Bob_Platform_File_Info after;
 	CHECK(bob_platform_file_info(string_from_cstring(parent_output), &before));
 	Sleep(20);
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	dependency = add_node(graph, "transparent dependency");
 	parent = add_node(graph, "clean transparent parent");
 	CHECK_OK(bob_add_dependency(graph, parent, dependency));
-	CHECK(run_tasks(graph, tasks, 2, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, tasks, 2, 1));
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(parent_output), &after));
 	CHECK(after.modified_unix_ms == before.modified_unix_ms);
 	CHECK(DeleteFileA(parent_output));
@@ -1739,6 +1761,7 @@ static b32 test_task_working_directory(void)
 		.working_directory = STRING_LITERAL("build\\task_working_directory"),
 		.outputs = STRING_ARRAY_FROM(outputs),
 	};
+	Bob_Build *build;
 	Bob *graph;
 	Bob_Platform_File_Info info;
 
@@ -1746,19 +1769,21 @@ static b32 test_task_working_directory(void)
 	DeleteFileA(unresolved_output);
 	if (!CreateDirectoryA(directory, NULL) &&
 		GetLastError() != ERROR_ALREADY_EXISTS) return false;
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	add_node(graph, "working directory output");
-	CHECK(run_tasks(graph, &task, 1, 1));
+	CHECK(run_tasks(build, &task, 1, 1));
 	CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->working_directory,
 		STRING_LITERAL("build\\task_working_directory")));
-	bob_destroy(graph);
+	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(resolved_output), &info));
 	CHECK(!bob_platform_file_info(string_from_cstring(unresolved_output), &info));
 
-	graph = bob_create();
+	build = bob_build_create();
+	graph = bob_build_graph(build);
 	add_node(graph, "working directory incremental output");
-	CHECK(run_tasks(graph, &task, 1, 1));
-	bob_destroy(graph);
+	CHECK(run_tasks(build, &task, 1, 1));
+	bob_build_destroy(build);
 
 	CHECK(DeleteFileA(resolved_output));
 	CHECK(RemoveDirectoryA(directory));
@@ -1767,12 +1792,13 @@ static b32 test_task_working_directory(void)
 
 static b32 run_single_task(const Bob_Task_Desc *task, const char *name)
 {
-	Bob *graph = bob_create();
+	Bob_Build *build = bob_build_create();
+	Bob *graph = bob_build_graph(build);
 	b32 result;
 	if (!graph) return false;
 	add_node(graph, name);
-	result = run_tasks(graph, task, 1, 1);
-	bob_destroy(graph);
+	result = run_tasks(build, task, 1, 1);
+	bob_build_destroy(build);
 	return result;
 }
 
@@ -1781,7 +1807,7 @@ static b32 test_compiler_dependency_state(void)
 	static const char malformed[] = "{ version = 1, tasks = 7 }";
 	Arena arena = arena_create(KILOBYTES(64));
 	Arena state_arena = arena_create(KILOBYTES(64));
-	Bob *state_bob = NULL;
+	Bob_Build *state_bob = NULL;
 	String original_directory = {0};
 	String absolute_source = {0};
 	String absolute_header = {0};
@@ -1826,7 +1852,7 @@ static b32 test_compiler_dependency_state(void)
 		STRING_LITERAL("work/header.h"), &absolute_header));
 	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
 		STRING_LITERAL("work/object.obj"), &absolute_output));
-	state_bob = bob_create();
+	state_bob = bob_build_create();
 	CHECK_DEPENDENCY_STATE(state_bob != NULL);
 
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "capture compiler dependencies"));
@@ -1886,25 +1912,61 @@ cleanup:
 	build_state_destroy(&state);
 	arena_destroy(&state_arena);
 	arena_destroy(&arena);
-	bob_destroy(state_bob);
+	bob_build_destroy(state_bob);
 #undef CHECK_DEPENDENCY_STATE
 	return result;
 }
 
 static b32 test_elf_descriptor(void)
 {
+    static const char source[] =
+        "compile_main := {\n"
+        "    name = \"compile main\",\n"
+        "    command_line = \"clang-cl /c main.c\",\n"
+        "    working_directory = \".\",\n"
+        "    inputs = {\"main.c\"},\n"
+        "    outputs = {\"main.obj\"},\n"
+        "    include_dirs = {\"include\"},\n"
+        "    dependencies = {},\n"
+        "}\n"
+        "compile_message := {\n"
+        "    name = \"compile message\",\n"
+        "    command_line = \"clang-cl /c message.c\",\n"
+        "    dependencies = {},\n"
+        "}\n"
+        "link := {\n"
+        "    name = \"link hello.exe\",\n"
+        "    command_line = \"clang-cl main.obj message.obj\",\n"
+        "    dependencies = {compile_main, compile_message},\n"
+        "}\n"
+        "run := {\n"
+        "    name = \"run hello.exe\",\n"
+        "    command_line = \"hello.exe\",\n"
+        "    dependencies = {link},\n"
+        "}\n"
+        "ret {\n"
+        "    targets = {run},\n"
+        "    options = {workers = 2, verbosity = 0},\n"
+        "}\n";
+    String path = STRING_LITERAL("build/test_elf_descriptor.elf");
     Script_Build build;
     const Bob_Task_Desc *task;
+    Bob *graph;
 
-    if (!script_load_build(STRING_LITERAL("example/tasks.elf"), &build)) {
+    CHECK(platform_create_directories("build"));
+    CHECK(bob_platform_write_entire_file(path, source, sizeof(source) - 1));
+    if (!script_load_build(path, &build)) {
+        platform_remove_file(path.data);
         printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(bob_task_count(build.bob) == 4);
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(build.bob, 0))->name, STRING_LITERAL("run hello.exe")));
-    CHECK(bob_dependency_count(bob_node_at(build.bob, 0)) == 1);
-    CHECK(bob_dependency(bob_node_at(build.bob, 0), 0) == bob_node_at(build.bob, 1));
-    task = bob_get_task_desc(bob_node_at(build.bob, 2));
+    CHECK(platform_remove_file(path.data));
+    graph = bob_build_graph(build.build);
+    CHECK(bob_task_count(build.build) == 4);
+    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->name, STRING_LITERAL("run hello.exe")));
+    CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
+    CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
+    task = bob_get_task_desc(bob_node_at(graph, 2));
     CHECK(string_equal(task->name, STRING_LITERAL("compile main")));
     CHECK(task->inputs.count == 1);
     CHECK(task->outputs.count == 1);
@@ -1914,26 +1976,47 @@ static b32 test_elf_descriptor(void)
     CHECK(build.options.worker_count == 2);
     CHECK(build.options.has_verbosity);
     CHECK(build.options.verbosity == 0);
-    CHECK(bob_dependency_count(bob_node_at(build.bob, 1)) == 2);
-    CHECK(bob_dependency(bob_node_at(build.bob, 1), 0) == bob_node_at(build.bob, 2));
-    bob_destroy(build.bob);
+    CHECK(bob_dependency_count(bob_node_at(graph, 1)) == 2);
+    CHECK(bob_dependency(bob_node_at(graph, 1), 0) == bob_node_at(graph, 2));
+    bob_build_destroy(build.build);
     return true;
 }
 
 static b32 test_elf_generated_descriptor(void)
 {
+    static const char source[] =
+        "tasks := {}\n"
+        "dependencies := {}\n"
+        "for index := 0 ... 8 ? {\n"
+        "    task := {\n"
+        "        name = f\"generated ${index}\",\n"
+        "        command_line = f\"generate ${index}\",\n"
+        "        dependencies = dependencies,\n"
+        "    }\n"
+        "    tasks:add(task)\n"
+        "    dependencies = {task}\n"
+        "}\n"
+        "ret {targets = {tasks[7]}}\n";
+    String path = STRING_LITERAL("build/test_elf_generated_descriptor.elf");
     Script_Build build;
+    Bob *graph;
 
-    if (!script_load_build(STRING_LITERAL("example/tasks1.elf"), &build)) {
+    CHECK(platform_create_directories("build"));
+    CHECK(bob_platform_write_entire_file(path, source, sizeof(source) - 1));
+    if (!script_load_build(path, &build)) {
+        platform_remove_file(path.data);
         printf("  elf error: %s\n", build.error);
         return false;
     }
-    CHECK(bob_task_count(build.bob) == 33);
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(build.bob, 0))->name, STRING_LITERAL("font_test")));
-    CHECK(bob_dependency_count(bob_node_at(build.bob, 0)) == 21);
-    CHECK(bob_dependency_count(bob_node_at(build.bob, 6)) == 6);
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(build.bob, 27))->name, STRING_LITERAL("VS_Rect")));
-    bob_destroy(build.bob);
+    CHECK(platform_remove_file(path.data));
+    graph = bob_build_graph(build.build);
+    CHECK(bob_task_count(build.build) == 8);
+    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->name, STRING_LITERAL("generated 7")));
+    CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
+    CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
+    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 7))->name, STRING_LITERAL("generated 0")));
+    CHECK(bob_dependency_count(bob_node_at(graph, 7)) == 0);
+    bob_build_destroy(build.build);
     return true;
 }
 
@@ -2030,19 +2113,29 @@ static b32 test_compiler_command(void)
 
 static b32 test_script_functions(void)
 {
+    static const char source[] =
+        "build := fun() {\n"
+        "    ret bob.build({\n"
+        "        targets = {},\n"
+        "        options = {workers = 1, verbosity = 0},\n"
+        "    })\n"
+        "}\n"
+        "clean := fun() { ret 1 }\n"
+        "ret {build = build, clean = clean}\n";
+    String path = STRING_LITERAL("build/test_script_functions.elf");
     Arena arena = arena_create(MEGABYTES(16));
-    Script *script = script_load(&arena, STRING_LITERAL("example/functions.elf"));
+    CHECK(platform_create_directories("build"));
+    CHECK(bob_platform_write_entire_file(path, source, sizeof(source) - 1));
+    Script *script = script_load(&arena, path);
+    CHECK(platform_remove_file(path.data));
     CHECK(script_is_loaded(script));
     String_Array functions = script_functions(script);
-    CHECK(functions.count == 4);
+    CHECK(functions.count == 2);
     CHECK(script_has_function(script, STRING_LITERAL("build")));
     CHECK(script_has_function(script, STRING_LITERAL("clean")));
-	CHECK(script_has_function(script, STRING_LITERAL("environment")));
-	CHECK(script_has_function(script, STRING_LITERAL("filesystem")));
     CHECK(!script_has_function(script, STRING_LITERAL("missing")));
     CHECK(script_invoke(script, STRING_LITERAL("build")));
-	CHECK(script_invoke(script, STRING_LITERAL("environment")));
-	CHECK(script_invoke(script, STRING_LITERAL("filesystem")));
+    CHECK(script_invoke(script, STRING_LITERAL("clean")));
     CHECK(!script_invoke(script, STRING_LITERAL("missing")));
     script_destroy(script);
     arena_destroy(&arena);
@@ -2065,6 +2158,7 @@ static void run_test(const char *name, b32 (*test)(void))
 
 static int build_example(void)
 {
+    Bob_Build *build;
     Bob *graph;
     Bob_Node *compile_main;
     Bob_Node *compile_message;
@@ -2079,7 +2173,8 @@ static int build_example(void)
         return 1;
     }
 
-    graph = bob_create();
+    build = bob_build_create();
+    graph = bob_build_graph(build);
     if (!graph) {
         return 1;
     }
@@ -2097,12 +2192,12 @@ static int build_example(void)
     if (bob_add_dependency(graph, link, compile_main) != BOB_OK ||
         bob_add_dependency(graph, link, compile_message) != BOB_OK ||
         bob_add_dependency(graph, run, link) != BOB_OK) {
-        bob_destroy(graph);
+        bob_build_destroy(build);
         return 1;
     }
 
-    succeeded = run_tasks(graph, tasks, 4, 2);
-    bob_destroy(graph);
+    succeeded = run_tasks(build, tasks, 4, 2);
+    bob_build_destroy(build);
     return succeeded ? 0 : 1;
 }
 
@@ -2116,9 +2211,9 @@ static int build_tasks_from_file(String path)
         return 1;
     }
     workers = build.options.has_worker_count ? build.options.worker_count : 4;
-    exit_code = bob_build(build.bob,
+    exit_code = bob_build(build.build,
 		(Bob_Build_Params){ .worker_count = workers }) ? 0 : 1;
-    bob_destroy(build.bob);
+    bob_build_destroy(build.build);
     return exit_code;
 }
 
@@ -2137,7 +2232,7 @@ static int run_all_tests(void)
     run_test("vcvars cache", test_vcvars_cache_application);
 	run_test("high resolution timer", test_high_resolution_timer);
 	run_test("BLAKE3", test_blake3);
-	run_test("atoms and paths", test_atoms_and_paths);
+	run_test("build paths", test_build_paths);
     run_test("empty graph", test_empty_graph);
     run_test("linear graph", test_linear_graph);
     run_test("parallel fan-in", test_parallel_fan_in);
@@ -2202,13 +2297,6 @@ int main(int argument_count, char **arguments)
 		printf("\n%d/%d stress tests passed\n", tests_run - tests_failed, tests_run);
 		return tests_failed ? 1 : 0;
 	}
-    if (argument_count == 2 && strcmp(arguments[1], "--build-task-table") == 0) {
-        if (!CreateDirectoryA("build\\example", NULL) &&
-            GetLastError() != ERROR_ALREADY_EXISTS) {
-            return 1;
-        }
-        return build_tasks_from_file(STRING_LITERAL("example/tasks.elf"));
-    }
     if (argument_count == 1) {
         return build_tasks_from_file(STRING_LITERAL("build.elf"));
     }

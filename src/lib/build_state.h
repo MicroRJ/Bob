@@ -1,7 +1,7 @@
 #ifndef BUILD_STATE_H
 #define BUILD_STATE_H
 
-#include "bob_build.h"
+#include "bob_build_internal.h"
 #include "platform.h"
 
 typedef u32 Build_State_Path_Id;
