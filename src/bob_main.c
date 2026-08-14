@@ -96,8 +96,8 @@ static int run_script(String path, String function_name, Cmd_Options command_lin
 int main(int argument_count, char **arguments)
 {
    Cmd_Options command_line_options = {0};
-   String build_path = STRING_LITERAL("build.elf");
-   String function_name = STRING_LITERAL("build");
+   String build_path = LIT("build.elf");
+   String function_name = LIT("build");
    b32 has_build_path = false;
    b32 has_function = false;
    b32 cache_vcvars = false;

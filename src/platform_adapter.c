@@ -142,7 +142,7 @@ b32 bob_platform_set_environment(String name, String value)
 
 b32 bob_platform_local_app_data(Arena *arena, String *result)
 {
-	return bob_platform_get_environment(STRING_LITERAL("LOCALAPPDATA"), arena, result) && result->size > 0;
+	return bob_platform_get_environment(LIT("LOCALAPPDATA"), arena, result) && result->size > 0;
 }
 
 static b32 append_process_pipe(Platform_Process *process, Arena *arena, b32 standard_error, u32 *error_code)

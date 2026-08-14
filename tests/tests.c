@@ -50,9 +50,9 @@ static b32 test_vcvars_cache_application(void)
         "set BOB_VCVARS_TEST_SET=value\n";
     b32 result = false;
 
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), STRING_LITERAL("base"));
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), STRING_LITERAL("base"));
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_PREPEND"), LIT("base"));
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_APPEND"), LIT("base"));
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_SET"), (String){0});
 
     if (!vcvars_cache_apply(string_from_cstring(cache_text))) goto cleanup;
     if (!environment_equals("BOB_VCVARS_TEST_PREPEND", "tool;base")) goto cleanup;
@@ -61,9 +61,9 @@ static b32 test_vcvars_cache_application(void)
     result = true;
 
 cleanup:
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_PREPEND"), (String){0});
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_APPEND"), (String){0});
-	bob_platform_set_environment(STRING_LITERAL("BOB_VCVARS_TEST_SET"), (String){0});
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_PREPEND"), (String){0});
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_APPEND"), (String){0});
+	bob_platform_set_environment(LIT("BOB_VCVARS_TEST_SET"), (String){0});
     return result;
 }
 
@@ -107,11 +107,13 @@ static b32 test_blake3(void)
 static b32 test_build_paths(void)
 {
 	Bob_Build *build = bob_build_create();
+	Bob_Build *rooted;
 	Bob *graph;
 	Bob_Path root;
 	Bob_Path first;
 	Bob_Path second;
 	Bob_Path absolute;
+	Bob_Path expected_root;
 	String root_string;
 	String first_string;
 	CHECK(build != NULL);
@@ -124,17 +126,22 @@ static b32 test_build_paths(void)
 	CHECK(root_string.size >= 3 && root_string.data[1] == ':');
 	CHECK(root_string.data[0] >= 'A' && root_string.data[0] <= 'Z');
 	CHECK(memchr(root_string.data, '\\', (size_t)root_string.size) == NULL);
-	CHECK(bob_path_resolve(build, root, STRING_LITERAL("build\\path-test\\temporary\\..\\file.obj"), &first));
-	CHECK(bob_path_resolve(build, root, STRING_LITERAL(".\\build/path-test/file.obj"), &second));
+	CHECK(bob_path_resolve(build, root, LIT("build\\path-test\\temporary\\..\\file.obj"), &first));
+	CHECK(bob_path_resolve(build, root, LIT(".\\build/path-test/file.obj"), &second));
 	CHECK(first.atom.id == second.atom.id);
 	first_string = bob_path_string(build, first);
 	CHECK(memchr(first_string.data, '\\', (size_t)first_string.size) == NULL);
 	CHECK(bob_path_resolve(build, root, first_string, &absolute));
 	CHECK(absolute.atom.id == first.atom.id);
-	CHECK(!bob_path_resolve(build, root, STRING_LITERAL(""), &absolute));
+	CHECK(!bob_path_resolve(build, root, LIT(""), &absolute));
+	CHECK(bob_path_resolve(build, root, LIT("build"), &expected_root));
+	rooted = bob_build_create_at(LIT("build"));
+	CHECK(rooted != NULL);
+	CHECK(string_equal(bob_path_string(rooted, bob_build_root(rooted)), bob_path_string(build, expected_root)));
+	bob_build_destroy(rooted);
 
 	CHECK_OK(bob_prepare(graph));
-	CHECK(bob_path_resolve(build, root, STRING_LITERAL("discovered after prepare"), &absolute));
+	CHECK(bob_path_resolve(build, root, LIT("discovered after prepare"), &absolute));
 	bob_build_destroy(build);
 	return true;
 }
@@ -282,15 +289,15 @@ static b32 test_build_state_file(void)
 	Build_State state = {0};
 	Build_State loaded = {0};
 	String dependencies[] = {
-		STRING_LITERAL("src/main file.c"),
-		STRING_LITERAL("include/quoted\"name.h"),
+		LIT("src/main file.c"),
+		LIT("include/quoted\"name.h"),
 	};
-	String root = STRING_LITERAL("build\\build_state_file");
-	String path = STRING_LITERAL("build\\build_state_file\\nested\\state");
-	String temporary = STRING_LITERAL("build\\build_state_file\\nested\\state.tmp");
-	String missing = STRING_LITERAL("build\\build_state_file\\missing");
-	String directory = STRING_LITERAL("build\\build_state_file\\nested\\directory");
-	String directory_temporary = STRING_LITERAL("build\\build_state_file\\nested\\directory.tmp");
+	String root = LIT("build\\build_state_file");
+	String path = LIT("build\\build_state_file\\nested\\state");
+	String temporary = LIT("build\\build_state_file\\nested\\state.tmp");
+	String missing = LIT("build\\build_state_file\\missing");
+	String directory = LIT("build\\build_state_file\\nested\\directory");
+	String directory_temporary = LIT("build\\build_state_file\\nested\\directory.tmp");
 	Build_State_Task_Snapshot task;
 	Bob_Platform_File_Info info;
 	String bytes;
@@ -300,10 +307,10 @@ static b32 test_build_state_file(void)
 	CHECK(build_state_init(&state) && build_state_init(&loaded));
 	CHECK(platform_remove_tree(root.data));
 	CHECK(test_state_set(&state_arena, bob, &state,
-		STRING_LITERAL("build/obj/main file.obj"),
+		LIT("build/obj/main file.obj"),
 		STRING_ARRAY_FROM(dependencies)));
 	CHECK(test_state_set(&state_arena, bob, &state,
-		STRING_LITERAL("build/obj/empty.obj"), (String_Array){0}));
+		LIT("build/obj/empty.obj"), (String_Array){0}));
 	state.tasks[0].output_stamp = 101;
 	state.tasks[1].output_stamp = 202;
 	CHECK(build_state_save(path, bob, &state));
@@ -312,12 +319,12 @@ static b32 test_build_state_file(void)
 	CHECK(build_state_load(&loaded_arena, bob, path, &loaded) ==
 		BUILD_STATE_LOAD_OK);
 	CHECK(loaded.task_count == 2);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/obj/main file.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/obj/main file.obj")), &task));
 	CHECK(task.output_stamp == 101 && task.dependencies.count == 2);
-	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(STRING_LITERAL("build/obj/main file.obj"))));
+	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(LIT("build/obj/main file.obj"))));
 	CHECK(state_task_contains_path(bob, &task, dependencies[0]));
 	CHECK(state_task_contains_path(bob, &task, dependencies[1]));
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/obj/empty.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/obj/empty.obj")), &task));
 	CHECK(task.output_stamp == 202 && task.dependencies.count == 0);
 
 	arena_reset(&loaded_arena);
@@ -338,8 +345,8 @@ static b32 test_build_state_file(void)
 		BUILD_STATE_LOAD_RECOVERED);
 	CHECK(loaded.paths.path_count == state.paths.path_count);
 	CHECK(loaded.task_count == 1);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/obj/main file.obj")), &task));
-	CHECK(!build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/obj/empty.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/obj/main file.obj")), &task));
+	CHECK(!build_state_get_task(&loaded, test_path(bob, LIT("build/obj/empty.obj")), &task));
 	CHECK(build_state_save(path, bob, &loaded));
 	arena_reset(&loaded_arena);
 	CHECK(build_state_load(&loaded_arena, bob, path, &loaded) == BUILD_STATE_LOAD_OK);
@@ -400,8 +407,8 @@ static b32 test_build_state_stream(void)
 	Build_State state = {0};
 	Build_State loaded = {0};
 	String dependencies[] = {
-		STRING_LITERAL("src/main.c"),
-		STRING_LITERAL("include/main.h"),
+		LIT("src/main.c"),
+		LIT("include/main.h"),
 	};
 	String stream;
 	String mutated;
@@ -410,28 +417,28 @@ static b32 test_build_state_stream(void)
 
 	CHECK(bob && state_arena.data && stream_arena.data && loaded_arena.data && mutation_arena.data);
 	CHECK(build_state_init(&state) && build_state_init(&loaded));
-	CHECK(test_state_set(&state_arena, bob, &state, STRING_LITERAL("build/main.obj"), STRING_ARRAY_FROM(dependencies)));
-	CHECK(test_state_set(&state_arena, bob, &state, STRING_LITERAL("build/empty.obj"), (String_Array){0}));
+	CHECK(test_state_set(&state_arena, bob, &state, LIT("build/main.obj"), STRING_ARRAY_FROM(dependencies)));
+	CHECK(test_state_set(&state_arena, bob, &state, LIT("build/empty.obj"), (String_Array){0}));
 	state.tasks[0].output_stamp = 101;
 	state.tasks[1].output_stamp = 202;
 	CHECK(build_state_stream_encode(&stream_arena, bob, &state, &stream));
 	CHECK(stream.size > BUILD_STATE_STREAM_HEADER_SIZE);
 	CHECK(build_state_stream_replay(&loaded_arena, bob, stream, &loaded) == BUILD_STATE_STREAM_OK);
 	CHECK(loaded.paths.path_count == state.paths.path_count && loaded.task_count == state.task_count);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
 	CHECK(task.output_stamp == 101 && task.dependencies.count == 2);
-	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(STRING_LITERAL("build/main.obj"))));
+	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(LIT("build/main.obj"))));
 	CHECK(state_task_contains_path(bob, &task, dependencies[0]));
 	CHECK(state_task_contains_path(bob, &task, dependencies[1]));
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/empty.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/empty.obj")), &task));
 	CHECK(task.output_stamp == 202 && task.dependencies.count == 0);
 
 	arena_reset(&loaded_arena);
 	CHECK(build_state_stream_replay(&loaded_arena, bob, string_slice(stream, 0, stream.size - 1), &loaded) == BUILD_STATE_STREAM_TRUNCATED);
 	CHECK(loaded.paths.path_count == state.paths.path_count);
 	CHECK(loaded.task_count == 1);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
-	CHECK(!build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/empty.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
+	CHECK(!build_state_get_task(&loaded, test_path(bob, LIT("build/empty.obj")), &task));
 
 	arena_reset(&mutation_arena);
 	mutated = string_from_data(arena_push_copy(&mutation_arena, stream.size, stream.data), stream.size);
@@ -486,8 +493,8 @@ static b32 test_build_state_stream(void)
 	arena_reset(&loaded_arena);
 	CHECK(build_state_stream_replay(&loaded_arena, bob, mutated, &loaded) == BUILD_STATE_STREAM_OK);
 	CHECK(loaded.task_count == 1);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
-	CHECK(!build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/empty.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
+	CHECK(!build_state_get_task(&loaded, test_path(bob, LIT("build/empty.obj")), &task));
 
 	build_state_destroy(&loaded);
 	build_state_destroy(&state);
@@ -507,15 +514,15 @@ static b32 test_build_state_append(void)
 	Arena io_arena = arena_create(KILOBYTES(64));
 	Build_State state = {0};
 	Build_State loaded = {0};
-	String root = STRING_LITERAL("build\\build_state_append");
-	String path = STRING_LITERAL("build\\build_state_append\\state");
+	String root = LIT("build\\build_state_append");
+	String path = LIT("build\\build_state_append\\state");
 	String first_dependencies[] = {
-		STRING_LITERAL("src/main.c"),
-		STRING_LITERAL("include/common.h"),
+		LIT("src/main.c"),
+		LIT("include/common.h"),
 	};
 	String replacement_dependencies[] = {
-		STRING_LITERAL("src/main.c"),
-		STRING_LITERAL("include/next.h"),
+		LIT("src/main.c"),
+		LIT("include/next.h"),
 	};
 	Build_State_Task_Snapshot task;
 	Bob_Platform_File_Info before;
@@ -527,22 +534,22 @@ static b32 test_build_state_append(void)
 	CHECK(platform_remove_tree(root.data));
 	CHECK(build_state_save(path, bob, &state));
 	CHECK(bob_platform_file_info(path, &before));
-	CHECK(test_state_append_set(&state_arena, bob, path, &state, STRING_LITERAL("build/main.obj"), STRING_ARRAY_FROM(first_dependencies), 101, STRING_LITERAL("first fingerprint")));
+	CHECK(test_state_append_set(&state_arena, bob, path, &state, LIT("build/main.obj"), STRING_ARRAY_FROM(first_dependencies), 101, LIT("first fingerprint")));
 	CHECK(bob_platform_file_info(path, &after));
 	CHECK(after.size > before.size);
 	CHECK(state.paths.path_count == 3 && state.task_count == 1);
-	CHECK(test_state_append_set(&state_arena, bob, path, &state, STRING_LITERAL("build/main.obj"), STRING_ARRAY_FROM(replacement_dependencies), 202, STRING_LITERAL("replacement fingerprint")));
+	CHECK(test_state_append_set(&state_arena, bob, path, &state, LIT("build/main.obj"), STRING_ARRAY_FROM(replacement_dependencies), 202, LIT("replacement fingerprint")));
 	CHECK(state.paths.path_count == 4 && state.task_count == 1);
 
 	CHECK(build_state_load(&loaded_arena, bob, path, &loaded) == BUILD_STATE_LOAD_OK);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
 	CHECK(task.output_stamp == 202 && task.dependencies.count == 2);
-	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(STRING_LITERAL("replacement fingerprint"))));
+	CHECK(fingerprints_equal(task.fingerprint, test_fingerprint(LIT("replacement fingerprint"))));
 	CHECK(state_task_contains_path(bob, &task, replacement_dependencies[0]));
 	CHECK(state_task_contains_path(bob, &task, replacement_dependencies[1]));
 	CHECK(!state_task_contains_path(bob, &task, first_dependencies[1]));
 
-	CHECK(build_state_append_remove(path, &state, test_path(bob, STRING_LITERAL("build/main.obj"))));
+	CHECK(build_state_append_remove(path, &state, test_path(bob, LIT("build/main.obj"))));
 	CHECK(state.task_count == 0);
 	arena_reset(&io_arena);
 	CHECK(bob_platform_read_entire_file(&io_arena, path, &bytes));
@@ -550,12 +557,12 @@ static b32 test_build_state_append(void)
 	CHECK(bob_platform_write_entire_file(path, bytes.data, bytes.size - 1));
 	arena_reset(&loaded_arena);
 	CHECK(build_state_load(&loaded_arena, bob, path, &loaded) == BUILD_STATE_LOAD_RECOVERED);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
 	CHECK(task.output_stamp == 202);
 	CHECK(build_state_save(path, bob, &loaded));
 	arena_reset(&loaded_arena);
 	CHECK(build_state_load(&loaded_arena, bob, path, &loaded) == BUILD_STATE_LOAD_OK);
-	CHECK(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build/main.obj")), &task));
+	CHECK(build_state_get_task(&loaded, test_path(bob, LIT("build/main.obj")), &task));
 
 	CHECK(platform_remove_tree(root.data));
 	build_state_destroy(&loaded);
@@ -572,15 +579,15 @@ static b32 test_build_state_path_map(void)
 	Bob_Build *bob = bob_build_create();
 	Arena arena = arena_create(KILOBYTES(64));
 	Build_State state = {0};
-	Bob_Path first = test_path(bob, STRING_LITERAL("build\\objects\\..\\main.obj"));
-	Bob_Path same = test_path(bob, STRING_LITERAL("build/main.obj"));
-	Bob_Path dependency = test_path(bob, STRING_LITERAL("include/main.h"));
+	Bob_Path first = test_path(bob, LIT("build\\objects\\..\\main.obj"));
+	Bob_Path same = test_path(bob, LIT("build/main.obj"));
+	Bob_Path dependency = test_path(bob, LIT("include/main.h"));
 	Bob_Path dependencies[] = { dependency };
 
 	CHECK(bob && arena.data && bob_path_is_valid(first));
 	CHECK(build_state_init(&state));
 	CHECK(first.atom.id == same.atom.id);
-	CHECK(build_state_set(&arena, &state, first, (Bob_Path_Array){ dependencies, 1 }, test_fingerprint(STRING_LITERAL("path map"))));
+	CHECK(build_state_set(&arena, &state, first, (Bob_Path_Array){ dependencies, 1 }, test_fingerprint(LIT("path map"))));
 	CHECK(state.paths.path_count == 2);
 	CHECK(state.paths.ids_by_atom[first.atom.id] == 1);
 	CHECK(state.paths.paths[0].atom.id == first.atom.id);
@@ -599,12 +606,12 @@ static b32 test_build_state_tasks(void)
 	Arena arena = arena_create(KILOBYTES(256));
 	Build_State state = {0};
 	String first_dependencies[] = {
-		STRING_LITERAL("src/main.c"),
-		STRING_LITERAL("include/common.h"),
+		LIT("src/main.c"),
+		LIT("include/common.h"),
 	};
 	String replacement_dependencies[] = {
-		STRING_LITERAL("include/common.h"),
-		STRING_LITERAL("include/next.h"),
+		LIT("include/common.h"),
+		LIT("include/next.h"),
 	};
 	Build_State_Task_Snapshot task;
 	Build_State_Task_Snapshot first_task;
@@ -613,42 +620,42 @@ static b32 test_build_state_tasks(void)
 	arena_set_name(&arena, "build state task test");
 	CHECK(bob && arena.data != NULL);
 	CHECK(build_state_init(&state));
-	output = test_path(bob, STRING_LITERAL("build/main.o"));
+	output = test_path(bob, LIT("build/main.o"));
 	CHECK(!build_state_get_task(&state, output, &task));
 	CHECK(!build_state_set(&arena, &state, (Bob_Path){0}, (Bob_Path_Array){0}, (Bob_Fingerprint){0}));
 	CHECK(!build_state_set(&arena, &state, output, (Bob_Path_Array){ .count = 1 }, (Bob_Fingerprint){0}));
 	CHECK(state.task_count == 0 && state.paths.path_count == 0);
 
-	CHECK(test_state_set(&arena, bob, &state, STRING_LITERAL("build/main.o"),
+	CHECK(test_state_set(&arena, bob, &state, LIT("build/main.o"),
 		STRING_ARRAY_FROM(first_dependencies)));
 	CHECK(state.task_count == 1);
 	CHECK(state.paths.path_count == 3);
 	CHECK(build_state_get_task(&state, output, &task));
 	CHECK(task.output.atom.id == output.atom.id);
 	CHECK(task.dependencies.count == 2);
-	CHECK(state_task_contains_path(bob, &task, STRING_LITERAL("src/main.c")));
-	CHECK(state_task_contains_path(bob, &task, STRING_LITERAL("include/common.h")));
+	CHECK(state_task_contains_path(bob, &task, LIT("src/main.c")));
+	CHECK(state_task_contains_path(bob, &task, LIT("include/common.h")));
 	first_task = task;
 
-	CHECK(test_state_set(&arena, bob, &state, STRING_LITERAL("build/main.o"),
+	CHECK(test_state_set(&arena, bob, &state, LIT("build/main.o"),
 		STRING_ARRAY_FROM(replacement_dependencies)));
 	CHECK(state.task_count == 1);
 	CHECK(state.paths.path_count == 4);
 	CHECK(build_state_get_task(&state, output, &task));
 	CHECK(task.output.atom.id == output.atom.id);
 	CHECK(task.dependencies.count == 2);
-	CHECK(state_task_contains_path(bob, &task, STRING_LITERAL("include/common.h")));
-	CHECK(state_task_contains_path(bob, &task, STRING_LITERAL("include/next.h")));
-	CHECK(state_task_contains_path(bob, &first_task, STRING_LITERAL("src/main.c")));
-	CHECK(!state_task_contains_path(bob, &first_task, STRING_LITERAL("include/next.h")));
+	CHECK(state_task_contains_path(bob, &task, LIT("include/common.h")));
+	CHECK(state_task_contains_path(bob, &task, LIT("include/next.h")));
+	CHECK(state_task_contains_path(bob, &first_task, LIT("src/main.c")));
+	CHECK(!state_task_contains_path(bob, &first_task, LIT("include/next.h")));
 
-	CHECK(!build_state_remove(&state, test_path(bob, STRING_LITERAL("build/missing.o"))));
-	CHECK(test_state_set(&arena, bob, &state, STRING_LITERAL("build/second.o"), (String_Array){0}));
+	CHECK(!build_state_remove(&state, test_path(bob, LIT("build/missing.o"))));
+	CHECK(test_state_set(&arena, bob, &state, LIT("build/second.o"), (String_Array){0}));
 	CHECK(state.task_count == 2);
 	CHECK(build_state_remove(&state, output));
 	CHECK(state.task_count == 1);
 	CHECK(!build_state_get_task(&state, output, &task));
-	CHECK(build_state_get_task(&state, test_path(bob, STRING_LITERAL("build/second.o")), &task));
+	CHECK(build_state_get_task(&state, test_path(bob, LIT("build/second.o")), &task));
 	CHECK(state.paths.path_count == 5);
 
 	build_state_destroy(&state);
@@ -668,8 +675,8 @@ static b32 test_build_state_stress(void)
 	Build_State loaded = {0};
 	String_Array dependencies = {0};
 	Bob_Path_Array dependency_paths = {0};
-	String root = STRING_LITERAL("build\\build_state_stress");
-	String path = STRING_LITERAL("build\\build_state_stress\\state");
+	String root = LIT("build\\build_state_stress");
+	String path = LIT("build\\build_state_stress\\state");
 	Bob_Platform_File_Info info;
 	u64 frequency = platform_counter_frequency();
 	u64 construction_started;
@@ -732,8 +739,8 @@ static b32 test_build_state_stress(void)
 	CHECK_STRESS(loaded.task_count == TASK_COUNT);
 	CHECK_STRESS(loaded.paths.path_count == TASK_COUNT + DEPENDENCY_COUNT);
 	Build_State_Task_Snapshot task;
-	CHECK_STRESS(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build\\godot\\synthetic_0000.windows.template_debug.x86_64.o")), &task));
-	CHECK_STRESS(build_state_get_task(&loaded, test_path(bob, STRING_LITERAL("build\\godot\\synthetic_1885.windows.template_debug.x86_64.o")), &task));
+	CHECK_STRESS(build_state_get_task(&loaded, test_path(bob, LIT("build\\godot\\synthetic_0000.windows.template_debug.x86_64.o")), &task));
+	CHECK_STRESS(build_state_get_task(&loaded, test_path(bob, LIT("build\\godot\\synthetic_1885.windows.template_debug.x86_64.o")), &task));
 
 	printf("\n  build-state stress measurements\n");
 	printf("    tasks: %u\n", (u32)TASK_COUNT);
@@ -775,7 +782,7 @@ static b32 test_make_depfile(void)
 	{
 		const char *expected[] = { "src/main.c", "include/main.h" };
 		CHECK(make_depfile_parse(&arena,
-			STRING_LITERAL("build/main.o: src/main.c include/main.h\n"),
+			LIT("build/main.o: src/main.c include/main.h\n"),
 			&dependencies));
 		CHECK(string_array_matches(dependencies, expected, ARRAY_COUNT(expected)));
 	}
@@ -787,7 +794,7 @@ static b32 test_make_depfile(void)
 			"C:\\Program Files\\SDK\\header.h",
 		};
 		CHECK(make_depfile_parse(&arena,
-			STRING_LITERAL(
+			LIT(
 				"C:\\build\\main.obj: C:\\src\\main.c \\\r\n"
 				"  C:\\Program\\ Files\\SDK\\header.h\r\n"),
 			&dependencies));
@@ -804,7 +811,7 @@ static b32 test_make_depfile(void)
 			"slash\\name.h",
 		};
 		CHECK(make_depfile_parse(&arena,
-			STRING_LITERAL(
+			LIT(
 				"out.o: path\\ with\\ spaces/header.h hash\\#header.h "
 				"cash$$money.h colon\\:name.h slash\\\\name.h\n"),
 			&dependencies));
@@ -815,7 +822,7 @@ static b32 test_make_depfile(void)
 	{
 		const char *expected[] = { "one.c", "common.h" };
 		CHECK(make_depfile_parse(&arena,
-			STRING_LITERAL(
+			LIT(
 				"one.o one.d: one.c common.h common.h # ignored.h\n"
 				"one.c:\n"
 				"common.h:\n"),
@@ -828,7 +835,7 @@ static b32 test_make_depfile(void)
 	CHECK(dependencies.count == 0);
 	mark = arena_mark(&arena);
 	CHECK(!make_depfile_parse(&arena,
-		STRING_LITERAL("build/main.o src/main.c\n"), &dependencies));
+		LIT("build/main.o src/main.c\n"), &dependencies));
 	CHECK(arena_mark(&arena) == mark);
 	CHECK(dependencies.count == 0);
 
@@ -865,7 +872,7 @@ static b32 test_arena_and_strings(void)
     start = arena_top(&arena);
     CHECK(arena_append_text(&arena, "hello") == start);
 	CHECK(*(char *)arena_top(&arena) == 0);
-    CHECK(arena_append_str(&arena, STRING_LITERAL(" arena")) != NULL);
+    CHECK(arena_append_str(&arena, LIT(" arena")) != NULL);
 	CHECK(*(char *)arena_top(&arena) == 0);
     CHECK(arena_appendf(&arena, " %d", 42) != NULL);
 	CHECK(*(char *)arena_top(&arena) == 0);
@@ -873,49 +880,49 @@ static b32 test_arena_and_strings(void)
 	CHECK(*(char *)arena_top(&arena) == 0);
 	built = arena_string_from(&arena, start);
 	arena_finalize_string(&arena, built);
-	CHECK(string_equal(built, STRING_LITERAL("hello arena 42!")));
+	CHECK(string_equal(built, LIT("hello arena 42!")));
     CHECK(built.data[built.size] == 0);
 
     copy = arena_push_string_copy(&arena, built);
     CHECK(string_equal(copy, built));
     CHECK(copy.data[copy.size] == 0);
-    CHECK(string_equal(string_slice(copy, 6, 5), STRING_LITERAL("arena")));
-	CHECK(string_is_terminated(STRING_LITERAL("hello")));
-	CHECK(!string_is_terminated(string_slice(STRING_LITERAL("hello"), 0, 4)));
-	CHECK(string_ends_with_insensitive(STRING_LITERAL("build.ELF"), STRING_LITERAL(".elf")));
-	CHECK(!string_ends_with_insensitive(STRING_LITERAL("build.lua"), STRING_LITERAL(".elf")));
+    CHECK(string_equal(string_slice(copy, 6, 5), LIT("arena")));
+	CHECK(string_is_terminated(LIT("hello")));
+	CHECK(!string_is_terminated(string_slice(LIT("hello"), 0, 4)));
+	CHECK(string_ends_with_insensitive(LIT("build.ELF"), LIT(".elf")));
+	CHECK(!string_ends_with_insensitive(LIT("build.lua"), LIT(".elf")));
 	{
-		String_Array parts = string_split(&arena, STRING_LITERAL("a;;b;"), ';');
+		String_Array parts = string_split(&arena, LIT("a;;b;"), ';');
 		CHECK(parts.count == 4);
-		CHECK(string_equal(parts.items[0], STRING_LITERAL("a")));
+		CHECK(string_equal(parts.items[0], LIT("a")));
 		CHECK(parts.items[1].size == 0);
-		CHECK(string_equal(parts.items[2], STRING_LITERAL("b")));
+		CHECK(string_equal(parts.items[2], LIT("b")));
 		CHECK(parts.items[3].size == 0);
 	}
 	{
-		String_Array lines = string_split_lines(&arena, STRING_LITERAL("one\r\ntwo\n"));
+		String_Array lines = string_split_lines(&arena, LIT("one\r\ntwo\n"));
 		CHECK(lines.count == 3);
-		CHECK(string_equal(lines.items[0], STRING_LITERAL("one")));
-		CHECK(string_equal(lines.items[1], STRING_LITERAL("two")));
+		CHECK(string_equal(lines.items[0], LIT("one")));
+		CHECK(string_equal(lines.items[1], LIT("two")));
 		CHECK(lines.items[2].size == 0);
 	}
 	{
 		String_Array entries = string_split_block(&arena,
 			(String){ .data = "one\0two\0", .size = 8 });
 		CHECK(entries.count == 2);
-		CHECK(string_equal(entries.items[0], STRING_LITERAL("one")));
-		CHECK(string_equal(entries.items[1], STRING_LITERAL("two")));
+		CHECK(string_equal(entries.items[0], LIT("one")));
+		CHECK(string_equal(entries.items[1], LIT("two")));
 	}
 	{
 		String left;
 		String right;
-		CHECK(string_split_first(STRING_LITERAL("NAME=a=b"), '=', &left, &right));
-		CHECK(string_equal(left, STRING_LITERAL("NAME")));
-		CHECK(string_equal(right, STRING_LITERAL("a=b")));
-		CHECK(!string_split_first(STRING_LITERAL("NAME"), '=', &left, &right));
+		CHECK(string_split_first(LIT("NAME=a=b"), '=', &left, &right));
+		CHECK(string_equal(left, LIT("NAME")));
+		CHECK(string_equal(right, LIT("a=b")));
+		CHECK(!string_split_first(LIT("NAME"), '=', &left, &right));
 		CHECK(string_equal(
-			string_trim_whitespace(STRING_LITERAL(" \t value \r\n")),
-			STRING_LITERAL("value")));
+			string_trim_whitespace(LIT(" \t value \r\n")),
+			LIT("value")));
 	}
 
     CHECK(arena_push(&arena, 1) != NULL);
@@ -1239,22 +1246,22 @@ static b32 test_generic_graph_actions(void)
 
 	CHECK(graph != NULL);
 	graph_value = bob_allocate(graph, sizeof(*graph_value), _Alignof(i32));
-	graph_string = bob_copy_string(graph, STRING_LITERAL("graph storage"));
+	graph_string = bob_copy_string(graph, LIT("graph storage"));
 	CHECK(graph_value != NULL && graph_string.data != NULL);
 	*graph_value = 17;
-	CHECK(*graph_value == 17 && string_equal(graph_string, STRING_LITERAL("graph storage")));
+	CHECK(*graph_value == 17 && string_equal(graph_string, LIT("graph storage")));
 	CHECK_OK(bob_add_node(graph, (Bob_Node_Desc){
-		.name = STRING_LITERAL("left"),
+		.name = LIT("left"),
 		.function = generic_test_action,
 		.user_data = actions + 0,
 	}, &left));
 	CHECK_OK(bob_add_node(graph, (Bob_Node_Desc){
-		.name = STRING_LITERAL("right"),
+		.name = LIT("right"),
 		.function = generic_test_action,
 		.user_data = actions + 1,
 	}, &right));
 	CHECK_OK(bob_add_node(graph, (Bob_Node_Desc){
-		.name = STRING_LITERAL("sum"),
+		.name = LIT("sum"),
 		.function = generic_test_action,
 		.user_data = actions + 2,
 	}, &sum));
@@ -1276,7 +1283,7 @@ static b32 test_generic_graph_actions(void)
 	CHECK(*(i32 *)result.output == 9);
 	CHECK(!bob_node_result(right).changed);
 	CHECK(bob_allocate(graph, 1, 1) == NULL);
-	CHECK(bob_copy_string(graph, STRING_LITERAL("too late")).data == NULL);
+	CHECK(bob_copy_string(graph, LIT("too late")).data == NULL);
 	bob_destroy(graph);
 
 	{
@@ -1285,12 +1292,12 @@ static b32 test_generic_graph_actions(void)
 		graph = bob_create();
 		CHECK(graph != NULL);
 		CHECK_OK(bob_add_node(graph, (Bob_Node_Desc){
-			.name = STRING_LITERAL("failure"),
+			.name = LIT("failure"),
 			.function = generic_test_failure,
 			.user_data = &failed_calls,
 		}, &left));
 		CHECK_OK(bob_add_node(graph, (Bob_Node_Desc){
-			.name = STRING_LITERAL("blocked"),
+			.name = LIT("blocked"),
 			.function = generic_test_failure,
 			.user_data = &blocked_calls,
 		}, &right));
@@ -1359,6 +1366,56 @@ static b32 test_builder_runs_in_parallel(void)
     return true;
 }
 
+typedef struct Build_Event_Test
+{
+	Bob_Node *node;
+	u32       callback_thread;
+	u32       started;
+	u32       completed;
+	b32       valid;
+}
+Build_Event_Test;
+
+static void build_test_event(Bob_Event event, void *user_data)
+{
+	Build_Event_Test *test = user_data;
+	if (platform_current_thread_id() != test->callback_thread || event.node != test->node) test->valid = false;
+	if (event.type == BOB_EVENT_STARTED) ++test->started;
+	else if (event.type == BOB_EVENT_COMPLETED) {
+		if (!event.result.succeeded || !event.result.output) test->valid = false;
+		++test->completed;
+	}
+	else test->valid = false;
+}
+
+static b32 test_builder_events(void)
+{
+	Bob_Build *build = bob_build_create();
+	Bob *graph = bob_build_graph(build);
+	Bob_Node *node = add_node(graph, "event task");
+	Bob_Task_Desc task = {0};
+	Build_Event_Test event = {
+		.node = node,
+		.callback_thread = platform_current_thread_id(),
+		.valid = true,
+	};
+	char executable[MAX_PATH];
+	char command[2 * MAX_PATH];
+
+	CHECK(get_test_executable(executable, sizeof(executable)));
+	CHECK(snprintf(command, sizeof(command), "\"%s\" --child 0 0 event", executable) > 0);
+	task.command_line = string_from_cstring(command);
+	CHECK_OK(bob_set_task(build, node, task));
+	CHECK(bob_build(build, (Bob_Build_Params){
+		.worker_count = 1,
+		.user_data = &event,
+		.event = build_test_event,
+	}));
+	CHECK(event.valid && event.started == 1 && event.completed == 1);
+	bob_build_destroy(build);
+	return true;
+}
+
 static b32 test_builder_propagates_failure(void)
 {
     Bob_Build *build = bob_build_create();
@@ -1397,7 +1454,7 @@ static b32 test_builder_reports_missing_executable(void)
     Bob *graph = bob_build_graph(build);
     Bob_Node *missing = add_node(graph, "missing executable");
     Bob_Task_Desc task = {
-        .command_line = STRING_LITERAL("bob_executable_that_does_not_exist_7f31.exe --input x.c")
+        .command_line = LIT("bob_executable_that_does_not_exist_7f31.exe --input x.c")
     };
 
     CHECK(!run_tasks(build, &task, 1, 1));
@@ -1418,7 +1475,7 @@ static b32 test_builder_skips_existing_output(void)
     Bob_Platform_File_Info info;
 
     DeleteFileA(output_path);
-    task.command_line = STRING_LITERAL("cmd /c echo built>build\\incremental_test.out");
+    task.command_line = LIT("cmd /c echo built>build\\incremental_test.out");
     task.outputs = STRING_ARRAY_FROM(outputs);
 
     first_build = bob_build_create();
@@ -1443,15 +1500,15 @@ static b32 test_directory_output_stays_clean(void)
 {
 	const char *directory = "build\\directory_output_test";
 	const char *child = "build\\directory_output_test\\child.txt";
-	String directory_outputs[] = { STRING_LITERAL("build/directory_output_test") };
-	String child_outputs[] = { STRING_LITERAL("build/directory_output_test/child.txt") };
+	String directory_outputs[] = { LIT("build/directory_output_test") };
+	String child_outputs[] = { LIT("build/directory_output_test/child.txt") };
 	Bob_Task_Desc tasks[2] = {
 		{
-			.command_line = STRING_LITERAL("cmd /c if not exist build\\directory_output_test mkdir build\\directory_output_test"),
+			.command_line = LIT("cmd /c if not exist build\\directory_output_test mkdir build\\directory_output_test"),
 			.outputs = STRING_ARRAY_FROM(directory_outputs),
 		},
 		{
-			.command_line = STRING_LITERAL("cmd /c echo child>build\\directory_output_test\\child.txt"),
+			.command_line = LIT("cmd /c echo child>build\\directory_output_test\\child.txt"),
 			.outputs = STRING_ARRAY_FROM(child_outputs),
 		},
 	};
@@ -1491,11 +1548,11 @@ static b32 test_directory_output_stays_clean(void)
 static b32 test_task_fingerprint_rebuilds(void)
 {
 	const char *output_path = "build\\fingerprint_test.out";
-	String outputs[] = { STRING_LITERAL("build/fingerprint_test.out") };
-	String first_includes[] = { STRING_LITERAL("include/first") };
-	String second_includes[] = { STRING_LITERAL("include/second") };
+	String outputs[] = { LIT("build/fingerprint_test.out") };
+	String first_includes[] = { LIT("include/first") };
+	String second_includes[] = { LIT("include/second") };
 	Bob_Task_Desc task = {
-		.command_line = STRING_LITERAL("cmd /c echo first>build\\fingerprint_test.out"),
+		.command_line = LIT("cmd /c echo first>build\\fingerprint_test.out"),
 		.outputs = STRING_ARRAY_FROM(outputs),
 		.include_directories = STRING_ARRAY_FROM(first_includes),
 	};
@@ -1526,7 +1583,7 @@ static b32 test_task_fingerprint_rebuilds(void)
 	CHECK(unchanged.modified_unix_ms == first.modified_unix_ms);
 
 	Sleep(20);
-	task.command_line = STRING_LITERAL("cmd /c echo second>build\\fingerprint_test.out");
+	task.command_line = LIT("cmd /c echo second>build\\fingerprint_test.out");
 	build = bob_build_create();
 	graph = bob_build_graph(build);
 	CHECK(graph != NULL);
@@ -1607,7 +1664,7 @@ static b32 test_newer_input_rebuilds(void)
 
 	CHECK(write_test_file_at_time(input_path, 0ULL));
 	CHECK(platform_remove_file(output_path));
-	task.command_line = STRING_LITERAL("cmd /c echo rebuilt>build\\newer_input_test.out");
+	task.command_line = LIT("cmd /c echo rebuilt>build\\newer_input_test.out");
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
@@ -1649,7 +1706,7 @@ static b32 test_multiple_inputs_and_outputs(void)
     CHECK(write_test_file_at_time(input_b, 150ULL));
 	CHECK(platform_remove_file(output_a));
 	CHECK(platform_remove_file(output_b));
-	task.command_line = STRING_LITERAL("cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker");
+	task.command_line = LIT("cmd /c echo a>build\\multi_a.out && echo b>build\\multi_b.out && echo rebuilt>build\\multi.marker");
     task.inputs = STRING_ARRAY_FROM(inputs);
     task.outputs = STRING_ARRAY_FROM(outputs);
 
@@ -1715,10 +1772,10 @@ static b32 test_dependency_rebuild_propagates(void)
 	CHECK(platform_remove_file(dependency_output));
 	CHECK(platform_remove_file(parent_output));
 
-	tasks[0].command_line = STRING_LITERAL("cmd /c echo dependency>build\\dependency.out");
+	tasks[0].command_line = LIT("cmd /c echo dependency>build\\dependency.out");
     tasks[0].inputs = STRING_ARRAY_FROM(dependency_inputs);
     tasks[0].outputs = STRING_ARRAY_FROM(dependency_outputs);
-	tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
+	tasks[1].command_line = LIT("cmd /c echo parent>build\\parent.out && echo rebuilt>build\\parent.marker");
     tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
 
 	build = bob_build_create();
@@ -1754,9 +1811,9 @@ static b32 test_transparent_dependency(void)
 	String parent_outputs[] = { string_from_cstring(parent_output) };
 	Bob_Task_Desc tasks[2] = {0};
 	CHECK(platform_remove_file(parent_output));
-	tasks[0].command_line = STRING_LITERAL("cmd /c exit /b 0");
+	tasks[0].command_line = LIT("cmd /c exit /b 0");
 	tasks[0].transparent = true;
-	tasks[1].command_line = STRING_LITERAL("cmd /c echo parent>build\\transparent_parent.out");
+	tasks[1].command_line = LIT("cmd /c echo parent>build\\transparent_parent.out");
 	tasks[1].outputs = STRING_ARRAY_FROM(parent_outputs);
 	Bob_Build *build = bob_build_create();
 	Bob *graph = bob_build_graph(build);
@@ -1788,10 +1845,10 @@ static b32 test_task_working_directory(void)
 	const char *resolved_output =
 		"build\\task_working_directory\\result.out";
 	const char *unresolved_output = "result.out";
-	String outputs[] = { STRING_LITERAL("result.out") };
+	String outputs[] = { LIT("result.out") };
 	Bob_Task_Desc task = {
-		.command_line = STRING_LITERAL("cmd /c echo built>result.out"),
-		.working_directory = STRING_LITERAL("build\\task_working_directory"),
+		.command_line = LIT("cmd /c echo built>result.out"),
+		.working_directory = LIT("build\\task_working_directory"),
 		.outputs = STRING_ARRAY_FROM(outputs),
 	};
 	Bob_Build *build;
@@ -1843,11 +1900,11 @@ static b32 test_compiler_dependency_state(void)
 	String absolute_source = {0};
 	String absolute_header = {0};
 	String absolute_output = {0};
-	String inputs[] = { STRING_LITERAL("source.c") };
-	String outputs[] = { STRING_LITERAL("object.obj") };
+	String inputs[] = { LIT("source.c") };
+	String outputs[] = { LIT("object.obj") };
 	Bob_Task_Desc task = {
-		.command_line = STRING_LITERAL("clang-cl /nologo /c source.c /Foobject.obj"),
-		.working_directory = STRING_LITERAL("work"),
+		.command_line = LIT("clang-cl /nologo /c source.c /Foobject.obj"),
+		.working_directory = LIT("work"),
 		.inputs = STRING_ARRAY_FROM(inputs),
 		.outputs = STRING_ARRAY_FROM(outputs),
 	};
@@ -1878,17 +1935,17 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(write_test_text_at_time("work\\source.c",
 		"#include \"header.h\"\nint dependency_value = VALUE;\n", 100ULL));
 	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
-		STRING_LITERAL("work/source.c"), &absolute_source));
+		LIT("work/source.c"), &absolute_source));
 	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
-		STRING_LITERAL("work/header.h"), &absolute_header));
+		LIT("work/header.h"), &absolute_header));
 	CHECK_DEPENDENCY_STATE(bob_platform_absolute_path(&arena,
-		STRING_LITERAL("work/object.obj"), &absolute_output));
+		LIT("work/object.obj"), &absolute_output));
 	state_bob = bob_build_create();
 	CHECK_DEPENDENCY_STATE(state_bob != NULL);
 
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "capture compiler dependencies"));
 	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena, state_bob,
-		STRING_LITERAL(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
+		LIT(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
 	CHECK_DEPENDENCY_STATE(build_state_get_task(&state, test_path(state_bob, absolute_output), &state_task));
 	CHECK_DEPENDENCY_STATE(state_task_contains_path(state_bob, &state_task,
 		absolute_source));
@@ -1915,7 +1972,7 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(bob_platform_file_info(absolute_output, &after));
 	CHECK_DEPENDENCY_STATE(after.modified_unix_ms != before.modified_unix_ms);
 
-	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(STRING_LITERAL(".bob/state"),
+	CHECK_DEPENDENCY_STATE(bob_platform_write_entire_file(LIT(".bob/state"),
 		malformed, sizeof(malformed) - 1));
 	Sleep(20);
 	CHECK_DEPENDENCY_STATE(run_single_task(&task, "rebuild malformed compiler state"));
@@ -1926,10 +1983,10 @@ static b32 test_compiler_dependency_state(void)
 	CHECK_DEPENDENCY_STATE(!run_single_task(&task, "rebuild missing compiler dependency"));
 	arena_reset(&state_arena);
 	CHECK_DEPENDENCY_STATE(build_state_load(&state_arena, state_bob,
-		STRING_LITERAL(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
+		LIT(".bob/state"), &state) == BUILD_STATE_LOAD_OK);
 	CHECK_DEPENDENCY_STATE(!build_state_get_task(&state, test_path(state_bob, absolute_output), &state_task));
 	CHECK_DEPENDENCY_STATE(!bob_platform_file_info(
-		STRING_LITERAL("work/object.obj.d.tmp"), &after));
+		LIT("work/object.obj.d.tmp"), &after));
 	result = true;
 
 cleanup:
@@ -1976,10 +2033,11 @@ static b32 test_elf_descriptor(void)
         "    dependencies = {link},\n"
         "}\n"
         "ret {\n"
+		"    root = \"build\",\n"
         "    targets = {run},\n"
         "    options = {workers = 2, verbosity = 0},\n"
         "}\n";
-    String path = STRING_LITERAL("build/test_elf_descriptor.elf");
+    String path = LIT("build/test_elf_descriptor.elf");
     Script_Build build;
     Bob *graph;
 
@@ -1992,11 +2050,12 @@ static b32 test_elf_descriptor(void)
     }
     CHECK(platform_remove_file(path.data));
     graph = bob_build_graph(build.build);
+	CHECK(string_ends_with(bob_path_string(build.build, bob_build_root(build.build)), LIT("/build")));
     CHECK(bob_task_count(build.build) == 4);
-    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), STRING_LITERAL("run hello.exe")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), LIT("run hello.exe")));
     CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
     CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
-    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 2))), STRING_LITERAL("compile main")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 2))), LIT("compile main")));
     CHECK(build.options.has_worker_count);
     CHECK(build.options.worker_count == 2);
     CHECK(build.options.has_verbosity);
@@ -2022,7 +2081,7 @@ static b32 test_elf_generated_descriptor(void)
         "    dependencies = {task}\n"
         "}\n"
         "ret {targets = {tasks[7]}}\n";
-    String path = STRING_LITERAL("build/test_elf_generated_descriptor.elf");
+    String path = LIT("build/test_elf_generated_descriptor.elf");
     Script_Build build;
     Bob *graph;
 
@@ -2036,10 +2095,10 @@ static b32 test_elf_generated_descriptor(void)
     CHECK(platform_remove_file(path.data));
     graph = bob_build_graph(build.build);
     CHECK(bob_task_count(build.build) == 8);
-    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), STRING_LITERAL("generated 7")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), LIT("generated 7")));
     CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
     CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
-    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 7))), STRING_LITERAL("generated 0")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 7))), LIT("generated 0")));
     CHECK(bob_dependency_count(bob_node_at(graph, 7)) == 0);
     bob_build_destroy(build.build);
     return true;
@@ -2048,11 +2107,11 @@ static b32 test_elf_generated_descriptor(void)
 static b32 test_bob_script(void)
 {
     Arena arena = arena_create(MEGABYTES(16));
-    Script *script = script_load(&arena, STRING_LITERAL("build.elf"));
+    Script *script = script_load(&arena, LIT("build.elf"));
     CHECK(script_is_loaded(script));
-    CHECK(script_has_function(script, STRING_LITERAL("build")));
-    CHECK(script_has_function(script, STRING_LITERAL("test")));
-    CHECK(script_has_function(script, STRING_LITERAL("bless")));
+    CHECK(script_has_function(script, LIT("build")));
+    CHECK(script_has_function(script, LIT("test")));
+    CHECK(script_has_function(script, LIT("bless")));
     script_destroy(script);
     arena_destroy(&arena);
     return true;
@@ -2062,10 +2121,10 @@ static b32 test_bob_script(void)
 static b32 test_pet_bob(void)
 {
 	Arena arena = arena_create(MEGABYTES(16));
-	Script *script = script_load(&arena, STRING_LITERAL("build.elf"));
+	Script *script = script_load(&arena, LIT("build.elf"));
 	CHECK(script_is_loaded(script));
-	CHECK(script_has_function(script, STRING_LITERAL("pet")));
-	CHECK(script_invoke(script, STRING_LITERAL("pet")));
+	CHECK(script_has_function(script, LIT("pet")));
+	CHECK(script_invoke(script, LIT("pet")));
 	script_destroy(script);
 	arena_destroy(&arena);
 	return true;
@@ -2096,41 +2155,41 @@ static b32 test_compiler_command(void)
 	Arena arena = arena_create(KILOBYTES(64));
 	Compiler_Command command;
 	String augmented;
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("   "), &command));
+	CHECK(compiler_command_parse(&arena, LIT("   "), &command));
 	CHECK(!command.executable.data && command.kind == COMPILER_KIND_UNKNOWN);
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("/c source.c"), &command));
-	CHECK(string_equal(command.executable, STRING_LITERAL("/c")) && !command.compiles);
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("clang-cl /Ione /I \"two words\" -Ithree -I four -isystem system"), &command));
+	CHECK(compiler_command_parse(&arena, LIT("/c source.c"), &command));
+	CHECK(string_equal(command.executable, LIT("/c")) && !command.compiles);
+	CHECK(compiler_command_parse(&arena, LIT("clang-cl /Ione /I \"two words\" -Ithree -I four -isystem system"), &command));
 	CHECK(command.kind == COMPILER_KIND_CLANG_CL);
 	CHECK(!command.compiles);
 	CHECK(compiler_command_parse(&arena,
-		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
+		LIT("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
 		&command));
 	CHECK(command.can_add_make_dependencies);
 	CHECK(compiler_command_add_dependencies(&arena, &command,
-		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
-		STRING_LITERAL("object.obj.d"), &augmented));
-	CHECK(string_ends_with(augmented, STRING_LITERAL(" /clang:-MD /clang:-MF\"object.obj.d\"")));
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("cl.exe /nologo /c source.c"), &command));
+		LIT("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
+		LIT("object.obj.d"), &augmented));
+	CHECK(string_ends_with(augmented, LIT(" /clang:-MD /clang:-MF\"object.obj.d\"")));
+	CHECK(compiler_command_parse(&arena, LIT("cl.exe /nologo /c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_MSVC && command.compiles);
 	CHECK(!command.can_add_make_dependencies);
-	CHECK(compiler_command_add_dependencies(&arena, &command, STRING_LITERAL("cl /c source.c"),
-		STRING_LITERAL("object.json"), &augmented));
-	CHECK(string_ends_with(augmented, STRING_LITERAL(" /sourceDependencies \"object.json\"")));
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("gcc -MMD -c source.c"), &command));
+	CHECK(compiler_command_add_dependencies(&arena, &command, LIT("cl /c source.c"),
+		LIT("object.json"), &augmented));
+	CHECK(string_ends_with(augmented, LIT(" /sourceDependencies \"object.json\"")));
+	CHECK(compiler_command_parse(&arena, LIT("gcc -MMD -c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles && command.generates_dependencies);
 	CHECK(!command.can_add_make_dependencies);
 	CHECK(!compiler_command_add_dependencies(&arena, &command,
-		STRING_LITERAL("gcc -MMD -c source.c"),
-		STRING_LITERAL("object.d"), &augmented));
+		LIT("gcc -MMD -c source.c"),
+		LIT("object.d"), &augmented));
 	CHECK(compiler_command_parse(&arena,
-		STRING_LITERAL("x86_64-w64-mingw32-gcc -c source.c -o object.o"), &command));
+		LIT("x86_64-w64-mingw32-gcc -c source.c -o object.o"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
 	CHECK(command.can_add_make_dependencies);
 	CHECK(compiler_command_parse(&arena,
-		STRING_LITERAL("C:\\toolchain\\aarch64-linux-gnu-g++.exe -c source.cpp -o object.o"), &command));
+		LIT("C:\\toolchain\\aarch64-linux-gnu-g++.exe -c source.cpp -o object.o"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
-	CHECK(compiler_command_parse(&arena, STRING_LITERAL("notgcc -c source.c"), &command));
+	CHECK(compiler_command_parse(&arena, LIT("notgcc -c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_UNKNOWN && command.compiles);
 	arena_destroy(&arena);
 	return true;
@@ -2147,7 +2206,7 @@ static b32 test_script_functions(void)
         "}\n"
         "clean := fun() { ret 1 }\n"
         "ret {build = build, clean = clean}\n";
-    String path = STRING_LITERAL("build/test_script_functions.elf");
+    String path = LIT("build/test_script_functions.elf");
     Arena arena = arena_create(MEGABYTES(16));
     CHECK(platform_create_directories("build"));
     CHECK(bob_platform_write_entire_file(path, source, sizeof(source) - 1));
@@ -2156,12 +2215,12 @@ static b32 test_script_functions(void)
     CHECK(script_is_loaded(script));
     String_Array functions = script_functions(script);
     CHECK(functions.count == 2);
-    CHECK(script_has_function(script, STRING_LITERAL("build")));
-    CHECK(script_has_function(script, STRING_LITERAL("clean")));
-    CHECK(!script_has_function(script, STRING_LITERAL("missing")));
-    CHECK(script_invoke(script, STRING_LITERAL("build")));
-    CHECK(script_invoke(script, STRING_LITERAL("clean")));
-    CHECK(!script_invoke(script, STRING_LITERAL("missing")));
+    CHECK(script_has_function(script, LIT("build")));
+    CHECK(script_has_function(script, LIT("clean")));
+    CHECK(!script_has_function(script, LIT("missing")));
+    CHECK(script_invoke(script, LIT("build")));
+    CHECK(script_invoke(script, LIT("clean")));
+    CHECK(!script_invoke(script, LIT("missing")));
     script_destroy(script);
     arena_destroy(&arena);
     return true;
@@ -2209,10 +2268,10 @@ static int build_example(void)
     link = add_node(graph, "link hello.exe");
     run = add_node(graph, "run hello.exe");
 
-    tasks[0].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj");
-    tasks[1].command_line = STRING_LITERAL("clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj");
-    tasks[2].command_line = STRING_LITERAL("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
-    tasks[3].command_line = STRING_LITERAL("build\\example\\hello.exe");
+    tasks[0].command_line = LIT("clang-cl /nologo /W4 /WX /c example\\main.c /Fobuild\\example\\main.obj");
+    tasks[1].command_line = LIT("clang-cl /nologo /W4 /WX /c example\\message.c /Fobuild\\example\\message.obj");
+    tasks[2].command_line = LIT("clang-cl /nologo build\\example\\main.obj build\\example\\message.obj /Febuild\\example\\hello.exe");
+    tasks[3].command_line = LIT("build\\example\\hello.exe");
 
     if (bob_add_dependency(graph, link, compile_main) != BOB_OK ||
         bob_add_dependency(graph, link, compile_message) != BOB_OK ||
@@ -2249,8 +2308,9 @@ static int run_all_tests(void)
     run_test("cycle rejection", test_cycle_is_rejected);
     run_test("invalid edge rejection", test_invalid_edges_are_rejected);
 	run_test("generic graph actions", test_generic_graph_actions);
-    run_test("builder parallelism", test_builder_runs_in_parallel);
-    run_test("builder failure", test_builder_propagates_failure);
+	run_test("builder parallelism", test_builder_runs_in_parallel);
+	run_test("builder events", test_builder_events);
+	run_test("builder failure", test_builder_propagates_failure);
     run_test("missing executable", test_builder_reports_missing_executable);
     run_test("incremental output", test_builder_skips_existing_output);
 	run_test("directory output", test_directory_output_stays_clean);

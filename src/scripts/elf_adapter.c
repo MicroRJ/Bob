@@ -267,8 +267,19 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 	root = elf_abs_index(state, root);
 	Scratch scratch = begin_scratch();
 	Ref_List task_tables = { .arena = scratch.arena };
+	String build_root = {0};
 	b32 success = false;
 	memset(result, 0, sizeof(*result));
+
+	elf_get_field(state, root, "root");
+	if (!elf_is_nil(state, -1)) {
+		build_root = copy_stack_string(scratch.arena, state, -1);
+		if (!build_root.data || build_root.size == 0) {
+			snprintf(result->error, sizeof(result->error), "returned 'root' field must be a non-empty string");
+			goto cleanup;
+		}
+	}
+	elf_pop(state, 1);
 
 	elf_get_field(state, root, "options");
 	if (!elf_is_nil(state, -1))
@@ -353,9 +364,10 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 		elf_set_top(state, task_checkpoint);
 	}
 
-	result->build = bob_build_create();
+	result->build = build_root.data ? bob_build_create_at(build_root) : bob_build_create();
 	if (!result->build) {
-		snprintf(result->error, sizeof(result->error), "out of memory");
+		if (build_root.data) snprintf(result->error, sizeof(result->error), "unable to create build at root '%s'", build_root.data);
+		else snprintf(result->error, sizeof(result->error), "unable to create build");
 		goto cleanup;
 	}
 

@@ -78,18 +78,18 @@ static Env_Entry *find_environment_entry(Env_Table *list, String name)
 
 static b32 should_skip_variable(String name)
 {
-	String preinit = STRING_LITERAL("__VSCMD_PREINIT_");
+	String preinit = LIT("__VSCMD_PREINIT_");
 	if (name.size < preinit.size) return false;
 	return string_equal_insensitive(string_slice(name, 0, preinit.size), preinit);
 }
 
 static b32 is_path_list_variable(String name)
 {
-	return string_equal_insensitive(name, STRING_LITERAL("PATH")) ||
-	string_equal_insensitive(name, STRING_LITERAL("INCLUDE")) ||
-	string_equal_insensitive(name, STRING_LITERAL("EXTERNAL_INCLUDE")) ||
-	string_equal_insensitive(name, STRING_LITERAL("LIB")) ||
-	string_equal_insensitive(name, STRING_LITERAL("LIBPATH"));
+	return string_equal_insensitive(name, LIT("PATH")) ||
+	string_equal_insensitive(name, LIT("INCLUDE")) ||
+	string_equal_insensitive(name, LIT("EXTERNAL_INCLUDE")) ||
+	string_equal_insensitive(name, LIT("LIB")) ||
+	string_equal_insensitive(name, LIT("LIBPATH"));
 }
 
 static b32 path_list_contains(String_Array list, String item)
@@ -308,7 +308,7 @@ return saw_header;
 b32 vcvars_cache_refresh(Arena *arena, String *result_path)
 {
 
-	static const String command = STRING_LITERAL("cmd.exe /d /s /c \"call vcvars64 >nul&&set\"");
+	static const String command = LIT("cmd.exe /d /s /c \"call vcvars64 >nul&&set\"");
 
 	Env_Table before = {0};
 	Env_Table after = {0};

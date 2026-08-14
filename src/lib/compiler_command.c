@@ -8,7 +8,7 @@ static String executable_name(String path)
 		if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
 	}
 	path = string_slice(path, start, path.size - start);
-	if (string_ends_with_insensitive(path, STRING_LITERAL(".exe"))) {
+	if (string_ends_with_insensitive(path, LIT(".exe"))) {
 		path.size -= sizeof(".exe") - 1;
 	}
 	return path;
@@ -38,14 +38,14 @@ static b32 compiler_name_matches(String name, String compiler)
 static Compiler_Kind compiler_kind_from_executable(String executable)
 {
 	String name = executable_name(executable);
-	if (compiler_name_matches(name, STRING_LITERAL("clang-cl"))) return COMPILER_KIND_CLANG_CL;
-	if (compiler_name_matches(name, STRING_LITERAL("clang")) ||
-		compiler_name_matches(name, STRING_LITERAL("clang++"))) return COMPILER_KIND_CLANG;
-	if (compiler_name_matches(name, STRING_LITERAL("gcc")) ||
-		compiler_name_matches(name, STRING_LITERAL("g++")) ||
-		compiler_name_matches(name, STRING_LITERAL("cc")) ||
-		compiler_name_matches(name, STRING_LITERAL("c++"))) return COMPILER_KIND_GCC;
-	if (string_equal_insensitive(name, STRING_LITERAL("cl"))) return COMPILER_KIND_MSVC;
+	if (compiler_name_matches(name, LIT("clang-cl"))) return COMPILER_KIND_CLANG_CL;
+	if (compiler_name_matches(name, LIT("clang")) ||
+		compiler_name_matches(name, LIT("clang++"))) return COMPILER_KIND_CLANG;
+	if (compiler_name_matches(name, LIT("gcc")) ||
+		compiler_name_matches(name, LIT("g++")) ||
+		compiler_name_matches(name, LIT("cc")) ||
+		compiler_name_matches(name, LIT("c++"))) return COMPILER_KIND_GCC;
+	if (string_equal_insensitive(name, LIT("cl"))) return COMPILER_KIND_MSVC;
 	return COMPILER_KIND_UNKNOWN;
 }
 
@@ -100,15 +100,15 @@ b32 compiler_command_parse(Arena *arena, String command_line, Compiler_Command *
 		String argument;
 		if (!next_argument(scratch.arena, command_line, &offset, &argument)) break;
 
-		if (string_equal_insensitive(argument, STRING_LITERAL("/c")) ||
-			string_equal(argument, STRING_LITERAL("-c"))) {
+		if (string_equal_insensitive(argument, LIT("/c")) ||
+			string_equal(argument, LIT("-c"))) {
 			result->compiles = true;
 		}
-		if (string_equal_insensitive(argument, STRING_LITERAL("/sourceDependencies")) ||
-			string_equal(argument, STRING_LITERAL("-MMD")) ||
-			string_equal(argument, STRING_LITERAL("-MD")) ||
-			string_equal(argument, STRING_LITERAL("-MF")) ||
-			string_starts_with(argument, STRING_LITERAL("-MF"))) {
+		if (string_equal_insensitive(argument, LIT("/sourceDependencies")) ||
+			string_equal(argument, LIT("-MMD")) ||
+			string_equal(argument, LIT("-MD")) ||
+			string_equal(argument, LIT("-MF")) ||
+			string_starts_with(argument, LIT("-MF"))) {
 			result->generates_dependencies = true;
 		}
 		arena_restore(scratch.arena, mark);

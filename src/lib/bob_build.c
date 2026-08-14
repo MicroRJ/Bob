@@ -9,6 +9,7 @@
 #include "profiler.h"
 #include "blake3.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define BOB_BUILD_STATE_PATH ".bob/state"
@@ -107,30 +108,41 @@ Bob_Path bob_build_root(const Bob_Build *build)
 	return build ? build->root : (Bob_Path){0};
 }
 
-Bob_Build *bob_build_create(void)
+Bob_Build *bob_build_create_at(String root)
 {
 	Arena arena = arena_create(0);
-	Bob_Build *build;
-	Scratch scratch;
-	String directory;
 	if (!arena.data) return NULL;
 	arena_set_name(&arena, "Bob build");
-	build = arena_push_zero_aligned(&arena, sizeof(*build), _Alignof(Bob_Build));
+
+	Bob_Build *build = arena_push_zero_aligned(&arena, sizeof(*build), _Alignof(Bob_Build));
 	if (!build) {
+		logger_log_string(LOG_LEVEL_ERROR, "build", LIT("cannot initiate build, could not allocate memory"));
 		arena_destroy(&arena);
 		return NULL;
 	}
+
 	build->arena = arena;
+
+	// NOTE(RJ) interner expects a stable arena pointer
 	build->interner = bob_interner_create(&build->arena);
 	build->graph = bob_create();
-	if (!build->interner || !build->graph) goto failure;
-	scratch = begin_scratch();
-	if (!bob_platform_current_directory(scratch.arena, &directory) ||
-		!bob_path_resolve(build, (Bob_Path){0}, directory, &build->root)) {
+
+	if (!build->interner || !build->graph) {
+		logger_log_string(LOG_LEVEL_ERROR, "build", LIT("cannot initiate build, could not allocate memory"));
+		goto failure;
+	}
+
+	String absolute;
+	Scratch scratch = begin_scratch();
+	if (!root.data || root.size == 0 || !bob_path_platform_absolute(scratch.arena, root, &absolute)) {
 		end_scratch(scratch);
 		goto failure;
 	}
+
+	absolute = bob_path_normalize_separators(absolute);
+	build->root.atom = bob_interner_intern(build->interner, absolute);
 	end_scratch(scratch);
+	if (!bob_path_is_valid(build->root)) goto failure;
 	return build;
 
 failure:
@@ -138,6 +150,24 @@ failure:
 	bob_interner_destroy(build->interner);
 	arena_destroy(&arena);
 	return NULL;
+}
+
+Bob_Build *bob_build_create(void)
+{
+	Scratch scratch = begin_scratch();
+
+	Bob_Build *build = NULL;
+
+	String directory;
+	if (bob_platform_current_directory(scratch.arena, &directory)) {
+		build = bob_build_create_at(directory);
+	}
+	else {
+		logger_log_string(LOG_LEVEL_ERROR, "build", LIT("cannot initiate build, platform api function 'bob_platform_current_directory' failed"));
+	}
+
+	end_scratch(scratch);
+	return build;
 }
 
 void bob_build_destroy(Bob_Build *build)
@@ -186,31 +216,36 @@ typedef struct Bob_Rebuild_Decision
 Bob_Rebuild_Decision;
 
 
-typedef struct Bob_Build_Task
+typedef struct Build_Task
 {
-	// NOTE(RJ) copy of the user's command line.
+	// Copy of the user's command line.
 	String           command_line;
-	// NOTE(RJ) the processed command line, once other options are injected.
+	// The processed command line, once other options are injected.
 	String           execution_command_line;
-	// NOTE(RJ) derived compiler metadata from the command line.
+	// Derived compiler metadata from the command line.
 	Compiler_Command compiler;
+
 	Bob_Path_Array   inputs;
 	Bob_Path_Array   outputs;
 	Bob_Path_Array   include_directories;
 	Bob_Path         execution_directory;
 	Bob_Path         dependency_file;
+
 	Bob_Fingerprint  fingerprint;
-	// NOTE(RJ) whether the compiler supports deps files and the task has any outputs.
+
+	// Whether the compiler supports deps files and the task has any outputs.
 	b32              tracks_dependencies;
+
+	// If the task is transparent it is never marked as changed
 	b32              transparent;
 }
-Bob_Build_Task;
+Build_Task;
 
 typedef struct Bob_Build_Completion
 {
 	Bob_Build                  *build;
 	Bob_Node                   *node;
-	Bob_Build_Task             *task;
+	Build_Task             *task;
 	Bob_Platform_Process_Result process;
 	Bob_Path_Array              dependencies;
 	Bob_Rebuild_Decision        decision;
@@ -220,26 +255,28 @@ Bob_Build_Completion;
 
 typedef struct Bob_Builder
 {
-	Bob_Build     *build;
-	Bob           *bob;
-	Bob_Path       state_path;
-	Build_State    state;
-	Arena          state_arena;
-	b32            state_tracking;
-	b32            state_changed;
-	b32            explain;
-	b32            internal_error;
+	Bob_Build          *build;
+	Bob                *bob;
+	Bob_Path            state_path;
+	Build_State         state;
+	Arena               state_arena;
+	void               *event_user_data;
+	Bob_Event_Function *event;
+	u32                 task_count;
+	u32                 completed_task_count;
+	b32                 state_tracking;
+	b32                 state_changed;
+	b32                 explain;
+	b32                 internal_error;
 }
 Bob_Builder;
 
 static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_data);
 
-static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
-	const Bob_Node *node,
-	const Bob_Build_Task *build_task)
+static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder, const Bob_Node *node, const Build_Task *task)
 {
-	const Bob_Path_Array *inputs = &build_task->inputs;
-	const Bob_Path_Array *outputs = &build_task->outputs;
+	const Bob_Path_Array *inputs = &task->inputs;
+	const Bob_Path_Array *outputs = &task->outputs;
 	u64 oldest_output = UINT64_MAX;
 	u64 newest_input = 0;
 	u64 primary_output_stamp = 0;
@@ -288,7 +325,7 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
 		Build_State_Task_Snapshot state_task;
 		if (!build_state_get_task(&builder->state, output_path, &state_task)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
 		if (state_task.output_stamp != primary_output_stamp) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_CHANGED, .path = output, .rebuild = true };
-		if (memcmp(state_task.fingerprint.bytes, build_task->fingerprint.bytes, BOB_FINGERPRINT_SIZE) != 0) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_FINGERPRINT_CHANGED, .path = output, .rebuild = true };
+		if (memcmp(state_task.fingerprint.bytes, task->fingerprint.bytes, BOB_FINGERPRINT_SIZE) != 0) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_FINGERPRINT_CHANGED, .path = output, .rebuild = true };
 		for (u32 i = 0; i < state_task.dependencies.count; ++i) {
 			Bob_Platform_File_Info info;
 			String dependency = bob_path_string(builder->build, state_task.dependencies.items[i]);
@@ -323,7 +360,7 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder,
 	};
 }
 
-static void run_command(Bob_Node_Context *context, Bob_Build *build, const Bob_Build_Task *task, Bob_Build_Completion *completion)
+static void run_command(Bob_Node_Context *context, Bob_Build *build, const Build_Task *task, Bob_Build_Completion *completion)
 {
 	Scratch scratch = begin_different_scratch(context->arena);
 	String dependency_file = bob_path_string(build, task->dependency_file);
@@ -366,7 +403,7 @@ static void run_command(Bob_Node_Context *context, Bob_Build *build, const Bob_B
 static Bob_Node_Result build_task_action(Bob_Node_Context *context, void *user_data)
 {
 	Bob_Builder *builder = context->execution_data;
-	Bob_Build_Task *task = user_data;
+	Build_Task *task = user_data;
 	Bob_Build_Completion *completion;
 	b32 succeeded;
 
@@ -434,16 +471,17 @@ static void report_explanation(const Bob_Build_Completion *completion)
 	}
 }
 
-static void report_completion(const Bob_Build_Completion *completion)
+static void report_completion(const Bob_Build_Completion *completion, u32 completed, u32 total)
 {
-	const Bob_Build_Task *build_task = completion->task;
+	const Build_Task *build_task = completion->task;
 	String command_line = build_task->command_line;
 	b32 succeeded = !completion->decision.rebuild ||
 		(completion->process.error_code == 0 && completion->process.exit_code == 0);
+	char tag[64];
 
 	if (!completion->decision.rebuild) {
-		logger_log_at(0, LOG_LEVEL_INFO, "up-to-date", "%s",
-			bob_task_name(completion->node));
+		snprintf(tag, sizeof(tag), "%u/%u up-to-date", completed, total);
+		logger_log_at(0, LOG_LEVEL_INFO, tag, "%s", bob_task_name(completion->node));
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
 		return;
 	}
@@ -453,8 +491,8 @@ static void report_completion(const Bob_Build_Completion *completion)
 		else logger_log_string(LOG_LEVEL_ERROR, bob_task_name(completion->node),
 			completion->process.output);
 	}
-	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR,
-		succeeded ? "succeeded" : "failed", "%s", bob_task_name(completion->node));
+	snprintf(tag, sizeof(tag), "%u/%u %s", completed, total, succeeded ? "succeeded" : "failed");
+	logger_log_at(0, succeeded ? LOG_LEVEL_SUCCESS : LOG_LEVEL_ERROR, tag, "%s", bob_task_name(completion->node));
 	if (succeeded) {
 		logger_log_at(1, LOG_LEVEL_TRACE, "command", "%s", command_line.data);
 		logger_log_at(1, LOG_LEVEL_TRACE, "exit-code", "0");
@@ -518,24 +556,24 @@ static void build_task_event(Bob_Event event, void *user_data)
 {
 	Bob_Builder *builder = user_data;
 
-	if (event.type != BOB_EVENT_COMPLETED) return;
-	if (!event.node || bob_node_function(event.node) != build_task_action) return;
-
-	Bob_Build_Completion *completion = event.result.output;
-	if (!completion) {
-		builder->internal_error = true;
-		return;
-	}
+	if (event.type == BOB_EVENT_COMPLETED && event.node && bob_node_function(event.node) == build_task_action)
 	{
-		Profile_Scope scope = profile_scope_begin("report completion");
-		if (builder->explain) report_explanation(completion);
-		report_completion(completion);
-		profile_scope_end(&scope);
+		Bob_Build_Completion *completion = event.result.output;
+		++builder->completed_task_count;
+		if (!completion) builder->internal_error = true;
+		else
+		{
+			Profile_Scope scope = profile_scope_begin("report completion");
+			if (builder->explain) report_explanation(completion);
+			report_completion(completion, builder->completed_task_count, builder->task_count);
+			profile_scope_end(&scope);
+			record_task_completion_state(builder, completion, event.result.succeeded);
+		}
 	}
-	record_task_completion_state(builder, completion, event.result.succeeded);
+	if (builder->event) builder->event(event, builder->event_user_data);
 }
 
-static b32 valid_task(const Bob_Build_Task *task)
+static b32 valid_task(const Build_Task *task)
 {
 	return task && task->command_line.data && task->execution_command_line.data &&
 		bob_path_is_valid(task->execution_directory) &&
@@ -553,14 +591,17 @@ b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 
 	builder.build = build;
 	builder.bob   = bob;
+	builder.event = options.event;
+	builder.event_user_data = options.user_data;
 
-	if (!bob_path_resolve(build, bob_build_root(build), STRING_LITERAL(BOB_BUILD_STATE_PATH), &builder.state_path)) return false;
+	if (!bob_path_resolve(build, bob_build_root(build), LIT(BOB_BUILD_STATE_PATH), &builder.state_path)) return false;
 	builder.explain = options.explain;
 	for (u32 i = 0; i < bob_node_count(bob); ++i) {
 		Bob_Node *node = bob_node_at(bob, i);
 		if (bob_node_function(node) != build_task_action) continue;
-		const Bob_Build_Task *task = bob_node_user_data(node);
+		const Build_Task *task = bob_node_user_data(node);
 		if (!valid_task(task)) return false;
+		++builder.task_count;
 		if (task->outputs.count > 0) builder.state_tracking = true;
 	}
 
@@ -662,7 +703,7 @@ static b32 fingerprint_paths(const Bob_Build *build, blake3_hasher *hasher, Bob_
 	return true;
 }
 
-static b32 build_task_fingerprint(const Bob_Build *build, const Bob_Build_Task *task, Bob_Fingerprint *result)
+static b32 build_task_fingerprint(const Bob_Build *build, const Build_Task *task, Bob_Fingerprint *result)
 {
 	static const char domain[] = "bob.task.fingerprint";
 	blake3_hasher hasher;
@@ -701,10 +742,10 @@ static b32 resolve_task_paths(Bob_Build *build, Bob_Path directory, String_Array
 	return true;
 }
 
-static Bob_Build_Task *create_build_task(Bob_Build *build, Bob_Task_Desc desc)
+static Build_Task *create_build_task(Bob_Build *build, Bob_Task_Desc desc)
 {
 	Bob *bob = build ? build->graph : NULL;
-	Bob_Build_Task *task = bob_allocate(bob, sizeof(*task), _Alignof(Bob_Build_Task));
+	Build_Task *task = bob_allocate(bob, sizeof(*task), _Alignof(Build_Task));
 	Scratch scratch;
 	Compiler_Command compiler;
 	b32 valid = false;
@@ -753,7 +794,7 @@ done:
 Bob_Error bob_add_task(Bob_Build *build, Bob_Task_Desc desc, Bob_Node **node_out)
 {
 	Bob *bob = build ? build->graph : NULL;
-	Bob_Build_Task *task;
+	Build_Task *task;
 	if (!bob || !desc.name.data || !node_out) return BOB_ERROR_INVALID_TASK;
 	if (bob_is_prepared(bob)) return BOB_ERROR_ALREADY_PREPARED;
 	task = create_build_task(build, desc);
@@ -768,7 +809,7 @@ Bob_Error bob_add_task(Bob_Build *build, Bob_Task_Desc desc, Bob_Node **node_out
 Bob_Error bob_set_task(Bob_Build *build, Bob_Node *node, Bob_Task_Desc task)
 {
 	Bob *bob = build ? build->graph : NULL;
-	Bob_Build_Task *copy;
+	Build_Task *copy;
 	Bob_Error result;
 	if (!bob || !node) return BOB_ERROR_INVALID_TASK;
 	if (bob_is_prepared(bob)) return BOB_ERROR_ALREADY_PREPARED;

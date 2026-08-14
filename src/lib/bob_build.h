@@ -28,12 +28,16 @@ Bob_Task_Desc;
 
 typedef struct Bob_Build_Params
 {
-	u32 worker_count;
-	b32 explain;
+	u32                 worker_count;
+	b32                 explain;
+	/* Events are delivered on the thread calling bob_build. */
+	void               *user_data;
+	Bob_Event_Function *event;
 }
 Bob_Build_Params;
 
 Bob_Build *bob_build_create(void);
+Bob_Build *bob_build_create_at(String root);
 void bob_build_destroy(Bob_Build *build);
 Bob *bob_build_graph(Bob_Build *build);
 const Bob *bob_build_graph_const(const Bob_Build *build);

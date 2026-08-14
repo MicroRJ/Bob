@@ -69,7 +69,7 @@ typedef struct String_Array {
 	u32 count;
 } String_Array;
 
-#define STRING_LITERAL(text) ((String){ .data = (char *)(text), .size = sizeof(text) - 1 })
+#define LIT(text) ((String){ .data = (char *)(text), .size = sizeof(text) - 1 })
 
 extern THREAD_LOCAL Arena global_scratch_arenas[SCRATCH_ARENA_COUNT];
 

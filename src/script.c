@@ -8,7 +8,7 @@
 static const Script_Backend backends[] =
 {
 	{
-		.extension = STRING_LITERAL(".elf"),
+		.extension = LIT(".elf"),
 		.load = elf_script_load,
 		.destroy = elf_script_destroy,
 		.invoke = elf_script_invoke,
