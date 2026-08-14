@@ -47,6 +47,4 @@ u32 bob_task_count(const Bob_Build *build);
 const char *bob_task_name(const Bob_Node *node);
 Bob_Node_Status bob_task_state(const Bob_Node *node);
 
-const Bob_Task_Desc *bob_get_task_desc(const Bob_Node *node);
-
 #endif

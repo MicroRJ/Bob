@@ -14,13 +14,25 @@ static String executable_name(String path)
 	return path;
 }
 
+// Match every start against the compiler, the start is either 0 or the position
+// right after a '-'.
 static b32 compiler_name_matches(String name, String compiler)
 {
-	if (string_equal_insensitive(name, compiler)) return true;
-	if (name.size <= compiler.size ||
-		name.data[name.size - compiler.size - 1] != '-') return false;
-	return string_equal_insensitive(
-		string_slice(name, name.size - compiler.size, compiler.size), compiler);
+	for (u64 start = 0; start + compiler.size <= name.size; ++start)
+	{
+		if (start > 0 && name.data[start - 1] != '-') {
+			continue;
+		}
+		if (!string_equal_insensitive(string_slice(name, start, compiler.size), compiler)) {
+			continue;
+		}
+
+		u64 end = start + compiler.size;
+		if (end == name.size || name.data[end] == '-') {
+			return true;
+		}
+	}
+	return false;
 }
 
 static Compiler_Kind compiler_kind_from_executable(String executable)
@@ -101,16 +113,13 @@ b32 compiler_command_parse(Arena *arena, String command_line, Compiler_Command *
 		}
 		arena_restore(scratch.arena, mark);
 	}
+	result->can_add_make_dependencies = result->compiles &&
+		!result->generates_dependencies &&
+		(result->kind == COMPILER_KIND_CLANG ||
+		 result->kind == COMPILER_KIND_CLANG_CL ||
+		 result->kind == COMPILER_KIND_GCC);
 	end_scratch(scratch);
 	return true;
-}
-
-b32 compiler_command_can_add_make_dependencies(const Compiler_Command *command)
-{
-	if (!command || !command->compiles || command->generates_dependencies) return false;
-	return command->kind == COMPILER_KIND_CLANG ||
-		command->kind == COMPILER_KIND_CLANG_CL ||
-		command->kind == COMPILER_KIND_GCC;
 }
 
 b32 compiler_command_add_dependencies(Arena *arena, const Compiler_Command *command,

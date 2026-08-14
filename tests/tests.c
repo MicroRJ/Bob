@@ -1806,8 +1806,6 @@ static b32 test_task_working_directory(void)
 	graph = bob_build_graph(build);
 	add_node(graph, "working directory output");
 	CHECK(run_tasks(build, &task, 1, 1));
-	CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->working_directory,
-		STRING_LITERAL("build\\task_working_directory")));
 	bob_build_destroy(build);
 	CHECK(bob_platform_file_info(string_from_cstring(resolved_output), &info));
 	CHECK(!bob_platform_file_info(string_from_cstring(unresolved_output), &info));
@@ -1983,7 +1981,6 @@ static b32 test_elf_descriptor(void)
         "}\n";
     String path = STRING_LITERAL("build/test_elf_descriptor.elf");
     Script_Build build;
-    const Bob_Task_Desc *task;
     Bob *graph;
 
     CHECK(platform_create_directories("build"));
@@ -1996,15 +1993,10 @@ static b32 test_elf_descriptor(void)
     CHECK(platform_remove_file(path.data));
     graph = bob_build_graph(build.build);
     CHECK(bob_task_count(build.build) == 4);
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->name, STRING_LITERAL("run hello.exe")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), STRING_LITERAL("run hello.exe")));
     CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
     CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
-    task = bob_get_task_desc(bob_node_at(graph, 2));
-    CHECK(string_equal(task->name, STRING_LITERAL("compile main")));
-    CHECK(task->inputs.count == 1);
-    CHECK(task->outputs.count == 1);
-    CHECK(task->include_directories.count == 1);
-	CHECK(string_equal(task->working_directory, STRING_LITERAL(".")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 2))), STRING_LITERAL("compile main")));
     CHECK(build.options.has_worker_count);
     CHECK(build.options.worker_count == 2);
     CHECK(build.options.has_verbosity);
@@ -2044,10 +2036,10 @@ static b32 test_elf_generated_descriptor(void)
     CHECK(platform_remove_file(path.data));
     graph = bob_build_graph(build.build);
     CHECK(bob_task_count(build.build) == 8);
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 0))->name, STRING_LITERAL("generated 7")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 0))), STRING_LITERAL("generated 7")));
     CHECK(bob_dependency_count(bob_node_at(graph, 0)) == 1);
     CHECK(bob_dependency(bob_node_at(graph, 0), 0) == bob_node_at(graph, 1));
-    CHECK(string_equal(bob_get_task_desc(bob_node_at(graph, 7))->name, STRING_LITERAL("generated 0")));
+    CHECK(string_equal(string_from_cstring(bob_task_name(bob_node_at(graph, 7))), STRING_LITERAL("generated 0")));
     CHECK(bob_dependency_count(bob_node_at(graph, 7)) == 0);
     bob_build_destroy(build.build);
     return true;
@@ -2114,27 +2106,27 @@ static b32 test_compiler_command(void)
 	CHECK(compiler_command_parse(&arena,
 		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
 		&command));
-	CHECK(compiler_command_can_add_make_dependencies(&command));
+	CHECK(command.can_add_make_dependencies);
 	CHECK(compiler_command_add_dependencies(&arena, &command,
 		STRING_LITERAL("\"C:\\Program Files\\LLVM\\bin\\clang-cl.exe\" /c source.c /Foobject.obj"),
 		STRING_LITERAL("object.obj.d"), &augmented));
 	CHECK(string_ends_with(augmented, STRING_LITERAL(" /clang:-MD /clang:-MF\"object.obj.d\"")));
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("cl.exe /nologo /c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_MSVC && command.compiles);
-	CHECK(!compiler_command_can_add_make_dependencies(&command));
+	CHECK(!command.can_add_make_dependencies);
 	CHECK(compiler_command_add_dependencies(&arena, &command, STRING_LITERAL("cl /c source.c"),
 		STRING_LITERAL("object.json"), &augmented));
 	CHECK(string_ends_with(augmented, STRING_LITERAL(" /sourceDependencies \"object.json\"")));
 	CHECK(compiler_command_parse(&arena, STRING_LITERAL("gcc -MMD -c source.c"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles && command.generates_dependencies);
-	CHECK(!compiler_command_can_add_make_dependencies(&command));
+	CHECK(!command.can_add_make_dependencies);
 	CHECK(!compiler_command_add_dependencies(&arena, &command,
 		STRING_LITERAL("gcc -MMD -c source.c"),
 		STRING_LITERAL("object.d"), &augmented));
 	CHECK(compiler_command_parse(&arena,
 		STRING_LITERAL("x86_64-w64-mingw32-gcc -c source.c -o object.o"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
-	CHECK(compiler_command_can_add_make_dependencies(&command));
+	CHECK(command.can_add_make_dependencies);
 	CHECK(compiler_command_parse(&arena,
 		STRING_LITERAL("C:\\toolchain\\aarch64-linux-gnu-g++.exe -c source.cpp -o object.o"), &command));
 	CHECK(command.kind == COMPILER_KIND_GCC && command.compiles);
@@ -2234,22 +2226,6 @@ static int build_example(void)
     return succeeded ? 0 : 1;
 }
 
-static int build_tasks_from_file(String path)
-{
-    Script_Build build = {0};
-    u32 workers;
-    int exit_code;
-    if (!script_load_build(path, &build)) {
-        fprintf(stderr, "%s: %s\n", path.data, build.error);
-        return 1;
-    }
-    workers = build.options.has_worker_count ? build.options.worker_count : 4;
-    exit_code = bob_build(build.build,
-		(Bob_Build_Params){ .worker_count = workers }) ? 0 : 1;
-    bob_build_destroy(build.build);
-    return exit_code;
-}
-
 static int run_all_tests(void)
 {
     run_test("arena and strings", test_arena_and_strings);
@@ -2331,9 +2307,9 @@ int main(int argument_count, char **arguments)
 		return tests_failed ? 1 : 0;
 	}
     if (argument_count == 1) {
-        return build_tasks_from_file(STRING_LITERAL("build.elf"));
+        return run_all_tests();
     }
 
-	fprintf(stderr, "usage: bob [--test|--stress]\n");
+	fprintf(stderr, "usage: tests [--test|--stress]\n");
     return 2;
 }
