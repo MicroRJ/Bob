@@ -56,7 +56,7 @@ static String stack_string(elf_State *state, elf_i32 index)
 	return string_from_data(value.data, value.size);
 }
 
-static b32 stack_integer_field(elf_State *state, elf_i32 table, const char *field, elf_Integer *value, b32 *present)
+static b32 stack_integer_field(elf_State *state, elf_i32 table, const char *field, elf_Int *value, b32 *present)
 {
 	if (!elf_get_field(state, table, field)) return false;
 	*present = !elf_is_nil(state, -1);
@@ -289,7 +289,7 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			snprintf(result->error, sizeof(result->error), "returned 'options' field must be a table");
 			goto cleanup;
 		}
-		elf_Integer integer = 0;
+		elf_Int integer = 0;
 		b32 present = false;
 		if (!stack_integer_field(state, options, "workers", &integer, &present) || (present && (integer < 1 || (u64)integer > UINT32_MAX))) {
 			snprintf(result->error, sizeof(result->error), "options.workers must be a positive integer");
@@ -398,7 +398,7 @@ static b32 read_build_table(Script *script, elf_i32 root, Script_Build *result)
 			}
 		}
 		elf_pop(state, 1);
-		elf_Integer transparent = 0;
+		elf_Int transparent = 0;
 		b32 present = false;
 		if (!stack_integer_field(state, description, "transparent", &transparent, &present)) {
 			snprintf(result->error, sizeof(result->error), "transparent for '%s' must be a boolean", task.name.data);

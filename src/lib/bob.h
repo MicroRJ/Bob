@@ -3,7 +3,7 @@
 
 #include "base.h"
 
-#define BOB_VERSION "0.1.0-dev"
+#define BOB_VERSION "0.2.0-dev"
 
 typedef struct Bob Bob;
 typedef struct Bob_Node Bob_Node;

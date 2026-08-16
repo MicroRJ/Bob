@@ -1,6 +1,4 @@
-// elf.process.run("cmd.exe /d /s /c \"call vcvars64 >nul&&set\"")
-// elf.printl(elf.env.get("INCLUDE"):split(";"))
-// #eof
+
 core_sources := {
 	{ name = "base",               path = "src/base.c"                      },
 	{ name = "logger",             path = "src/logger.c"                    },
@@ -208,6 +206,24 @@ entries.stress = fun() {
 	})
 }
 
+
+format_number := fun(number)
+{
+	parts := {}
+	while number ? {
+		parts:add(number % 1000)
+		number /= 1000
+	}
+	formatted := ""
+	counter := 0
+	for piece := parts:reverse()[...] ? {
+		if counter ? { formatted += "," }
+		formatted += piece
+		counter += 1
+	}
+	ret formatted
+}
+
 entries.bless = fun() {
 	elf.assert(elf.fs.is_file("build/bob.exe"), "build/bob.exe does not exist; build Bob before blessing it")
 	archive_directory := f"blessed/archive/${bob.version}"
@@ -217,6 +233,28 @@ entries.bless = fun() {
 	elf.assert(elf.fs.copy_file("build/bob.exe", "blessed/bob.exe", true), "could not update blessed/bob.exe; run bless using build/bob.exe")
 	elf.printl(f"\x1b[1;33mBob ${bob.version} has been blessed. Go forth and compile.\x1b[0m")
 	elf.printl(f"\x1b[2;36mThe sacred binary rests at ${archive}\x1b[0m")
+
+	bob_commit      := elf.process.run("git rev-parse HEAD").stdout:lines()[0]
+	elf_commit      := elf.process.run("git -C elf rev-parse HEAD").stdout:lines()[0]
+	platform_commit := elf.process.run("git -C platform rev-parse HEAD").stdout:lines()[0]
+	sha256          := elf.process.run("powershell (Get-FileHash build\\bob.exe -Algorithm SHA256).Hash").stdout:lines()[0]
+
+	file_size := format_number(elf.fs.read_text_file("build/bob.exe"):length())
+
+	manifest :=
+	f"""
+	# Bob Manifest
+	- target                     := windows-x64
+	- bob_version                := ${bob.version}
+	- bob_source_commit          := ${bob_commit}
+	- elf_version                := 0.1.0-dev
+	- elf_commit                 := ${elf_commit}
+	- platform_version           := 0.1.0-dev
+	- platform_commit            := ${platform_commit}
+	- executable_size            := ${file_size} bytes
+	- SHA-256                    := ${sha256}
+	"""
+	elf.fs.write_text_file(f"${archive_directory}/manifest.md", manifest)
 }
 
 // NOTE(RJ) _DO_NOT_ actually remove this or the tests will fail
