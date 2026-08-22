@@ -18,6 +18,7 @@ struct Bob_Build
 {
 	Arena         arena;
 	Bob          *graph;
+	Bob_Execution *execution;
 	Bob_Interner *interner;
 	Bob_Path      root;
 };
@@ -95,7 +96,8 @@ failure:
 
 String bob_path_string(const Bob_Build *build, Bob_Path path)
 {
-	return build ? bob_interner_string(build->interner, path.atom) : (String){0};
+	ASSERT(build);
+	return bob_interner_string(build->interner, path.atom);
 }
 
 b32 bob_path_is_valid(Bob_Path path)
@@ -174,6 +176,7 @@ void bob_build_destroy(Bob_Build *build)
 {
 	Arena arena;
 	if (!build) return;
+	bob_execution_destroy(build->execution);
 	bob_destroy(build->graph);
 	bob_interner_destroy(build->interner);
 	arena = build->arena;
@@ -259,6 +262,7 @@ typedef struct Bob_Builder
 	Bob                *bob;
 	Bob_Path            state_path;
 	Build_State         state;
+	Build_State_Stream  state_stream;
 	Arena               state_arena;
 	void               *event_user_data;
 	Bob_Event_Function *event;
@@ -322,8 +326,8 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder, const Bo
 	if (outputs->count > 0) {
 		Bob_Path output_path = outputs->items[0];
 		String output = bob_path_string(builder->build, output_path);
-		Build_State_Task_Snapshot state_task;
-		if (!build_state_get_task(&builder->state, output_path, &state_task)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
+		Build_State_Task state_task;
+		if (!build_state_get(&builder->state, output_path, &state_task)) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_MISSING, .path = output, .rebuild = true };
 		if (state_task.output_stamp != primary_output_stamp) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_STATE_CHANGED, .path = output, .rebuild = true };
 		if (memcmp(state_task.fingerprint.bytes, task->fingerprint.bytes, BOB_FINGERPRINT_SIZE) != 0) return (Bob_Rebuild_Decision){ .reason = BOB_REBUILD_FINGERPRINT_CHANGED, .path = output, .rebuild = true };
 		for (u32 i = 0; i < state_task.dependencies.count; ++i) {
@@ -339,7 +343,7 @@ static Bob_Rebuild_Decision task_rebuild_decision(Bob_Builder *builder, const Bo
 
 	for (u32 i = 0; i < bob_dependency_count(node); ++i) {
 		Bob_Node *dependency = bob_dependency(node, i);
-		if (!dependency || bob_node_result(dependency).changed) {
+		if (!dependency || bob_execution_node_result(builder->build->execution, dependency).changed) {
 			return (Bob_Rebuild_Decision){
 				.reason = BOB_REBUILD_DEPENDENCY_CHANGED,
 				.dependency = dependency,
@@ -537,7 +541,7 @@ static void record_task_completion_state(Bob_Builder *builder, const Bob_Build_C
 	String state_path = bob_path_string(builder->build, builder->state_path);
 
 	if (!succeeded || (completion->task->tracks_dependencies && !completion->dependency_state_valid)) {
-		if (!build_state_append_remove(state_path, &builder->state, output_path)) builder->internal_error = true;
+		if (!build_state_stream_append_remove(&builder->state_stream, state_path, output_path)) builder->internal_error = true;
 		else builder->state_changed = true;
 
 		if (succeeded && completion->task->tracks_dependencies && !completion->dependency_state_valid) {
@@ -548,7 +552,7 @@ static void record_task_completion_state(Bob_Builder *builder, const Bob_Build_C
 	Bob_Platform_File_Info info;
 	String output = bob_path_string(builder->build, output_path);
 	u64 output_stamp = bob_platform_file_info(output, &info) && !info.is_directory ? (u64)info.modified_unix_ms : 0;
-	if (!build_state_append_set(&builder->state_arena, state_path, builder->build, &builder->state, output_path, completion->dependencies, output_stamp, completion->task->fingerprint)) builder->internal_error = true;
+	if (!build_state_stream_append_set(&builder->state_stream, state_path, output_path, completion->dependencies, output_stamp, completion->task->fingerprint)) builder->internal_error = true;
 	else builder->state_changed = true;
 }
 
@@ -585,8 +589,11 @@ static b32 valid_task(const Build_Task *task)
 b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 {
 	Bob_Builder builder = {0};
+	Bob_Error execution_error;
 
 	if (!build || !build->graph || options.worker_count == 0) return false;
+	bob_execution_destroy(build->execution);
+	build->execution = NULL;
 	Bob *bob = build->graph;
 
 	builder.build = build;
@@ -614,13 +621,14 @@ b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 		result = false;
 		goto cleanup;
 	}
-	if (!build_state_init(&builder.state)) {
+	if (!build_state_init(&builder.state, &builder.state_arena)) {
 		result = false;
 		goto cleanup;
 	}
+	build_state_stream_init(&builder.state_stream, build, &builder.state);
 	if (builder.state_tracking) {
 		String state_path = bob_path_string(build, builder.state_path);
-		Build_State_Load_Result load_result = build_state_load(&builder.state_arena, build, state_path, &builder.state);
+		Build_State_Load_Result load_result = build_state_stream_load(&builder.state_stream, state_path);
 		if (load_result == BUILD_STATE_LOAD_ERROR) {
 			log_warning("could not load Bob build state");
 			result = false;
@@ -631,7 +639,7 @@ b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 			build_state_clear(&builder.state);
 		}
 		if (load_result != BUILD_STATE_LOAD_OK) {
-			if (!build_state_save(state_path, build, &builder.state)) {
+			if (!build_state_stream_save(&builder.state_stream, state_path)) {
 				log_warning("could not prepare Bob build state");
 				result = false;
 				goto cleanup;
@@ -639,14 +647,20 @@ b32 bob_build(Bob_Build *build, Bob_Build_Params options)
 		}
 	}
 
-	result = bob_execute(bob, (Bob_Exec_Params){
+	execution_error = bob_execution_create(bob, &build->execution);
+	if (execution_error != BOB_OK) {
+		log_error("unable to create Bob execution: %s", bob_error_string(execution_error));
+		result = false;
+		goto cleanup;
+	}
+	result = bob_execute(build->execution, (Bob_Exec_Params){
 		.worker_count = options.worker_count,
 		.user_data = &builder,
 		.event = build_task_event,
 	});
 	if (builder.internal_error) result = false;
 	if (result && builder.state_tracking && builder.state_changed) {
-		if (!build_state_save(bob_path_string(build, builder.state_path), build, &builder.state)) {
+		if (!build_state_stream_save(&builder.state_stream, bob_path_string(build, builder.state_path))) {
 			log_warning("could not compact Bob build state");
 			result = false;
 		}
@@ -796,7 +810,7 @@ Bob_Error bob_add_task(Bob_Build *build, Bob_Task_Desc desc, Bob_Node **node_out
 	Bob *bob = build ? build->graph : NULL;
 	Build_Task *task;
 	if (!bob || !desc.name.data || !node_out) return BOB_ERROR_INVALID_TASK;
-	if (bob_is_prepared(bob)) return BOB_ERROR_ALREADY_PREPARED;
+	if (bob_is_sealed(bob)) return BOB_ERROR_GRAPH_SEALED;
 	task = create_build_task(build, desc);
 	if (!task) return BOB_ERROR_OUT_OF_MEMORY;
 	return bob_add_node(bob, (Bob_Node_Desc){
@@ -812,7 +826,7 @@ Bob_Error bob_set_task(Bob_Build *build, Bob_Node *node, Bob_Task_Desc task)
 	Build_Task *copy;
 	Bob_Error result;
 	if (!bob || !node) return BOB_ERROR_INVALID_TASK;
-	if (bob_is_prepared(bob)) return BOB_ERROR_ALREADY_PREPARED;
+	if (bob_is_sealed(bob)) return BOB_ERROR_GRAPH_SEALED;
 	for (u32 i = 0; i < bob_node_count(bob); ++i) {
 		if (bob_node_at(bob, i) == node) goto found;
 	}
@@ -839,7 +853,7 @@ const char *bob_task_name(const Bob_Node *node)
 	return bob_node_name(node);
 }
 
-Bob_Node_Status bob_task_state(const Bob_Node *node)
+Bob_Node_Status bob_task_state(const Bob_Build *build, const Bob_Node *node)
 {
-	return bob_node_state(node);
+	return build && build->execution ? bob_execution_node_state(build->execution, node) : BOB_NODE_PENDING;
 }

@@ -7,6 +7,7 @@
 
 typedef struct Bob Bob;
 typedef struct Bob_Node Bob_Node;
+typedef struct Bob_Execution Bob_Execution;
 typedef struct Bob_Node_Context Bob_Node_Context;
 
 typedef enum Bob_Error
@@ -16,8 +17,7 @@ typedef enum Bob_Error
 	BOB_ERROR_INVALID_TASK,
 	BOB_ERROR_DUPLICATE_DEPENDENCY,
 	BOB_ERROR_SELF_DEPENDENCY,
-	BOB_ERROR_ALREADY_PREPARED,
-	BOB_ERROR_NOT_PREPARED,
+	BOB_ERROR_GRAPH_SEALED,
 	BOB_ERROR_INVALID_STATE,
 	BOB_ERROR_CYCLE,
 }
@@ -36,7 +36,7 @@ typedef enum Bob_Node_Status
 }
 Bob_Node_Status;
 
-/* Output allocated from the node context arena remains valid until bob_destroy. */
+/* Output allocated from the node context arena remains valid until bob_execution_destroy. */
 typedef struct Bob_Node_Result
 {
 	void *output;
@@ -49,10 +49,11 @@ typedef Bob_Node_Result Bob_Node_Function(Bob_Node_Context *context, void *user_
 
 struct Bob_Node_Context
 {
-	Bob      *bob;
-	Bob_Node *node;
-	Arena    *arena;
-	void     *execution_data;
+	Bob_Execution *execution;
+	Bob           *bob;
+	Bob_Node      *node;
+	Arena         *arena;
+	void          *execution_data;
 };
 
 typedef struct Bob_Node_Desc
@@ -91,30 +92,33 @@ Bob_Exec_Params;
 
 Bob *bob_create(void);
 void bob_destroy(Bob *bob);
-/* Graph-lifetime storage. Available only before the graph is prepared. */
+/* Graph-lifetime storage. Available only before the graph is sealed. */
 void *bob_allocate(Bob *bob, u64 size, u64 alignment);
 String bob_copy_string(Bob *bob, String string);
 Bob_Error bob_add_node(Bob *bob, Bob_Node_Desc description, Bob_Node **node_out);
 Bob_Error bob_set_node(Bob *bob, Bob_Node *node, Bob_Node_Desc description);
 Bob_Error bob_set_node_action(Bob *bob, Bob_Node *node, Bob_Node_Function *function, void *user_data);
 Bob_Error bob_add_dependency(Bob *bob, Bob_Node *node, Bob_Node *dependency);
-Bob_Error bob_prepare(Bob *bob);
-b32 bob_take_ready(Bob *bob, Bob_Node **node_out);
-Bob_Error bob_complete_result(Bob *bob, Bob_Node *node, Bob_Node_Result result);
-Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded);
-b32 bob_execute(Bob *bob, Bob_Exec_Params options);
-b32 bob_is_prepared(const Bob *bob);
-b32 bob_is_finished(const Bob *bob);
-b32 bob_has_failed(const Bob *bob);
+b32 bob_is_sealed(const Bob *bob);
 u32 bob_node_count(const Bob *bob);
 Bob_Node *bob_node_at(const Bob *bob, u32 index);
 const char *bob_node_name(const Bob_Node *node);
-Bob_Node_Status bob_node_state(const Bob_Node *node);
-Bob_Node_Result bob_node_result(const Bob_Node *node);
 Bob_Node_Function *bob_node_function(const Bob_Node *node);
 void *bob_node_user_data(const Bob_Node *node);
 u32 bob_dependency_count(const Bob_Node *node);
 Bob_Node *bob_dependency(const Bob_Node *node, u32 index);
+
+Bob_Error bob_execution_create(Bob *bob, Bob_Execution **execution_out);
+void bob_execution_destroy(Bob_Execution *execution);
+b32 bob_execution_take_ready(Bob_Execution *execution, Bob_Node **node_out);
+Bob_Error bob_execution_complete_result(Bob_Execution *execution, Bob_Node *node, Bob_Node_Result result);
+Bob_Error bob_execution_complete(Bob_Execution *execution, Bob_Node *node, b32 succeeded);
+b32 bob_execution_is_finished(const Bob_Execution *execution);
+b32 bob_execution_has_failed(const Bob_Execution *execution);
+Bob_Node_Status bob_execution_node_state(const Bob_Execution *execution, const Bob_Node *node);
+Bob_Node_Result bob_execution_node_result(const Bob_Execution *execution, const Bob_Node *node);
+b32 bob_execute(Bob_Execution *execution, Bob_Exec_Params options);
+
 const char *bob_error_string(Bob_Error result);
 
 #endif

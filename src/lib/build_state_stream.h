@@ -39,11 +39,26 @@ typedef enum Build_State_Stream_Result
 }
 Build_State_Stream_Result;
 
-b32 build_state_stream_encode(Arena *arena, const Bob_Build *build, Build_State *state, String *stream);
-Build_State_Stream_Result build_state_stream_replay(Arena *arena, Bob_Build *build, String stream, Build_State *state);
-b32 build_state_append_set(Arena *arena, String path, const Bob_Build *build, Build_State *state, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint);
-b32 build_state_append_remove(String path, Build_State *state, Bob_Path output);
-b32 build_state_save(String path, const Bob_Build *build, Build_State *state);
-Build_State_Load_Result build_state_load(Arena *arena, Bob_Build *build, String path, Build_State *state);
+// Runtime index for the path IDs in one state stream.
+typedef struct Build_State_Stream
+{
+	Bob_Build   *build;
+	Build_State *state;
+
+	Bob_Path *paths;
+	u32       path_count;
+	u32       path_capacity;
+	u32      *ids_by_atom;
+	u32       atom_capacity;
+}
+Build_State_Stream;
+
+void build_state_stream_init(Build_State_Stream *state_stream, Bob_Build *build, Build_State *state);
+b32 build_state_stream_encode(Build_State_Stream *state_stream, Arena *arena, String *stream);
+Build_State_Stream_Result build_state_stream_replay(Build_State_Stream *state_stream, String stream);
+b32 build_state_stream_append_set(Build_State_Stream *state_stream, String path, Bob_Path output, Bob_Path_Array dependencies, u64 output_stamp, Bob_Fingerprint fingerprint);
+b32 build_state_stream_append_remove(Build_State_Stream *state_stream, String path, Bob_Path output);
+b32 build_state_stream_save(Build_State_Stream *state_stream, String path);
+Build_State_Load_Result build_state_stream_load(Build_State_Stream *state_stream, String path);
 
 #endif

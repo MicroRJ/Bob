@@ -5,6 +5,7 @@ core_sources := {
 	{ name = "profiler",           path = "src/profiler.c"                  },
 	{ name = "bob_atom",           path = "src/lib/bob_atom.c"              },
 	{ name = "bob",                path = "src/lib/bob.c"                   },
+	{ name = "bob_execution",      path = "src/lib/bob_execution.c"         },
 	{ name = "bob_build",          path = "src/lib/bob_build.c"             },
 	{ name = "build_state",        path = "src/lib/build_state.c"           },
 	{ name = "build_state_stream", path = "src/lib/build_state_stream.c"    },
