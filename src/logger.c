@@ -8,6 +8,7 @@ typedef struct Logger_State {
    i32 verbosity;
    b32 quiet;
    b32 colors;
+   b32 muted;
 } Logger_State;
 
 static Logger_State logger = {
@@ -48,6 +49,10 @@ void logger_set_verbosity(i32 verbosity) {
 
 void logger_set_quiet(b32 quiet) {
 	logger.quiet = quiet;
+}
+
+void logger_set_muted(b32 muted) {
+	logger.muted = muted;
 }
 
 static b32 logger_has_verbosity(i32 verbosity) {
@@ -126,8 +131,7 @@ void logger_log_string(Log_Level level, const char *tag, String input)
 	bob_platform_output_lock();
 	scratch = begin_scratch();
 	start = arena_top(scratch.arena);
-	colors = logger.colors &&
-		bob_platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
+	colors = logger.colors && bob_platform_console_supports_colors(level >= LOG_LEVEL_WARNING);
 	if (colors) arena_append_text(scratch.arena, level_color(level));
 	arena_appendf(scratch.arena, "[%s]", tag);
 	if (colors) arena_append_text(scratch.arena, "\x1b[0m");
@@ -146,6 +150,7 @@ void logger_log_string(Log_Level level, const char *tag, String input)
 
 void logger_log_string_at(i32 verbosity, Log_Level level, const char *tag, String message)
 {
+	if (logger.muted) return;
 	if (logger.quiet && level < LOG_LEVEL_WARNING) return;
 	if (!logger_has_verbosity(verbosity)) return;
 	logger_log_string(level, tag, message);

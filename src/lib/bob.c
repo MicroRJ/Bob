@@ -307,77 +307,91 @@ Bob_Error bob_complete(Bob *bob, Bob_Node *node, b32 succeeded)
 
 b32 bob_is_finished(const Bob *bob)
 {
-	return bob && bob->prepared && bob->terminal_count == bob->node_count;
+	ASSERT(bob);
+	return bob->prepared && bob->terminal_count == bob->node_count;
 }
 
 b32 bob_is_prepared(const Bob *bob)
 {
-	return bob && bob->prepared;
+	ASSERT(bob);
+	return bob->prepared;
 }
 
 b32 bob_has_failed(const Bob *bob)
 {
-	return bob && bob->failed;
+	ASSERT(bob);
+	return bob->failed;
 }
 
 u32 bob_node_count(const Bob *bob)
 {
-	return bob ? bob->node_count : 0;
+	ASSERT(bob);
+	return bob->node_count;
 }
 
 Bob_Node *bob_node_at(const Bob *bob, u32 index)
 {
-	return bob && index < bob->node_count ? bob->nodes[index] : NULL;
+	ASSERT(bob);
+	ASSERT(index < bob->node_count);
+	return bob->nodes[index];
 }
 
 // TODO(RJ) why is this returning a raw c string
 const char *bob_node_name(const Bob_Node *node)
 {
-	return node ? node->name.data : NULL;
+	ASSERT(node);
+	return node->name.data;
 }
 
 Bob_Node_Status bob_node_state(const Bob_Node *node)
 {
-	return node ? node->state : BOB_NODE_BLOCKED;
+	ASSERT(node);
+	return node->state;
 }
 
 Bob_Node_Result bob_node_result(const Bob_Node *node)
 {
-	return node ? node->result : (Bob_Node_Result){0};
+	ASSERT(node);
+	return node->result;
 }
 
 Bob_Node_Function *bob_node_function(const Bob_Node *node)
 {
-	return node ? node->function : NULL;
+	ASSERT(node);
+	return node->function;
 }
 
 void *bob_node_user_data(const Bob_Node *node)
 {
-	return node ? node->user_data : NULL;
+	ASSERT(node);
+	return node->user_data;
 }
 
 u32 bob_dependency_count(const Bob_Node *node)
 {
-	return node ? node->dependencies.count : 0;
+	ASSERT(node);
+	return node->dependencies.count;
 }
 
 Bob_Node *bob_dependency(const Bob_Node *node, u32 index)
 {
-	return node && index < node->dependencies.count ? node->dependencies.items[index] : NULL;
+	ASSERT(node);
+	ASSERT(index < node->dependencies.count);
+	return node->dependencies.items[index];
 }
 
 const char *bob_error_string(Bob_Error result)
 {
 	switch (result) {
-		case BOB_OK: return "ok";
-		case BOB_ERROR_OUT_OF_MEMORY: return "out of memory";
-		case BOB_ERROR_INVALID_TASK: return "invalid node";
-		case BOB_ERROR_DUPLICATE_DEPENDENCY: return "duplicate dependency";
-		case BOB_ERROR_SELF_DEPENDENCY: return "self dependency";
-		case BOB_ERROR_ALREADY_PREPARED: return "Bob already prepared";
-		case BOB_ERROR_NOT_PREPARED: return "Bob not prepared";
-		case BOB_ERROR_INVALID_STATE: return "invalid node state";
-		case BOB_ERROR_CYCLE: return "dependency cycle";
+		case BOB_OK:                            return "ok";
+		case BOB_ERROR_OUT_OF_MEMORY:           return "out of memory";
+		case BOB_ERROR_INVALID_TASK:            return "invalid node";
+		case BOB_ERROR_DUPLICATE_DEPENDENCY:    return "duplicate dependency";
+		case BOB_ERROR_SELF_DEPENDENCY:         return "self dependency";
+		case BOB_ERROR_ALREADY_PREPARED:        return "Bob already prepared";
+		case BOB_ERROR_NOT_PREPARED:            return "Bob not prepared";
+		case BOB_ERROR_INVALID_STATE:           return "invalid node state";
+		case BOB_ERROR_CYCLE:                   return "dependency cycle";
 	}
 	return "unknown Bob result";
 }
@@ -409,7 +423,6 @@ struct Bob_Executor
 	Platform_Mutex        mutex;
 	Platform_Condition    work_available;
 	Platform_Condition    event_available;
-	b32                   synchronization_initialized;
 	b32                   stopping;
 };
 
@@ -502,19 +515,6 @@ static u32 worker_main(void *data)
 	return 0;
 }
 
-static void stop_workers(Bob_Executor *executor)
-{
-	if (executor->synchronization_initialized) {
-		platform_lock_mutex(&executor->mutex);
-		request_stop_locked(executor);
-		platform_unlock_mutex(&executor->mutex);
-	}
-	for (u32 i = 0; i < executor->thread_count; ++i) {
-		platform_join_thread(executor->workers[i].thread);
-		platform_close_thread(&executor->workers[i].thread);
-	}
-}
-
 static void dispatch_ready(Bob_Executor *executor)
 {
 	u32 previous_work_count;
@@ -560,6 +560,8 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	if (bob_is_finished(bob)) return true;
 	if (options.worker_count > node_count) options.worker_count = node_count;
 
+	b32 synchronization_initialized = false;
+
 	executor.bob = bob;
 	executor.options = options;
 	executor.worker_count = options.worker_count;
@@ -579,7 +581,7 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	platform_init_mutex(&executor.mutex);
 	platform_init_condition(&executor.work_available);
 	platform_init_condition(&executor.event_available);
-	executor.synchronization_initialized = true;
+	synchronization_initialized = true;
 	for (u32 i = 0; i < executor.worker_count; ++i) {
 		Bob_Worker *worker = executor.workers + i;
 		worker->executor = &executor;
@@ -632,8 +634,16 @@ b32 bob_execute(Bob *bob, Bob_Exec_Params options)
 	}
 
 	cleanup:
-	stop_workers(&executor);
-	if (executor.synchronization_initialized) {
+	if (synchronization_initialized) {
+		platform_lock_mutex(&executor.mutex);
+		request_stop_locked(&executor);
+		platform_unlock_mutex(&executor.mutex);
+	}
+	for (u32 i = 0; i < executor.thread_count; ++i) {
+		platform_join_thread(executor.workers[i].thread);
+		platform_close_thread(&executor.workers[i].thread);
+	}
+	if (synchronization_initialized) {
 		platform_destroy_condition(&executor.event_available);
 		platform_destroy_condition(&executor.work_available);
 		platform_destroy_mutex(&executor.mutex);

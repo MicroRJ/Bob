@@ -1418,6 +1418,7 @@ static b32 test_builder_events(void)
 
 static b32 test_builder_propagates_failure(void)
 {
+    logger_set_muted(true);
     Bob_Build *build = bob_build_create();
     Bob *graph = bob_build_graph(build);
     Bob_Node *fail = add_node(graph, "fail");
@@ -1445,6 +1446,7 @@ static b32 test_builder_propagates_failure(void)
     CHECK(bob_task_state(independent) == BOB_NODE_SUCCEEDED);
     CHECK(bob_is_finished(graph));
     bob_build_destroy(build);
+    logger_set_muted(false);
     return true;
 }
 
